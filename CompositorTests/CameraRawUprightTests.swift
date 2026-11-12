@@ -267,13 +267,11 @@ struct CameraRawUprightTests {
         #expect(vaultVertical.coverage - misled.coverage < 0.06, Comment(rawValue: misled.note))
     }
 
-    private static let windowWallFixture = "/Users/atr/code/Compositor/work/geometry-validation/originals/window-wall.jpg"
-
     /// The chapel window. Auto Full used to keep a two-family warp that blacked out the left side.
     /// Without the local JPEG this test is skipped, not passed.
-    @Test(.enabled(if: FileManager.default.fileExists(atPath: CameraRawUprightTests.windowWallFixture), "window-wall.jpg is a local fixture"))
+    @Test(.enabled(if: GeometryValidationFixtures.hasLocalPhotographs, "window-wall.jpg is a local fixture"))
     func windowWallAutoFullPrefersTheVerticalCorrection() throws {
-        let root = URL(fileURLWithPath: "/Users/atr/code/Compositor/work/geometry-validation", isDirectory: true)
+        let root = try #require(GeometryValidationFixtures.rootContaining("originals/window-wall.jpg"))
         let jpeg = root.appendingPathComponent("originals/window-wall.jpg")
         let stripped = root.appendingPathComponent("input/photo-vertical-portrait.png")
         try #require(FileManager.default.fileExists(atPath: stripped.path))

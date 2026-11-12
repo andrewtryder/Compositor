@@ -200,10 +200,23 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
         BrushRaster.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height), mask: false, context: source)
         let destination = try BrushRaster.context(width: width, height: height, mask: false)
         guard let from = source.data, let into = destination.data else { throw ExportError.render }
-        volume_deform(from.assumingMemoryBound(to: UInt8.self), into.assumingMemoryBound(to: UInt8.self),
-                      width, height, source.bytesPerRow,
-                      Self.volumeStrength(volumeHorizontal), Self.volumeStrength(volumeVertical),
-                      Self.volumeStrength(volumeRadial), volumeMode.kernelValue)
+        let horizontal = Self.volumeStrength(volumeHorizontal)
+        let vertical = Self.volumeStrength(volumeVertical)
+        let radial = Self.volumeStrength(volumeRadial)
+        let mode = volumeMode.kernelValue
+        // A zero strength is a byte copy. Leave that on the CPU so identity stays exact.
+        let identity = (mode == 0 && radial <= 0) || (mode == 1 && horizontal <= 0) || (mode == 2 && vertical <= 0)
+            || (mode == 3 && horizontal <= 0 && vertical <= 0)
+        let stride = source.bytesPerRow
+        let gpu = !identity && stride == destination.bytesPerRow && MetalCameraRawVolume.shared?.apply(
+            source: from.assumingMemoryBound(to: UInt8.self), destination: into.assumingMemoryBound(to: UInt8.self),
+            width: width, height: height, stride: stride,
+            strengthH: horizontal, strengthV: vertical, strengthR: radial, mode: mode
+        ) == true
+        if !gpu {
+            volume_deform(from.assumingMemoryBound(to: UInt8.self), into.assumingMemoryBound(to: UInt8.self),
+                          width, height, stride, horizontal, vertical, radial, mode)
+        }
         guard let result = destination.makeImage() else { throw ExportError.render }
         return result
     }
