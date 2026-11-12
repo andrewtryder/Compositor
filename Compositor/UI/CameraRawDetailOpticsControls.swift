@@ -92,15 +92,15 @@ struct CameraRawOpticsControls: View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle("Remove Chromatic Aberration", isOn: binding(\.removeChromaticAberration))
                 .help("Pulls red and blue fringes apart toward the center to reduce color edging.")
-            Toggle("Enable Lens Profile Corrections", isOn: binding(\.enableLensProfile))
-                .help("Applies generic profile strength when camera metadata is not available.")
+            Toggle("Generic Lens Correction", isOn: binding(\.enableLensProfile))
+                .help("Applies a generic distortion and vignetting correction. This is not a camera-specific lens profile.")
             if raw.optics.enableLensProfile {
-                Text("No lens metadata on this layer. Profile sliders set generic correction strength.")
+                Text("Applies a generic distortion and vignetting correction. This is not a camera-specific lens profile.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 opticsSlider("Distortion", \.profileDistortion, range: CameraRawOpticsSettings.unitRange, reset: 100,
-                             help: "How much of the profile distortion correction is applied.")
+                             help: "How much of the generic distortion correction is applied.")
                 opticsSlider("Vignetting", \.profileVignetting, range: CameraRawOpticsSettings.unitRange, reset: 100,
-                             help: "How much of the profile vignetting correction is applied.")
+                             help: "How much of the generic vignetting correction is applied.")
             }
             Text("Manual").font(.subheadline)
             opticsSlider("Distortion", \.distortion, range: CameraRawOpticsSettings.toneRange, reset: 0,
