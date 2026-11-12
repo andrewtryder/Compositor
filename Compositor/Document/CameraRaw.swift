@@ -221,8 +221,18 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         let paintEffects = clipping == nil && !sharpenMask && settings.adjustsEffects
         let paintDetailOptics = clipping == nil && (settings.adjustsDetail || settings.adjustsOptics || sharpenMask)
         var source = image
-        if clipping == nil && !sharpenMask && visualizePointColor < 0 && settings.adjustsGeometry {
-            source = try settings.geometry.apply(source)
+        // Distortion → volume → perspective → crop, then the grade. Distortion runs early so volume and
+        // upright see a rectilinear grid; the late optics pass skips it when already applied.
+        var earlyDistortion = false
+        if clipping == nil && !sharpenMask && visualizePointColor < 0 {
+            let distortionK = settings.optics.distortionK(profileStrength: PixelFilter.lensStrength)
+            if distortionK != 0 {
+                source = try Self.applyLensDistort(source, k: distortionK)
+                earlyDistortion = true
+            }
+            if settings.adjustsGeometry {
+                source = try settings.geometry.apply(source)
+            }
         }
         func applyTable(_ table: [Float]?, pixels: UnsafeMutablePointer<UInt8>, width: Int, height: Int, stride: Int, clipping: Int32) {
             if usesGPU, clipping == 0, let table,
@@ -270,9 +280,24 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
             }
             if paintDetailOptics {
                 settings.applyDetailOptics(pixels: pixels, width: width, height: height, stride: stride, scale: pixelScale,
-                                           profileStrength: PixelFilter.lensStrength, sharpenMask: sharpenMask)
+                                           profileStrength: PixelFilter.lensStrength, sharpenMask: sharpenMask,
+                                           skipDistortion: earlyDistortion)
             }
         }
+    }
+
+    /// Premultiplied RGBA lens distortion matching `lens_distort` / the Lens Correction filter.
+    static func applyLensDistort(_ image: CGImage, k: Double) throws -> CGImage {
+        guard k != 0 else { return image }
+        let width = image.width, height = image.height
+        let source = try BrushRaster.context(width: width, height: height, mask: false)
+        BrushRaster.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height), mask: false, context: source)
+        let destination = try BrushRaster.context(width: width, height: height, mask: false)
+        guard let from = source.data, let into = destination.data else { throw ExportError.render }
+        lens_distort(from.assumingMemoryBound(to: UInt8.self), into.assumingMemoryBound(to: UInt8.self),
+                     width, height, source.bytesPerRow, k)
+        guard let result = destination.makeImage() else { throw ExportError.render }
+        return result
     }
 
     /// Temperature and tint that turn one straight sRGB color (0…1) as nearly gray as Camera Raw's white balance can.
@@ -552,6 +577,22 @@ extension EditorSession {
             settings.cameraRaw.mixer.points.append(color)
             edit.cameraRawPointIndex = settings.cameraRaw.mixer.points.count - 1
         }
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Auto Level / Vertical / Full: detect guides on the preview source and refresh.
+    func applyCameraRawUprightDetection() async {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return }
+        let mode = edit.settings.cameraRaw.geometry.upright
+        guard mode.isAuto else { return }
+        let image = edit.previewSource
+        let guides = await Task.detached(priority: .userInitiated) {
+            CameraRawUprightDetection.guides(in: image, mode: mode)
+        }.value
+        guard filterEdit === edit, !edit.committing, edit.settings.cameraRaw.geometry.upright == mode else { return }
+        var settings = edit.settings
+        settings.cameraRaw.geometry.guides = guides
+        edit.cameraRawUprightDetectionAttempted = true
         updateFilter(settings, preview: edit.preview)
     }
 

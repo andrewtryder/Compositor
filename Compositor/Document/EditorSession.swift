@@ -1053,7 +1053,11 @@ final class EditorSession {
                     // A 16-bit layer: a RAW's latitude stays for later Levels, Curves and Camera Raw (`DeepLayer`).
                     guard let developed = await RawImporter.Queue.shared.develop(url, settings: settings, limit: nil, sixteenBit: true)
                     else { throw ImageImportError.unreadable }
-                    insert(try DeepLayer.asset(developed, name: url.deletingPathExtension().lastPathComponent), centeredAt: point)
+                    var asset = try DeepLayer.asset(developed, name: url.deletingPathExtension().lastPathComponent)
+                    let lens = RawImporter.lensGeometry(url)
+                    asset.focalLengthMm = lens.focalLengthMm
+                    asset.sensorWidthMm = lens.sensorWidthMm
+                    insert(asset, centeredAt: point)
                     if rawOpensCameraRaw { cameraRawAfterImport = activeLayerID }
                     rawOpensCameraRaw = false
                 } else if UTType(filenameExtension: url.pathExtension)?.conforms(to: .svg) == true {

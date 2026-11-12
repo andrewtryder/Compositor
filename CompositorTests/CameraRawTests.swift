@@ -757,10 +757,10 @@ struct CameraRawTests {
         #expect(hiddenPixels[0] == before)
     }
 
-    /// Upright is Off or Guided. Guided reads a drawn line; without one it must not invent a warp,
-    /// and two different pictures must not receive one shared result.
+    /// Upright modes include Auto and Guided. Empty Guided / Auto must not invent a warp; a horizon
+    /// guide rotates; two vertical guides change corner geometry.
     @Test func guidedUprightFollowsADrawnLineAndLeavesAnUnguidedPicture() throws {
-        #expect(Set(CameraRawUprightMode.allCases) == [.off, .guided])
+        #expect(Set(CameraRawUprightMode.allCases) == [.off, .autoLevel, .autoVertical, .autoFull, .guided])
         let cool = try image(width: 16, height: 16, red: 0.2, green: 0.45, blue: 0.8)
         let warm = try image(width: 16, height: 16, red: 0.85, green: 0.25, blue: 0.15)
         let coolPixels = try pixels(cool)
@@ -776,6 +776,71 @@ struct CameraRawTests {
         #expect(coolGuided != coolPixels)
         #expect(warmGuided != warmPixels)
         #expect(coolGuided != warmGuided)
+
+        // Two near-vertical guides must change the perspective corners (Force Parallel Vertical).
+        settings.geometry.guides = [
+            CameraRawGeometryGuide(startX: 0.25, startY: 0.05, endX: 0.30, endY: 0.95),
+            CameraRawGeometryGuide(startX: 0.70, startY: 0.05, endX: 0.80, endY: 0.95)
+        ]
+        let corners = settings.geometry.outputCorners(width: 100, height: 100)
+        let identity = [CGPoint(x: 0, y: 100), CGPoint(x: 100, y: 100), CGPoint(x: 100, y: 0), CGPoint(x: 0, y: 0)]
+        let moved = zip(corners, identity).contains { hypot($0.x - $1.x, $0.y - $1.y) > 0.5 }
+        #expect(moved)
+
+        settings.geometry.upright = .autoFull
+        settings.geometry.guides = []
+        #expect(try pixels(settings.apply(cool)) == coolPixels)
+    }
+
+    @Test func computeAnamorphosisAndVolumeModes() {
+        #expect(CameraRawGeometrySettings.computeAnamorphosis(a: 0.8, b: 0) == 0.8)
+        let warped = CameraRawGeometrySettings.computeAnamorphosis(a: 0.8, b: 0.4)
+        #expect(abs(warped) < 0.8)
+        #expect(warped > 0)
+        #expect(CameraRawGeometrySettings.computeAnamorphosis(a: -0.8, b: 0.4) == -CameraRawGeometrySettings.computeAnamorphosis(a: 0.8, b: 0.4))
+        let auto = CameraRawGeometrySettings.autoVolumeSliders(focalLengthMm: 16, sensorWidthMm: 36)
+        #expect(auto.horizontal > 0 && auto.radial > 0)
+        #expect(CameraRawGeometrySettings.autoVolumeSliders(focalLengthMm: 0, sensorWidthMm: 36) == (0, 0, 0))
+    }
+
+    @Test func volumeDeformIdentityAndNonIdentity() throws {
+        let grid = try checker(24, 24)
+        let gridPixels = try pixels(grid)
+        var settings = CameraRawGeometrySettings()
+        #expect(try pixels(settings.apply(grid)) == gridPixels)
+
+        settings.volumeMode = .radial
+        settings.volumeRadial = 120
+        let radial = try pixels(settings.apply(grid))
+        #expect(radial != gridPixels)
+
+        settings = CameraRawGeometrySettings()
+        settings.volumeMode = .horizontal
+        settings.volumeHorizontal = 150
+        #expect(try pixels(settings.apply(grid)) != gridPixels)
+
+        settings = CameraRawGeometrySettings()
+        settings.volumeMode = .vertical
+        settings.volumeVertical = 150
+        #expect(try pixels(settings.apply(grid)) != gridPixels)
+    }
+
+    @Test func distortionRunsBeforePerspectiveWithoutDoubleApplying() throws {
+        let grid = try checker(20, 20)
+        var settings = CameraRawSettings()
+        settings.optics.distortion = 40
+        settings.geometry.vertical = 35
+        let combined = try pixels(settings.apply(grid))
+        let original = try pixels(grid)
+        #expect(combined != original)
+
+        // Early distortion alone matches full apply when late optics would only have repeated it.
+        let earlyOnly = try pixels(CameraRawSettings.applyLensDistort(
+            grid, k: CameraRawOpticsSettings(distortion: 40).distortionK(profileStrength: PixelFilter.lensStrength)))
+        var distortOnly = CameraRawSettings()
+        distortOnly.optics.distortion = 40
+        let fullDistort = try pixels(distortOnly.apply(grid))
+        #expect(earlyOnly == fullDistort)
     }
 
     private func peakIndex(_ bins: [Double]) -> Int {

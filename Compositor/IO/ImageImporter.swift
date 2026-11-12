@@ -14,6 +14,10 @@ nonisolated struct ImportedImage: @unchecked Sendable {
     /// layer's painted, these are its `raster`'s base, with the strokes' 8-bit patches over them: read the whole layer
     /// at 16 bits with `DeepLayer.flattened`.
     var deep: CGImage? = nil
+    /// Focal length from RAW EXIF for Camera Raw volume auto. Zero when unknown.
+    var focalLengthMm: Double = 0
+    /// Estimated sensor width in mm from EXIF (or from 35 mm equivalent). Zero when unknown.
+    var sensorWidthMm: Double = 0
     /// An HDR layer: `deep` holds light brighter than white, as half floats (`DeepLayer.hdr`).
     var isHDR: Bool { deep.map(DeepLayer.isHDR) ?? false }
     /// Its file in a project: EXR for an HDR layer, which PNG can't hold, otherwise PNG.
