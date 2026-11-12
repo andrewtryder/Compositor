@@ -1,6 +1,6 @@
 # Milestone 7 — Metal volume deformation
 
-Branch `camera-raw-volume-metal` in `/Users/atr/code/Compositor-volume-metal`, based on `7568a31`. Not committed. The other worktree was not modified. `volumeStrengthScale` is still 0.55. The CPU function `volume_deform` is unchanged and remains the fallback.
+Branch `camera-raw-volume-metal` in `/Users/atr/code/Compositor-volume-metal`, based on `7568a31`. Implementation checkpoint: `69412d6`. The other worktree was not modified. `volumeStrengthScale` is still 0.55. The CPU function `volume_deform` is unchanged and remains the fallback.
 
 ViewPoint 6 notes are in `VIEWPOINT_6_REFERENCE.md`. This milestone does not tune Compositor to those sliders, and it does not add ReShape.
 
@@ -76,23 +76,35 @@ Maximum channel error was 1 at each size. End-to-end, the GPU path is about 25×
 
 ## Application smoke
 
-The Release app from this worktree was launched with `window-wall.jpg`. The window stayed 1180×780. The layer opened at 3648×5472, right way up, named window-wall. Filter › Camera Raw Filter opened the docked panel. Geometry was expanded and showed Upright Off, Projection Perspective, Constrain Crop, Volume Mode Radial, and the Horizontal, Vertical, and Radial sliders at 0. While that panel was open, the document controls were disabled.
+Checkpoint commit: `69412d6caf6943e5c3ea3e57cea1af4df5366841` on `camera-raw-volume-metal`.
 
-The sliders were not successfully driven. Accessibility writes changed the reported field value without changing the picture, and typed keystrokes did not commit a strength. No sample of the process showed `MetalCameraRawVolume.apply` on a stack. The four modes, a watched preview, and a GUI export were therefore not confirmed in the window. The processing those controls call is the path measured above.
+The Release app from this worktree was launched with `window-wall.jpg`. The window stayed 1180×780. The layer opened at 3648×5472, right way up, named window-wall. Filter › Camera Raw Filter opened the docked panel. Geometry was expanded.
 
-To finish that check by hand: run the Release app, open window-wall, choose Filter › Camera Raw Filter, expand Geometry, and for Radial, Horizontal, Vertical, and Horizontal & Vertical move the matching slider. Then add a little lens distortion, a vertical perspective slider, and Constrain Crop, and compare OK with the preview. The picture should stay upright, with no new black frame and no opaque fringe.
+**Interactive volume (12 Nov 2026, after the checkpoint).** Accessibility `AXIncrement` on the Camera Raw volume sliders updates the SwiftUI binding (setting the text field alone does not). A temporary probe in `applyVolume` wrote `gpu` or `cpu` under the sandbox home; it was removed from the source afterward and was not committed.
+
+Confirmed Metal execution at full resolution for every mode:
+
+| Mode | Kernel mode | Probe |
+| --- | ---: | --- |
+| Radial | 0 | `gpu 3648x5472` with rising `r` |
+| Horizontal | 1 | `gpu 3648x5472` with rising `h` |
+| Vertical | 2 | `gpu 3648x5472` with rising `v` |
+| Horizontal & Vertical | 3 | `gpu 3648x5472` with rising `h` and `v` |
+
+No `cpu` lines appeared while those strengths were nonzero. The preview updated as the sliders moved. Screenshots showed the expected warp, including transparent checkerboard where the mapping leaves empty canvas. No unexpected solid black border appeared.
+
+**OK.** With Horizontal & Vertical still active, OK wrote `gpu 3648x5472 mode=3 …` once. Camera Raw was reopened from the Filter menu afterward; the panel came back.
+
+**Combined pipeline.** Optics Distortion (`Straightens barrel or pincushion bending.`), Geometry Radial volume, Vertical perspective, and Constrain Crop were adjusted together. Preview and OK both logged `gpu 3648x5472 mode=0 … r=0.275`. Window screenshots of preview versus OK differ in chrome and framing (panel open versus closed; strong perspective plus volume), so they are not a pixel-identical pair. Both used the Metal volume path with the same radial strength.
 
 ## Not done
 
-- The live Camera Raw sliders were not moved, so slider feel and a watched export are not a result.
 - No camera-original RAW was available, so there is no ViewPoint 6 geometry export. See the ViewPoint 6 note. No further ViewPoint session was run for this checkpoint.
 - Cold shader compile time was not split out from the first use of `MetalCameraRawVolume.shared`.
 - Core Image still receives a `CGImage`, so the readback remains.
 - A missing Metal device, a failed shader compile, and a failed command buffer were not forced on this machine. The code returns before writing the destination in those cases, and the tests cover the refusals that can be made without a second device.
 
-## Proposed commit
-
-`Camera Raw: run volume deformation on Metal and keep the CPU kernel as the fallback.`
+## Files in the Milestone 7 commits
 
 - `Compositor/Rendering/MetalCameraRawVolume.swift`
 - `Compositor/Document/CameraRawGeometryCalibration.swift`
