@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import Testing
 @testable import Compositor
 
@@ -264,5 +265,32 @@ struct CameraRawUprightTests {
         let vaultVertical = CameraRawUprightDetection.observe(in: vault, mode: .autoVertical)
         #expect(misled.coverage > 0.85, Comment(rawValue: misled.note))
         #expect(vaultVertical.coverage - misled.coverage < 0.06, Comment(rawValue: misled.note))
+    }
+
+    private static let windowWallFixture = "/Users/atr/code/Compositor/work/geometry-validation/originals/window-wall.jpg"
+
+    /// The chapel window. Auto Full used to keep a two-family warp that blacked out the left side.
+    /// Without the local JPEG this test is skipped, not passed.
+    @Test(.enabled(if: FileManager.default.fileExists(atPath: CameraRawUprightTests.windowWallFixture), "window-wall.jpg is a local fixture"))
+    func windowWallAutoFullPrefersTheVerticalCorrection() throws {
+        let root = URL(fileURLWithPath: "/Users/atr/code/Compositor/work/geometry-validation", isDirectory: true)
+        let jpeg = root.appendingPathComponent("originals/window-wall.jpg")
+        let stripped = root.appendingPathComponent("input/photo-vertical-portrait.png")
+        try #require(FileManager.default.fileExists(atPath: stripped.path))
+        for url in [jpeg, stripped] {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+                Issue.record("could not decode \(url.lastPathComponent)")
+                continue
+            }
+            let full = CameraRawUprightDetection.observe(in: image, mode: .autoFull)
+            let vertical = CameraRawUprightDetection.observe(in: image, mode: .autoVertical)
+            #expect(vertical.fallback != .identity)
+            #expect(full.fallback == .vertical)
+            #expect(full.coverage > 0.85)
+            #expect(full.coverage + 0.03 >= vertical.coverage)
+            #expect(full.residualDegrees < 1.25)
+            #expect(full.note.contains("kept verticals"))
+        }
     }
 }

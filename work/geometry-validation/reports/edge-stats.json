@@ -1,0 +1,218 @@
+[
+  {
+    "file" : "window-wall.jpg",
+    "height" : 5472,
+    "horizontal" : {
+      "count" : 2328,
+      "medianDegrees" : 7.84,
+      "p90Degrees" : 21.06,
+      "within1_5" : 0.133
+    },
+    "opaqueFraction" : 1,
+    "vertical" : {
+      "count" : 2095,
+      "medianDegrees" : 8.13,
+      "p90Degrees" : 21.12,
+      "within1_5" : 0.13
+    },
+    "width" : 3648
+  },
+  {
+    "file" : "stone-house.jpg",
+    "height" : 3648,
+    "horizontal" : {
+      "count" : 3014,
+      "medianDegrees" : 13.05,
+      "p90Degrees" : 23.1,
+      "within1_5" : 0.06
+    },
+    "opaqueFraction" : 1,
+    "vertical" : {
+      "count" : 2962,
+      "medianDegrees" : 12.21,
+      "p90Degrees" : 22.78,
+      "within1_5" : 0.084
+    },
+    "width" : 5472
+  },
+  {
+    "file" : "library-atrium.jpg",
+    "height" : 5304,
+    "horizontal" : {
+      "count" : 4650,
+      "medianDegrees" : 3.11,
+      "p90Degrees" : 19.43,
+      "within1_5" : 0.365
+    },
+    "opaqueFraction" : 1,
+    "vertical" : {
+      "count" : 3602,
+      "medianDegrees" : 10.64,
+      "p90Degrees" : 20.74,
+      "within1_5" : 0.062
+    },
+    "width" : 7952
+  },
+  {
+    "file" : "photo-vertical-portrait.png",
+    "height" : 1600,
+    "horizontal" : {
+      "count" : 2509,
+      "medianDegrees" : 7.3,
+      "p90Degrees" : 20.51,
+      "within1_5" : 0.137
+    },
+    "opaqueFraction" : 1,
+    "vertical" : {
+      "count" : 1765,
+      "medianDegrees" : 8.58,
+      "p90Degrees" : 21.91,
+      "within1_5" : 0.11
+    },
+    "width" : 1067
+  },
+  {
+    "file" : "photo-vertical-landscape.png",
+    "height" : 1067,
+    "horizontal" : {
+      "count" : 2704,
+      "medianDegrees" : 13.08,
+      "p90Degrees" : 22.77,
+      "within1_5" : 0.061
+    },
+    "opaqueFraction" : 1,
+    "vertical" : {
+      "count" : 3492,
+      "medianDegrees" : 11.92,
+      "p90Degrees" : 22.53,
+      "within1_5" : 0.095
+    },
+    "width" : 1600
+  },
+  {
+    "file" : "photo-eight-point.png",
+    "height" : 1067,
+    "horizontal" : {
+      "count" : 3840,
+      "medianDegrees" : 3.64,
+      "p90Degrees" : 19.57,
+      "within1_5" : 0.329
+    },
+    "opaqueFraction" : 1,
+    "vertical" : {
+      "count" : 4401,
+      "medianDegrees" : 10.4,
+      "p90Degrees" : 20.57,
+      "within1_5" : 0.065
+    },
+    "width" : 1600
+  },
+  {
+    "file" : "photo-vertical-portrait.png",
+    "height" : 1600,
+    "horizontal" : {
+      "count" : 3540,
+      "medianDegrees" : 10.5,
+      "p90Degrees" : 21.54,
+      "within1_5" : 0.077
+    },
+    "opaqueFraction" : 1,
+    "vertical" : {
+      "count" : 3641,
+      "medianDegrees" : 5.1,
+      "p90Degrees" : 20.27,
+      "within1_5" : 0.223
+    },
+    "width" : 1067
+  },
+  {
+    "file" : "photo-vertical-landscape.png",
+    "height" : 1067,
+    "horizontal" : {
+      "count" : 2704,
+      "medianDegrees" : 13.08,
+      "p90Degrees" : 22.77,
+      "within1_5" : 0.061
+    },
+    "opaqueFraction" : 1,
+    "vertical" : {
+      "count" : 3492,
+      "medianDegrees" : 11.92,
+      "p90Degrees" : 22.53,
+      "within1_5" : 0.095
+    },
+    "width" : 1600
+  },
+  {
+    "file" : "photo-eight-point.png",
+    "height" : 1067,
+    "horizontal" : {
+      "count" : 4012,
+      "medianDegrees" : 3.49,
+      "p90Degrees" : 19.6,
+      "within1_5" : 0.35
+    },
+    "opaqueFraction" : 0.999,
+    "vertical" : {
+      "count" : 3854,
+      "medianDegrees" : 9.74,
+      "p90Degrees" : 20.25,
+      "within1_5" : 0.068
+    },
+    "width" : 1600
+  },
+  {
+    "file" : "synthetic-interior.tiff",
+    "height" : 716,
+    "horizontal" : {
+      "count" : 959,
+      "medianDegrees" : 2.25,
+      "p90Degrees" : 5.74,
+      "within1_5" : 0.366
+    },
+    "opaqueFraction" : 1,
+    "vertical" : {
+      "count" : 635,
+      "medianDegrees" : 12.67,
+      "p90Degrees" : 22.03,
+      "within1_5" : 0.014
+    },
+    "width" : 1074
+  },
+  {
+    "file" : "synthetic-interior.png",
+    "height" : 800,
+    "horizontal" : {
+      "count" : 720,
+      "medianDegrees" : 3.28,
+      "p90Degrees" : 8.11,
+      "within1_5" : 0.31
+    },
+    "opaqueFraction" : 1,
+    "vertical" : {
+      "count" : 475,
+      "medianDegrees" : 16.33,
+      "p90Degrees" : 23.06,
+      "within1_5" : 0
+    },
+    "width" : 1200
+  },
+  {
+    "file" : "synthetic-interior.png",
+    "height" : 800,
+    "horizontal" : {
+      "count" : 709,
+      "medianDegrees" : 1.65,
+      "p90Degrees" : 3.81,
+      "within1_5" : 0.441
+    },
+    "opaqueFraction" : 0.978,
+    "vertical" : {
+      "count" : 947,
+      "medianDegrees" : 4.3,
+      "p90Degrees" : 8.71,
+      "within1_5" : 0.153
+    },
+    "width" : 1200
+  }
+]
