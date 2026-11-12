@@ -9,26 +9,28 @@ nonisolated enum CameraRawUprightDetection {
         switch mode {
         case .autoLevel:
             if let horizon = visionHorizon(image) { return [horizon] }
-            return strongestNearHorizontal(from: houghLines(in: image)).map { [$0] } ?? []
+            return strongestNearHorizontal(from: houghLines(in: image), width: Double(image.width), height: Double(image.height)).map { [$0] } ?? []
         case .autoVertical:
-            if let pair = bestVerticalPair(from: visionRectangleGuides(image) + houghLines(in: image)) {
+            if let pair = bestVerticalPair(from: visionRectangleGuides(image) + houghLines(in: image),
+                                            width: Double(image.width), height: Double(image.height)) {
                 return pair
             }
             return []
         case .autoFull:
             let fromRect = visionRectangleGuides(image)
-            let verticals = fromRect.filter { isVertical($0) }
-            let horizontals = fromRect.filter { isHorizontal($0) }
+            let verticals = fromRect.filter { isVertical($0, width: Double(image.width), height: Double(image.height)) }
+            let horizontals = fromRect.filter { isHorizontal($0, width: Double(image.width), height: Double(image.height)) }
             if verticals.count >= 2, horizontals.count >= 2 {
                 return Array(verticals.prefix(2)) + Array(horizontals.prefix(2))
             }
             let lines = fromRect + houghLines(in: image)
-            if let vPair = bestVerticalPair(from: lines), let hPair = bestHorizontalPair(from: lines) {
+            if let vPair = bestVerticalPair(from: lines, width: Double(image.width), height: Double(image.height)),
+               let hPair = bestHorizontalPair(from: lines, width: Double(image.width), height: Double(image.height)) {
                 return vPair + hPair
             }
-            if let vPair = bestVerticalPair(from: lines) { return vPair }
+            if let vPair = bestVerticalPair(from: lines, width: Double(image.width), height: Double(image.height)) { return vPair }
             if let horizon = visionHorizon(image) { return [horizon] }
-            return strongestNearHorizontal(from: lines).map { [$0] } ?? []
+            return strongestNearHorizontal(from: lines, width: Double(image.width), height: Double(image.height)).map { [$0] } ?? []
         case .off, .guided:
             return []
         }
@@ -166,8 +168,11 @@ nonisolated enum CameraRawUprightDetection {
             )
             // Suppress near-duplicates.
             let duplicate = guides.contains { other in
-                abs(atan2(guide.endY - guide.startY, guide.endX - guide.startX)
-                    - atan2(other.endY - other.startY, other.endX - other.startX)) < 0.12
+                let delta = abs(atan2(guide.endY - guide.startY, guide.endX - guide.startX)
+                    - atan2(other.endY - other.startY, other.endX - other.startX))
+                var wrapped = delta.truncatingRemainder(dividingBy: .pi)
+                if wrapped > .pi / 2 { wrapped = .pi - wrapped }
+                return wrapped < 0.12
                     && abs(midX(guide) - midX(other)) < 0.08 && abs(midY(guide) - midY(other)) < 0.08
             }
             if !duplicate { guides.append(guide) }
@@ -197,12 +202,12 @@ nonisolated enum CameraRawUprightDetection {
 
     // MARK: - Pair selection
 
-    private static func isVertical(_ guide: CameraRawGeometryGuide) -> Bool {
-        CameraRawPerspective.classify(guide)?.kind == .vertical
+    private static func isVertical(_ guide: CameraRawGeometryGuide, width: Double, height: Double) -> Bool {
+        CameraRawPerspective.classify(guide, width: width, height: height)?.kind == .vertical
     }
 
-    private static func isHorizontal(_ guide: CameraRawGeometryGuide) -> Bool {
-        CameraRawPerspective.classify(guide)?.kind == .horizontal
+    private static func isHorizontal(_ guide: CameraRawGeometryGuide, width: Double, height: Double) -> Bool {
+        CameraRawPerspective.classify(guide, width: width, height: height)?.kind == .horizontal
     }
 
     private static func midX(_ g: CameraRawGeometryGuide) -> Double { (g.startX + g.endX) / 2 }
@@ -212,14 +217,18 @@ nonisolated enum CameraRawUprightDetection {
         hypot(g.endX - g.startX, g.endY - g.startY)
     }
 
-    private static func bestVerticalPair(from guides: [CameraRawGeometryGuide]) -> [CameraRawGeometryGuide]? {
-        let verticals = guides.filter(isVertical).sorted { length($0) > length($1) }
+    private static func bestVerticalPair(from guides: [CameraRawGeometryGuide], width: Double, height: Double) -> [CameraRawGeometryGuide]? {
+        let verticals = guides.filter { isVertical($0, width: width, height: height) }.sorted { length($0) > length($1) }
         guard verticals.count >= 2 else { return nil }
         var best: (CameraRawGeometryGuide, CameraRawGeometryGuide, Double)?
         for i in 0..<verticals.count {
             for j in (i + 1)..<verticals.count {
                 let separation = abs(midX(verticals[i]) - midX(verticals[j]))
                 guard separation > 0.12 else { continue }
+                let s0 = CameraRawPerspective.segment(verticals[i], width: 1, height: 1)
+                let s1 = CameraRawPerspective.segment(verticals[j], width: 1, height: 1)
+                if let vanishing = CameraRawPerspective.intersection(s0, s1),
+                   !CameraRawPerspective.vanishingPointIsFar(vanishing, width: 1, height: 1) { continue }
                 let score = length(verticals[i]) * length(verticals[j]) * separation
                 if best == nil || score > best!.2 {
                     best = (verticals[i], verticals[j], score)
@@ -230,14 +239,18 @@ nonisolated enum CameraRawUprightDetection {
         return [best.0, best.1]
     }
 
-    private static func bestHorizontalPair(from guides: [CameraRawGeometryGuide]) -> [CameraRawGeometryGuide]? {
-        let horizontals = guides.filter(isHorizontal).sorted { length($0) > length($1) }
+    private static func bestHorizontalPair(from guides: [CameraRawGeometryGuide], width: Double, height: Double) -> [CameraRawGeometryGuide]? {
+        let horizontals = guides.filter { isHorizontal($0, width: width, height: height) }.sorted { length($0) > length($1) }
         guard horizontals.count >= 2 else { return nil }
         var best: (CameraRawGeometryGuide, CameraRawGeometryGuide, Double)?
         for i in 0..<horizontals.count {
             for j in (i + 1)..<horizontals.count {
                 let separation = abs(midY(horizontals[i]) - midY(horizontals[j]))
                 guard separation > 0.12 else { continue }
+                let s0 = CameraRawPerspective.segment(horizontals[i], width: 1, height: 1)
+                let s1 = CameraRawPerspective.segment(horizontals[j], width: 1, height: 1)
+                if let vanishing = CameraRawPerspective.intersection(s0, s1),
+                   !CameraRawPerspective.vanishingPointIsFar(vanishing, width: 1, height: 1) { continue }
                 let score = length(horizontals[i]) * length(horizontals[j]) * separation
                 if best == nil || score > best!.2 {
                     best = (horizontals[i], horizontals[j], score)
@@ -248,7 +261,7 @@ nonisolated enum CameraRawUprightDetection {
         return [best.0, best.1]
     }
 
-    private static func strongestNearHorizontal(from guides: [CameraRawGeometryGuide]) -> CameraRawGeometryGuide? {
-        guides.filter(isHorizontal).max(by: { length($0) < length($1) })
+    private static func strongestNearHorizontal(from guides: [CameraRawGeometryGuide], width: Double, height: Double) -> CameraRawGeometryGuide? {
+        guides.filter { isHorizontal($0, width: width, height: height) }.max(by: { length($0) < length($1) })
     }
 }

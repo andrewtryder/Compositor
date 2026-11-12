@@ -71,6 +71,8 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
     static let rotateRange: ClosedRange<Double> = -45...45
     static let volumeRange: ClosedRange<Double> = 0...200
     /// Maps a 0…200 slider into ComputeAnamorphosis `b` (smaller b ⇒ stronger warp).
+    /// Provisional. 0.55 keeps the top of the slider inside a fold-free range on the CPU kernel.
+    /// It is not a measured match to any other product.
     static let volumeStrengthScale = 0.55
 
     var adjusts: Bool {
@@ -232,10 +234,12 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
         let context = try BrushRaster.context(width: width, height: height, mask: false)
         BrushRaster.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height), mask: false, context: context)
         guard let data = context.data else { return image }
-        var edges = [Int](repeating: 0, count: 4)
-        brush_alpha_bounds(data.assumingMemoryBound(to: UInt8.self), width, height, context.bytesPerRow, &edges)
-        let crop = CGRect(x: edges[0], y: edges[1], width: edges[2] - edges[0], height: edges[3] - edges[1])
-        guard crop.width >= 1, crop.height >= 1, crop.width < CGFloat(width) || crop.height < CGFloat(height),
+        let bytes = data.assumingMemoryBound(to: UInt8.self)
+        // The opaque bounding box still contains transparent corners after a rotation. Fit the largest
+        // axis-aligned rectangle that sits entirely on solid pixels, then scale it uniformly.
+        guard let crop = Self.inscribedOpaqueRect(bytes: bytes, width: width, height: height, stride: context.bytesPerRow),
+              crop.width >= 1, crop.height >= 1,
+              crop.width < CGFloat(width) - 0.5 || crop.height < CGFloat(height) - 0.5,
               let cropped = image.cropping(to: crop) else { return image }
         let fitted = try BrushRaster.context(width: width, height: height, mask: false)
         let scale = min(CGFloat(width) / crop.width, CGFloat(height) / crop.height)
@@ -244,6 +248,39 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
         BrushRaster.draw(cropped, in: draw, mask: false, context: fitted)
         guard let fittedImage = fitted.makeImage() else { return image }
         return fittedImage
+    }
+
+    /// Largest axis-aligned rectangle whose pixels are all opaque enough to count as picture, not fringe.
+    /// Buffer row 0 is the top, matching `CGImage.cropping(to:)`.
+    private static func inscribedOpaqueRect(bytes: UnsafePointer<UInt8>, width: Int, height: Int, stride: Int) -> CGRect? {
+        guard width > 0, height > 0 else { return nil }
+        var left = [Int](repeating: width, count: height)
+        var right = [Int](repeating: -1, count: height)
+        for y in 0..<height {
+            let row = bytes + y * stride
+            for x in 0..<width where row[x * 4 + 3] >= 240 {
+                if x < left[y] { left[y] = x }
+                if x > right[y] { right[y] = x }
+            }
+        }
+        var bestArea = 0
+        var best: CGRect?
+        for start in 0..<height where right[start] >= left[start] {
+            var maxLeft = left[start], minRight = right[start]
+            for end in start..<height {
+                guard right[end] >= left[end] else { break }
+                maxLeft = max(maxLeft, left[end])
+                minRight = min(minRight, right[end])
+                let span = minRight - maxLeft + 1
+                if span <= 0 { break }
+                let area = span * (end - start + 1)
+                if area > bestArea {
+                    bestArea = area
+                    best = CGRect(x: maxLeft, y: start, width: span, height: end - start + 1)
+                }
+            }
+        }
+        return best
     }
 
     /// Core Image corner positions with y measured upward from the bottom (TL, TR, BR, BL).

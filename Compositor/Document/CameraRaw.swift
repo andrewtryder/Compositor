@@ -221,18 +221,17 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         let paintEffects = clipping == nil && !sharpenMask && settings.adjustsEffects
         let paintDetailOptics = clipping == nil && (settings.adjustsDetail || settings.adjustsOptics || sharpenMask)
         var source = image
-        // Distortion → volume → perspective → crop, then the grade. Distortion runs early so volume and
-        // upright see a rectilinear grid; the late optics pass skips it when already applied.
+        // Distortion → volume → perspective → crop, then the grade. Distortion moves early only when
+        // geometry runs, so an optics-only grade keeps its previous order. The late pass skips distortion
+        // when this already applied it, including a lens profile's share of the same k.
         var earlyDistortion = false
-        if clipping == nil && !sharpenMask && visualizePointColor < 0 {
+        if clipping == nil && !sharpenMask && visualizePointColor < 0 && settings.adjustsGeometry {
             let distortionK = settings.optics.distortionK(profileStrength: PixelFilter.lensStrength)
             if distortionK != 0 {
                 source = try Self.applyLensDistort(source, k: distortionK)
                 earlyDistortion = true
             }
-            if settings.adjustsGeometry {
-                source = try settings.geometry.apply(source)
-            }
+            source = try settings.geometry.apply(source)
         }
         func applyTable(_ table: [Float]?, pixels: UnsafeMutablePointer<UInt8>, width: Int, height: Int, stride: Int, clipping: Int32) {
             if usesGPU, clipping == 0, let table,
@@ -586,10 +585,12 @@ extension EditorSession {
         let mode = edit.settings.cameraRaw.geometry.upright
         guard mode.isAuto else { return }
         let image = edit.previewSource
+        let version = edit.previewSourceVersion
         let guides = await Task.detached(priority: .userInitiated) {
             CameraRawUprightDetection.guides(in: image, mode: mode)
         }.value
-        guard filterEdit === edit, !edit.committing, edit.settings.cameraRaw.geometry.upright == mode else { return }
+        guard filterEdit === edit, !edit.committing, edit.settings.cameraRaw.geometry.upright == mode,
+              edit.previewSourceVersion == version else { return }
         var settings = edit.settings
         settings.cameraRaw.geometry.guides = guides
         edit.cameraRawUprightDetectionAttempted = true

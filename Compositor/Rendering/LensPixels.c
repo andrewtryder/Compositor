@@ -11,6 +11,8 @@ static double compute_anamorphosis(double a, double b) {
 
 static void sample_bilinear(const uint8_t *source, size_t width, size_t height, size_t stride,
                             double sx, double sy, uint8_t *out) {
+    // Premultiplied samples. Missing neighbors contribute nothing, so the edge fades to transparent
+    // instead of picking up a straight-alpha color halo.
     double fx0 = floor(sx), fy0 = floor(sy);
     double fx = sx - fx0, fy = sy - fy0;
     long x0 = (long)fx0, y0 = (long)fy0;
