@@ -92,6 +92,19 @@ struct CameraRawGeometryControls: View {
 
     private var uprightBinding: Binding<CameraRawUprightMode> {
         Binding(get: { raw.geometry.upright }, set: { mode in
+            let previous = raw.geometry.upright
+            if mode.isAuto, previous == .guided {
+                session.filterEdit?.cameraRawManualGuides = raw.geometry.guides
+            }
+            if mode == .guided, let saved = session.filterEdit?.cameraRawManualGuides {
+                update {
+                    $0.cameraRaw.geometry.upright = mode
+                    $0.cameraRaw.geometry.guides = saved
+                }
+                session.filterEdit?.drawingCameraRawGeometryGuide = false
+                session.filterEdit?.cameraRawUprightDetectionAttempted = false
+                return
+            }
             update { $0.cameraRaw.geometry.upright = mode }
             if mode != .guided { session.filterEdit?.drawingCameraRawGeometryGuide = false }
             if mode.isAuto {

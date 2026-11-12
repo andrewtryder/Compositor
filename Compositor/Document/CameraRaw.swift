@@ -586,15 +586,18 @@ extension EditorSession {
         guard mode.isAuto else { return }
         let image = edit.previewSource
         let version = edit.previewSourceVersion
-        let guides = await Task.detached(priority: .userInitiated) {
-            CameraRawUprightDetection.guides(in: image, mode: mode)
+        let observation = await Task.detached(priority: .userInitiated) {
+            CameraRawUprightDetection.observe(in: image, mode: mode)
         }.value
-        guard filterEdit === edit, !edit.committing, edit.settings.cameraRaw.geometry.upright == mode,
-              edit.previewSourceVersion == version else { return }
-        var settings = edit.settings
-        settings.cameraRaw.geometry.guides = guides
-        edit.cameraRawUprightDetectionAttempted = true
-        updateFilter(settings, preview: edit.preview)
+        guard let current = filterEdit, CameraRawUprightDetection.shouldApply(
+            mode: mode, current: current.settings.cameraRaw.geometry.upright,
+            version: version, currentVersion: current.previewSourceVersion, committing: current.committing
+        ) else { return }
+        var settings = current.settings
+        // A miss leaves the picture alone. Guided lines stashed on the edit are put back if the user returns to Guided.
+        settings.cameraRaw.geometry.guides = observation.guides
+        current.cameraRawUprightDetectionAttempted = true
+        updateFilter(settings, preview: current.preview)
     }
 
     func beginCameraRawGeometryGuide(at point: CGPoint) {

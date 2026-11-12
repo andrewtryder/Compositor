@@ -603,6 +603,8 @@ final class FilterEdit {
     /// Guided Upright: drag lines on the preview.
     var drawingCameraRawGeometryGuide = false
     var cameraRawGuideDraft: (start: CGPoint, end: CGPoint)?
+    /// Guided lines set aside while Auto is searching, so a miss or a return to Guided does not lose them.
+    var cameraRawManualGuides: [CameraRawGeometryGuide]?
     /// True after Auto upright has searched the preview, so the panel can say when nothing was found.
     var cameraRawUprightDetectionAttempted = false
     /// Set while Option is held on Exposure, Highlights, Shadows, Whites, or Blacks.

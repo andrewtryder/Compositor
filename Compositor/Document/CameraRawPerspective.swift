@@ -169,9 +169,10 @@ nonisolated enum CameraRawPerspective {
         return CGPoint(x: x, y: y)
     }
 
-    /// A vanishing point close to the picture makes a destructive warp. Parallel lines have none.
+    /// A vanishing point inside the picture, or barely outside it, makes a destructive warp.
+    /// A normal wide-angle wall can meet about a fifth of the frame beyond the edge. `isPlausible` still refuses the rest.
     static func vanishingPointIsFar(_ point: CGPoint, width: Double, height: Double) -> Bool {
-        let marginX = width * 0.35, marginY = height * 0.35
+        let marginX = width * 0.20, marginY = height * 0.20
         return point.x < -marginX || point.x > width + marginX || point.y < -marginY || point.y > height + marginY
     }
 

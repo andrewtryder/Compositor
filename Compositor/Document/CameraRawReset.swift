@@ -139,6 +139,7 @@ extension EditorSession {
             edit.cameraRawGuideDraft = nil
             edit.drawingCameraRawGeometryGuide = false
             edit.cameraRawUprightDetectionAttempted = false
+            edit.cameraRawManualGuides = nil
         }
         updateFilter(settings, preview: edit.preview)
     }
