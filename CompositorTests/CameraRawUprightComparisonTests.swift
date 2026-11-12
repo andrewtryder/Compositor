@@ -3,13 +3,12 @@ import ImageIO
 import Testing
 @testable import Compositor
 
-/// Renders the local validation corpus through the real geometry path.
-/// The folder is created on this machine; CI has nothing to render and returns.
+/// Renders the validation corpus through the real geometry path.
+/// Synthetic fixtures live in the checkout. Photographs stay untracked and are skipped when absent.
 @MainActor
 struct CameraRawUprightComparisonTests {
-    private let root = URL(fileURLWithPath: "/Users/atr/code/Compositor/work/geometry-validation", isDirectory: true)
-
     @Test func renderComparisonCorpus() throws {
+        guard let root = GeometryValidationFixtures.sourceRoot() else { return }
         let input = root.appendingPathComponent("input")
         guard FileManager.default.fileExists(atPath: input.path) else { return }
         let output = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("geometry-validation-out")
@@ -84,8 +83,10 @@ struct CameraRawUprightComparisonTests {
     }
 
     /// Three real photographs, each as the camera JPEG and as the metadata-stripped derivative.
-    /// Volume and Constrain Crop stay off. Missing files skip that case so CI stays empty.
-    @Test func renderPhotographicModes() throws {
+    /// Volume and Constrain Crop stay off. Without the local files the test is skipped, not passed.
+    @Test(.enabled(if: GeometryValidationFixtures.hasLocalPhotographs, "local photographs are not in this checkout or its linked worktrees"))
+    func renderPhotographicModes() throws {
+        let root = try #require(GeometryValidationFixtures.rootContaining("originals/window-wall.jpg"))
         let cases = [
             ("stone-house", "originals/stone-house.jpg"),
             ("window-wall", "originals/window-wall.jpg"),
