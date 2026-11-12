@@ -792,6 +792,55 @@ struct CameraRawTests {
         #expect(try pixels(settings.apply(cool)) == coolPixels)
     }
 
+    /// Converging verticals take the vanishing-point path; nearly parallel verticals fall back to rotation;
+    /// two of each take the rectangle DLT path. Manual Vertical / Horizontal / Rotate must not change
+    /// solver corners while upright is on, and must still work when upright is Off.
+    @Test func perspectiveHomographyPathsAndKeystoneIsolation() {
+        let converging = [
+            CameraRawGeometryGuide(startX: 0.30, startY: 0.05, endX: 0.20, endY: 0.95),
+            CameraRawGeometryGuide(startX: 0.70, startY: 0.05, endX: 0.85, endY: 0.95)
+        ]
+        #expect(CameraRawPerspective.homography(guides: converging, width: 100, height: 100) != nil)
+        var settings = CameraRawGeometrySettings()
+        settings.upright = .guided
+        settings.guides = converging
+        let convergingCorners = settings.outputCorners(width: 100, height: 100)
+        let identity = [CGPoint(x: 0, y: 100), CGPoint(x: 100, y: 100), CGPoint(x: 100, y: 0), CGPoint(x: 0, y: 0)]
+        #expect(zip(convergingCorners, identity).contains { hypot($0.x - $1.x, $0.y - $1.y) > 0.5 })
+
+        let parallel = [
+            CameraRawGeometryGuide(startX: 0.30, startY: 0.05, endX: 0.32, endY: 0.95),
+            CameraRawGeometryGuide(startX: 0.70, startY: 0.05, endX: 0.72, endY: 0.95)
+        ]
+        #expect(CameraRawPerspective.homography(guides: parallel, width: 100, height: 100) != nil)
+
+        let rectangle = [
+            CameraRawGeometryGuide(startX: 0.25, startY: 0.10, endX: 0.20, endY: 0.90),
+            CameraRawGeometryGuide(startX: 0.75, startY: 0.10, endX: 0.80, endY: 0.90),
+            CameraRawGeometryGuide(startX: 0.15, startY: 0.25, endX: 0.85, endY: 0.20),
+            CameraRawGeometryGuide(startX: 0.15, startY: 0.80, endX: 0.85, endY: 0.75)
+        ]
+        #expect(CameraRawPerspective.homography(guides: rectangle, width: 200, height: 200) != nil)
+        settings.guides = rectangle
+        let rectCorners = settings.outputCorners(width: 200, height: 200)
+        let rectIdentity = [CGPoint(x: 0, y: 200), CGPoint(x: 200, y: 200), CGPoint(x: 200, y: 0), CGPoint(x: 0, y: 0)]
+        #expect(zip(rectCorners, rectIdentity).contains { hypot($0.x - $1.x, $0.y - $1.y) > 0.5 })
+
+        settings.guides = converging
+        settings.vertical = 40
+        settings.horizontal = -35
+        settings.rotate = 12
+        let withKeystone = settings.outputCorners(width: 100, height: 100)
+        #expect(zip(withKeystone, convergingCorners).allSatisfy { hypot($0.x - $1.x, $0.y - $1.y) < 0.01 },
+                "Guided / Auto ignore Vertical, Horizontal, and Rotate")
+
+        var manual = CameraRawGeometrySettings()
+        manual.vertical = 40
+        let manualCorners = manual.outputCorners(width: 100, height: 100)
+        #expect(zip(manualCorners, identity).contains { hypot($0.x - $1.x, $0.y - $1.y) > 0.5 },
+                "Off still uses Vertical / Horizontal / Rotate")
+    }
+
     @Test func computeAnamorphosisAndVolumeModes() {
         #expect(CameraRawGeometrySettings.computeAnamorphosis(a: 0.8, b: 0) == 0.8)
         let warped = CameraRawGeometrySettings.computeAnamorphosis(a: 0.8, b: 0.4)

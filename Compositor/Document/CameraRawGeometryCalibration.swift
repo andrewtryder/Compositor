@@ -97,7 +97,6 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
 
     private var usesPolish: Bool {
         aspect != 0 || scale != 0 || offsetX != 0 || offsetY != 0
-            || (upright != .off && (vertical != 0 || horizontal != 0 || rotate != 0))
     }
 
     var normalized: Self {
@@ -252,10 +251,8 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
         let w = Double(width), h = Double(height)
         var corners: [CGPoint]
         if upright != .off, let homo = CameraRawPerspective.homography(guides: guides, width: width, height: height) {
+            // Guided / Auto: solver owns keystone. Vertical / Horizontal / Rotate are ignored.
             corners = CameraRawPerspective.perspectiveCorners(homography: homo, width: width, height: height)
-            // Manual sliders still refine after Guided / Auto.
-            corners = Self.manualKeystone(corners: corners, width: w, height: h, vertical: vertical,
-                                          horizontal: horizontal, rotation: rotate, projection: projection)
         } else if upright == .off {
             corners = Self.manualCorners(width: w, height: h, vertical: vertical, horizontal: horizontal,
                                          rotation: rotate, projection: projection)
@@ -288,30 +285,6 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
         topLeft = rotated(topLeft); topRight = rotated(topRight)
         bottomRight = rotated(bottomRight); bottomLeft = rotated(bottomLeft)
         return [topLeft, topRight, bottomRight, bottomLeft]
-    }
-
-    private static func manualKeystone(corners: [CGPoint], width w: Double, height h: Double, vertical: Double,
-                                       horizontal: Double, rotation: Double, projection: CameraRawProjection) -> [CGPoint] {
-        guard vertical != 0 || horizontal != 0 || rotation != 0 else { return corners }
-        let strength = projection == .perspective ? 1.0 : 0.55
-        let v = vertical / 100 * w * 0.18 * strength
-        let hz = horizontal / 100 * h * 0.18 * strength
-        var result = [
-            CGPoint(x: corners[0].x - v, y: corners[0].y),
-            CGPoint(x: corners[1].x + v, y: corners[1].y),
-            CGPoint(x: corners[2].x + hz, y: corners[2].y),
-            CGPoint(x: corners[3].x - hz, y: corners[3].y)
-        ]
-        if rotation != 0 {
-            let center = CGPoint(x: w / 2, y: h / 2)
-            let radians = rotation * .pi / 180
-            let cosine = cos(radians), sine = sin(radians)
-            result = result.map { point in
-                let dx = point.x - center.x, dy = point.y - center.y
-                return CGPoint(x: center.x + dx * cosine - dy * sine, y: center.y + dx * sine + dy * cosine)
-            }
-        }
-        return result
     }
 
     private static func polish(corners: [CGPoint], width w: Double, height h: Double, aspect: Double, scale: Double,

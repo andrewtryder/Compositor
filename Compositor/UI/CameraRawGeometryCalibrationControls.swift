@@ -44,15 +44,27 @@ struct CameraRawGeometryControls: View {
                 ForEach(CameraRawProjection.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .help("Perspective allows stronger keystone. Rectilinear keeps the warp gentler.")
-            geometrySlider("Vertical", \.vertical, help: "Straightens vertical lines toward the center.")
-            geometrySlider("Horizontal", \.horizontal, help: "Straightens horizontal lines toward the center.")
-            geometrySlider("Rotate", \.rotate, range: CameraRawGeometrySettings.rotateRange, help: "Rotates the picture around its center.")
+            let keystoneEnabled = raw.geometry.upright == .off
+            geometrySlider("Vertical", \.vertical, help: "Straightens vertical lines toward the center.",
+                           enabled: keystoneEnabled)
+            geometrySlider("Horizontal", \.horizontal, help: "Straightens horizontal lines toward the center.",
+                           enabled: keystoneEnabled)
+            geometrySlider("Rotate", \.rotate, range: CameraRawGeometrySettings.rotateRange,
+                           help: "Rotates the picture around its center.", enabled: keystoneEnabled)
+            if !keystoneEnabled {
+                Text("Vertical, Horizontal, and Rotate stay off while Guided or Auto is solving the upright.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             geometrySlider("Aspect", \.aspect, help: "Stretches width relative to height.")
             geometrySlider("Scale", \.scale, help: "Zooms the transformed picture within the frame.")
             geometrySlider("Offset X", \.offsetX, help: "Moves the picture left or right.")
             geometrySlider("Offset Y", \.offsetY, help: "Moves the picture up or down.")
             Toggle("Constrain Crop", isOn: binding(\.constrainCrop))
                 .help("Crops empty edges after the transform and fits the result back into the frame.")
+            Button("Reset Geometry") {
+                session.resetCameraRaw(.geometry)
+            }
+            .help("Clears upright, guides, volume, and framing polish. Keeps the photo’s focal length for Volume Auto.")
 
             Text("Volume").font(.subheadline).padding(.top, 4)
             Picker("Volume Mode", selection: binding(\.volumeMode)) {
@@ -95,7 +107,8 @@ struct CameraRawGeometryControls: View {
     }
 
     private func geometrySlider(_ title: String, _ key: WritableKeyPath<CameraRawGeometrySettings, Double>,
-                                range: ClosedRange<Double> = CameraRawGeometrySettings.toneRange, help: String) -> some View {
+                                range: ClosedRange<Double> = CameraRawGeometrySettings.toneRange, help: String,
+                                enabled: Bool = true) -> some View {
         let value = raw.geometry[keyPath: key]
         return HStack(spacing: 10) {
             Text(title).frame(minWidth: CameraRawControls.labelWidth, alignment: .leading).help(help)
@@ -110,6 +123,7 @@ struct CameraRawGeometryControls: View {
                       format: .number.precision(.fractionLength(0)))
                 .frame(width: 56).textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).help(help)
         }
+        .disabled(!enabled)
     }
 
     private func volumeSlider(_ title: String, _ key: WritableKeyPath<CameraRawGeometrySettings, Double>, help: String) -> some View {
