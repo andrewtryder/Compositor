@@ -13,8 +13,8 @@ struct CameraRawGeometryControls: View {
                 ForEach(CameraRawUprightMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .labelsHidden()
-            .pickerStyle(.segmented)
-            .help("Off leaves the picture as it is. Guided straightens from lines you draw on the picture.")
+            .pickerStyle(.menu)
+            .help("Off leaves the picture as it is. Auto finds lines in the picture. Guided straightens from lines you draw.")
             if raw.geometry.upright == .guided {
                 Button {
                     session.filterEdit?.drawingCameraRawGeometryGuide.toggle()
@@ -22,10 +22,10 @@ struct CameraRawGeometryControls: View {
                 } label: {
                     Label("Draw Guides", systemImage: "line.diagonal")
                 }
-                .help("Draw two or more lines on the preview that should be level or vertical.")
+                .help("Draw lines on the preview that should be level or vertical.")
                 .tint(session.filterEdit?.drawingCameraRawGeometryGuide == true ? Color.accentColor : Color.secondary)
                 if session.filterEdit?.drawingCameraRawGeometryGuide == true {
-                    Text("Drag on the layer to place a guide. Draw at least two lines.")
+                    Text("Drag on the layer to place a guide. One near-horizontal levels; two vertical or horizontal force parallels; four make a rectangle.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if !raw.geometry.guides.isEmpty {
@@ -35,26 +35,83 @@ struct CameraRawGeometryControls: View {
                     .help("Remove every guide line.")
                 }
             }
+            if raw.geometry.upright.isAuto, raw.geometry.guides.isEmpty,
+               session.filterEdit?.cameraRawUprightDetectionAttempted == true {
+                Text("No strong lines found. Try Guided, or draw the picture’s upright edges.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Picker("Projection", selection: binding(\.projection)) {
                 ForEach(CameraRawProjection.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .help("Perspective allows stronger keystone. Rectilinear keeps the warp gentler.")
-            geometrySlider("Vertical", \.vertical, help: "Straightens vertical lines toward the center.")
-            geometrySlider("Horizontal", \.horizontal, help: "Straightens horizontal lines toward the center.")
-            geometrySlider("Rotate", \.rotate, range: CameraRawGeometrySettings.rotateRange, help: "Rotates the picture around its center.")
+            let keystoneEnabled = raw.geometry.upright == .off
+            geometrySlider("Vertical", \.vertical, help: "Straightens vertical lines toward the center.",
+                           enabled: keystoneEnabled)
+            geometrySlider("Horizontal", \.horizontal, help: "Straightens horizontal lines toward the center.",
+                           enabled: keystoneEnabled)
+            geometrySlider("Rotate", \.rotate, range: CameraRawGeometrySettings.rotateRange,
+                           help: "Rotates the picture around its center.", enabled: keystoneEnabled)
+            if !keystoneEnabled {
+                Text("Vertical, Horizontal, and Rotate stay off while Guided or Auto is solving the upright.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             geometrySlider("Aspect", \.aspect, help: "Stretches width relative to height.")
             geometrySlider("Scale", \.scale, help: "Zooms the transformed picture within the frame.")
             geometrySlider("Offset X", \.offsetX, help: "Moves the picture left or right.")
             geometrySlider("Offset Y", \.offsetY, help: "Moves the picture up or down.")
             Toggle("Constrain Crop", isOn: binding(\.constrainCrop))
                 .help("Crops empty edges after the transform and fits the result back into the frame.")
+            Button("Reset Geometry") {
+                session.resetCameraRaw(.geometry)
+            }
+            .help("Clears upright, guides, volume, and framing polish. Keeps the photo’s focal length for Volume Auto.")
+
+            Text("Volume").font(.subheadline).padding(.top, 4)
+            Picker("Volume Mode", selection: binding(\.volumeMode)) {
+                ForEach(CameraRawVolumeMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .help("Radial pulls the corners. Horizontal and Vertical bend one axis. Horizontal & Vertical applies both.")
+            volumeSlider("Horizontal", \.volumeHorizontal, help: "Cylindrical volume along the width.")
+            volumeSlider("Vertical", \.volumeVertical, help: "Cylindrical volume along the height.")
+            volumeSlider("Radial", \.volumeRadial, help: "Spherical volume toward the corners.")
+            HStack {
+                Button("Auto") {
+                    update { $0.cameraRaw.geometry.applyAutoVolumeFromFocal() }
+                }
+                .help("Sets the volume sliders from the photo’s focal length when EXIF is available.")
+                .disabled(raw.geometry.focalLengthMm <= 0 || raw.geometry.sensorWidthMm <= 0)
+                if raw.geometry.focalLengthMm > 0 {
+                    Text(raw.geometry.sensorWidthMm > 0
+                         ? String(format: "%.0f mm · sensor %.1f mm", raw.geometry.focalLengthMm, raw.geometry.sensorWidthMm)
+                         : String(format: "%.0f mm", raw.geometry.focalLengthMm))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
     private var uprightBinding: Binding<CameraRawUprightMode> {
         Binding(get: { raw.geometry.upright }, set: { mode in
+            let previous = raw.geometry.upright
+            if mode.isAuto, previous == .guided {
+                session.filterEdit?.cameraRawManualGuides = raw.geometry.guides
+            }
+            if mode == .guided, let saved = session.filterEdit?.cameraRawManualGuides {
+                update {
+                    $0.cameraRaw.geometry.upright = mode
+                    $0.cameraRaw.geometry.guides = saved
+                }
+                session.filterEdit?.drawingCameraRawGeometryGuide = false
+                session.filterEdit?.cameraRawUprightDetectionAttempted = false
+                return
+            }
             update { $0.cameraRaw.geometry.upright = mode }
             if mode != .guided { session.filterEdit?.drawingCameraRawGeometryGuide = false }
+            if mode.isAuto {
+                Task { await session.applyCameraRawUprightDetection() }
+            } else if mode == .off {
+                session.filterEdit?.cameraRawUprightDetectionAttempted = false
+            }
         })
     }
 
@@ -63,7 +120,27 @@ struct CameraRawGeometryControls: View {
     }
 
     private func geometrySlider(_ title: String, _ key: WritableKeyPath<CameraRawGeometrySettings, Double>,
-                                range: ClosedRange<Double> = CameraRawGeometrySettings.toneRange, help: String) -> some View {
+                                range: ClosedRange<Double> = CameraRawGeometrySettings.toneRange, help: String,
+                                enabled: Bool = true) -> some View {
+        let value = raw.geometry[keyPath: key]
+        return HStack(spacing: 10) {
+            Text(title).frame(minWidth: CameraRawControls.labelWidth, alignment: .leading).help(help)
+                .scrubbable(sensitivity: 1,
+                            value: Binding(get: { raw.geometry[keyPath: key] },
+                                           set: { newValue in update { $0.cameraRaw.geometry[keyPath: key] = newValue } }), range: range)
+            CameraRawSlider(value: value, range: range, track: .plain, help: help,
+                            onChange: { rawValue in update { $0.cameraRaw.geometry[keyPath: key] = rawValue.rounded() } },
+                            onReset: { update { $0.cameraRaw.geometry[keyPath: key] = 0 } })
+            TextField(title, value: Binding(get: { raw.geometry[keyPath: key] },
+                                            set: { newValue in update { $0.cameraRaw.geometry[keyPath: key] = newValue } }),
+                      format: .number.precision(.fractionLength(0)))
+                .frame(width: 56).textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).help(help)
+        }
+        .disabled(!enabled)
+    }
+
+    private func volumeSlider(_ title: String, _ key: WritableKeyPath<CameraRawGeometrySettings, Double>, help: String) -> some View {
+        let range = CameraRawGeometrySettings.volumeRange
         let value = raw.geometry[keyPath: key]
         return HStack(spacing: 10) {
             Text(title).frame(minWidth: CameraRawControls.labelWidth, alignment: .leading).help(help)

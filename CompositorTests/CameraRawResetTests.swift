@@ -51,6 +51,26 @@ struct CameraRawResetTests {
         #expect(edited().resetting(.color).whiteBalance == .custom)
     }
 
+    /// Geometry reset clears upright / guides / volume / polish but keeps EXIF focal and sensor for Volume Auto.
+    @Test func geometryResetKeepsFocalAndSensor() {
+        var settings = edited()
+        settings.geometry.focalLengthMm = 24
+        settings.geometry.sensorWidthMm = 36
+        settings.geometry.upright = .guided
+        settings.geometry.guides = [CameraRawGeometryGuide(startX: 0.1, startY: 0.2, endX: 0.9, endY: 0.3)]
+        settings.geometry.volumeRadial = 80
+        settings.geometry.aspect = 10
+        let reset = settings.resetting(.geometry)
+        #expect(reset.geometry.focalLengthMm == 24)
+        #expect(reset.geometry.sensorWidthMm == 36)
+        #expect(reset.geometry.upright == .off)
+        #expect(reset.geometry.guides.isEmpty)
+        #expect(reset.geometry.volumeRadial == 0)
+        #expect(reset.geometry.aspect == 0)
+        #expect(reset.geometry.vertical == 0)
+        #expect(reset.isDefault(.geometry))
+    }
+
     private func session() throws -> EditorSession {
         let context = try BrushRaster.context(width: 8, height: 8, mask: false)
         context.setFillColor(CGColor(srgbRed: 0.6, green: 0.5, blue: 0.4, alpha: 1))

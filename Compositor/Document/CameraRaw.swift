@@ -221,7 +221,16 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         let paintEffects = clipping == nil && !sharpenMask && settings.adjustsEffects
         let paintDetailOptics = clipping == nil && (settings.adjustsDetail || settings.adjustsOptics || sharpenMask)
         var source = image
+        // Distortion → volume → perspective → crop, then the grade. Distortion moves early only when
+        // geometry runs, so an optics-only grade keeps its previous order. The late pass skips distortion
+        // when this already applied it, including a lens profile's share of the same k.
+        var earlyDistortion = false
         if clipping == nil && !sharpenMask && visualizePointColor < 0 && settings.adjustsGeometry {
+            let distortionK = settings.optics.distortionK(profileStrength: PixelFilter.lensStrength)
+            if distortionK != 0 {
+                source = try Self.applyLensDistort(source, k: distortionK)
+                earlyDistortion = true
+            }
             source = try settings.geometry.apply(source)
         }
         func applyTable(_ table: [Float]?, pixels: UnsafeMutablePointer<UInt8>, width: Int, height: Int, stride: Int, clipping: Int32) {
@@ -270,9 +279,24 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
             }
             if paintDetailOptics {
                 settings.applyDetailOptics(pixels: pixels, width: width, height: height, stride: stride, scale: pixelScale,
-                                           profileStrength: PixelFilter.lensStrength, sharpenMask: sharpenMask)
+                                           profileStrength: PixelFilter.lensStrength, sharpenMask: sharpenMask,
+                                           skipDistortion: earlyDistortion)
             }
         }
+    }
+
+    /// Premultiplied RGBA lens distortion matching `lens_distort` / the Lens Correction filter.
+    static func applyLensDistort(_ image: CGImage, k: Double) throws -> CGImage {
+        guard k != 0 else { return image }
+        let width = image.width, height = image.height
+        let source = try BrushRaster.context(width: width, height: height, mask: false)
+        BrushRaster.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height), mask: false, context: source)
+        let destination = try BrushRaster.context(width: width, height: height, mask: false)
+        guard let from = source.data, let into = destination.data else { throw ExportError.render }
+        lens_distort(from.assumingMemoryBound(to: UInt8.self), into.assumingMemoryBound(to: UInt8.self),
+                     width, height, source.bytesPerRow, k)
+        guard let result = destination.makeImage() else { throw ExportError.render }
+        return result
     }
 
     /// Temperature and tint that turn one straight sRGB color (0…1) as nearly gray as Camera Raw's white balance can.
@@ -553,6 +577,27 @@ extension EditorSession {
             edit.cameraRawPointIndex = settings.cameraRaw.mixer.points.count - 1
         }
         updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Auto Level / Vertical / Full: detect guides on the preview source and refresh.
+    func applyCameraRawUprightDetection() async {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return }
+        let mode = edit.settings.cameraRaw.geometry.upright
+        guard mode.isAuto else { return }
+        let image = edit.previewSource
+        let version = edit.previewSourceVersion
+        let observation = await Task.detached(priority: .userInitiated) {
+            CameraRawUprightDetection.observe(in: image, mode: mode)
+        }.value
+        guard let current = filterEdit, CameraRawUprightDetection.shouldApply(
+            mode: mode, current: current.settings.cameraRaw.geometry.upright,
+            version: version, currentVersion: current.previewSourceVersion, committing: current.committing
+        ) else { return }
+        var settings = current.settings
+        // A miss leaves the picture alone. Guided lines stashed on the edit are put back if the user returns to Guided.
+        settings.cameraRaw.geometry.guides = observation.guides
+        current.cameraRawUprightDetectionAttempted = true
+        updateFilter(settings, preview: current.preview)
     }
 
     func beginCameraRawGeometryGuide(at point: CGPoint) {

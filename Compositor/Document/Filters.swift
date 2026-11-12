@@ -603,6 +603,10 @@ final class FilterEdit {
     /// Guided Upright: drag lines on the preview.
     var drawingCameraRawGeometryGuide = false
     var cameraRawGuideDraft: (start: CGPoint, end: CGPoint)?
+    /// Guided lines set aside while Auto is searching, so a miss or a return to Guided does not lose them.
+    var cameraRawManualGuides: [CameraRawGeometryGuide]?
+    /// True after Auto upright has searched the preview, so the panel can say when nothing was found.
+    var cameraRawUprightDetectionAttempted = false
     /// Set while Option is held on Exposure, Highlights, Shadows, Whites, or Blacks.
     var cameraRawClipping: CameraRawClipping?
     /// Set while Option is held on Sharpening Masking.
@@ -828,6 +832,11 @@ extension EditorSession {
                 layer.asset = ImportedImage(image: clear, thumbnail: try PixelAdjust.thumbnail(of: clear), name: layer.name)
             }
             var settings = filterSettings
+            // RAW import seeds focal / sensor onto the asset for Camera Raw volume Auto.
+            if kind == .cameraRaw, !repeating, let asset = layer.asset {
+                if asset.focalLengthMm > 0 { settings.cameraRaw.geometry.focalLengthMm = asset.focalLengthMm }
+                if asset.sensorWidthMm > 0 { settings.cameraRaw.geometry.sensorWidthMm = asset.sensorWidthMm }
+            }
             // Progressive Blur starts sharp at the top of the layer's visible part, blurring to its foot; Last Filter
             // keeps the line it had.
             if kind == .progressiveBlur, !repeating {

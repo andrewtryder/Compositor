@@ -1,0 +1,89 @@
+{
+  "coordinateSystem" : "y grows downward, matching the PNG rows",
+  "images" : [
+    {
+      "expect" : "vertical",
+      "file" : "synthetic-strong-vertical.png",
+      "kind" : "synthetic",
+      "note" : "Four walls meet at (600, -900) in y-down pixels. No horizon.",
+      "scene" : "strong architectural perspective"
+    },
+    {
+      "expect" : "vertical",
+      "file" : "synthetic-mild-vertical.png",
+      "kind" : "synthetic",
+      "note" : "Vanishing point (600, -4200). Convergence is only a few degrees.",
+      "scene" : "mild perspective"
+    },
+    {
+      "expect" : "full",
+      "file" : "synthetic-interior.png",
+      "kind" : "synthetic",
+      "note" : "Vertical vanishing point (600, -700) and horizontal vanishing point (3200, 420).",
+      "scene" : "interior architecture"
+    },
+    {
+      "expect" : "full",
+      "file" : "synthetic-wide.png",
+      "kind" : "synthetic",
+      "note" : "Close vertical vanishing point (600, -260), so the walls converge hard.",
+      "scene" : "wide-angle architecture"
+    },
+    {
+      "expect" : "level",
+      "file" : "synthetic-tilted-horizon.png",
+      "kind" : "synthetic",
+      "note" : "Two parallel lines, slope -120\/1120. No vertical structure.",
+      "scene" : "tilted horizon"
+    },
+    {
+      "expect" : "identity or a very small correction",
+      "file" : "synthetic-misleading-lines.png",
+      "kind" : "synthetic",
+      "note" : "Long diagonals dominate. Two short near-verticals are weaker and slightly off plumb.",
+      "scene" : "misleading structural lines"
+    },
+    {
+      "expect" : "identity",
+      "file" : "synthetic-no-lines.png",
+      "kind" : "synthetic",
+      "note" : "Smooth gradient. Auto should leave it alone.",
+      "scene" : "no useful straight lines"
+    },
+    {
+      "expect" : "vertical",
+      "file" : "synthetic-portrait-vertical.png",
+      "kind" : "synthetic",
+      "note" : "800×1200. Vanishing point (400, -640).",
+      "scene" : "portrait orientation"
+    },
+    {
+      "expect" : "vertical",
+      "file" : "synthetic-off-center.png",
+      "kind" : "synthetic",
+      "note" : "Vanishing point (40, -800), left of the frame. Walls sit on the right.",
+      "scene" : "off-center subject"
+    },
+    {
+      "expect" : "vertical or full",
+      "file" : "photo-vertical-landscape.png",
+      "kind" : "photograph",
+      "note" : "DxO ViewPoint 5 sample 05-Perspective-Vertical-Tutorial-Kevin_Barre.jpg, longest side 1600, re-encoded as PNG with no camera metadata.",
+      "scene" : "strong architectural perspective"
+    },
+    {
+      "expect" : "vertical or full",
+      "file" : "photo-vertical-portrait.png",
+      "kind" : "photograph",
+      "note" : "DxO ViewPoint 5 sample 06-Perspective-Vertical-Tutorial-Kevin_Barre.jpg, longest side 1600, re-encoded as PNG with no camera metadata.",
+      "scene" : "portrait architectural perspective"
+    },
+    {
+      "expect" : "vertical or full",
+      "file" : "photo-eight-point.png",
+      "kind" : "photograph",
+      "note" : "DxO ViewPoint 5 sample 12-Perspective-8Points-Tutorial-Martijn_Kort.jpg, longest side 1600, re-encoded as PNG with no camera metadata.",
+      "scene" : "two-direction architectural perspective"
+    }
+  ]
+}
