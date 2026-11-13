@@ -127,6 +127,8 @@ final class CanvasView: NSView {
     private var rgbSplitDrag = false
     /// Volumetric Light's light being dragged on the canvas.
     private var volumetricDrag = false
+    /// ReShape control-point drag in progress.
+    private var meshDragging = false
     private var antsTimer: Timer?
     private var modifierMonitor: Any?
     private var sampleClickMonitor: Any?
@@ -1054,6 +1056,24 @@ final class CanvasView: NSView {
                     opacity: opacity, blendMode: blendMode(of: layer), mask: mask, in: context)
                 return
             }
+            // ReShape mesh preview: warped pixels in the layer's existing placement.
+            // The GPU canvas prefers a resident CIImage; Core Graphics needs a CGImage, so read back once
+            // only when this path actually draws (GPU canvas unavailable / forced CPU canvas).
+            if let edit = session.meshWarpEdit, edit.layerID == layer.id {
+                let image: CGImage
+                if let preview = edit.previewImage {
+                    image = preview
+                } else if edit.previewCIImage != nil,
+                          let readback = edit.commitImageForCanvas() {
+                    image = readback
+                } else {
+                    image = edit.displayedImage
+                }
+                LayerRenderer.draw(image, transform: edit.transform, center: center(edit.transform.center),
+                    scale: scale, opacity: opacity, blendMode: blendMode(of: layer),
+                    mask: displayedMask?.enabledImage, in: context)
+                return
+            }
             // A pending distortion shows the layer warped into its new shape — with its effects warped along with
             // it, so they stay on while the corners move.
             // Asked only while corners are being dragged: the request it makes stands for the layer's effects in the
@@ -1936,6 +1956,11 @@ final class CanvasView: NSView {
                                                  flags: event.modifierFlags))
         } else if session.tool == .crop {
             beginCropDrag(at: point)
+        } else if session.tool == .reshape, let document = session.document {
+            let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
+            meshDragging = session.meshWarpBeginDrag(at: pixel, viewRadius: 10,
+                                                     viewportScale: session.viewport.pointsPerPixel)
+            synchronizeDisplay()
         } else if session.tool == .move {
             // Double-click live text to edit it, without switching to the Type tool first.
             if event.clickCount >= 2, beginLiveTextEdit(at: point) { return }
@@ -2047,6 +2072,12 @@ final class CanvasView: NSView {
                 pixel = Self.snapped(pixel, around: handle == .start ? edit.end : edit.start)
             }
             session.moveGradient(start: handle == .start ? pixel : nil, end: handle == .end ? pixel : nil)
+            synchronizeDisplay()
+            return
+        }
+        if meshDragging, session.tool == .reshape, let document = session.document {
+            let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
+            session.meshWarpDrag(to: pixel)
             synchronizeDisplay()
             return
         }
@@ -2227,6 +2258,11 @@ final class CanvasView: NSView {
             if session.colorPicker != nil { ColorPickerPanelController.refocus() }
             return
         }
+        if meshDragging {
+            meshDragging = false
+            session.meshWarpEndDrag()
+            synchronizeDisplay()
+        }
         if session.brushStroke != nil || session.warpStroke != nil, !session.isProjectBusy {
             if let document = session.document {
                 session.continueBrush(at: session.viewport.documentPoint(from: convert(event.locationInWindow, from: nil), documentSize: document.size))
@@ -2352,6 +2388,16 @@ final class CanvasView: NSView {
         } else if session.tool == .crop, [36, 76].contains(event.keyCode) {
             cropDrag = nil
             Task { await session.commitCrop() }
+        } else if session.meshWarpEdit != nil, event.keyCode == 53 {
+            meshDragging = false
+            session.cancelMeshWarp()
+            session.selectTool(.move)
+            synchronizeDisplay()
+        } else if session.meshWarpEdit != nil, [36, 76].contains(event.keyCode) {
+            meshDragging = false
+            session.applyMeshWarp()
+            session.selectTool(.move)
+            synchronizeDisplay()
         } else if event.keyCode == 53, session.guideDrag != nil {
             session.cancelGuideDrag()
             guideDragging = false
@@ -3187,6 +3233,20 @@ extension CanvasView {
                 guard var placed = shown else { unsupported = true; return nil }
                 if let mask = layer.mask?.clipImage(placement: layer.maskTransform, over: canvas, width: warp.width, height: warp.height, limit: 2048) {
                     guard let placedMask = placement.place(mask, transform: canvas, mask: true) else { unsupported = true; return nil }
+                    placed = GPUBlend.masked(placed, by: placedMask)
+                }
+                return GPUBlend.faded(placed, opacity)
+            }
+            if let edit = session.meshWarpEdit, edit.layerID == layer.id {
+                let shown: CIImage?
+                if let live = edit.previewCIImage {
+                    shown = placement.place(live: live, width: edit.width, height: edit.height, transform: edit.transform)
+                } else {
+                    shown = placement.place(transient: edit.displayedImage, transform: edit.transform)
+                }
+                guard var placed = shown else { unsupported = true; return nil }
+                if let mask = session.displayedLayer(for: layer).mask?.enabledImage,
+                   let placedMask = placement.place(mask, transform: edit.transform, mask: true) {
                     placed = GPUBlend.masked(placed, by: placedMask)
                 }
                 return GPUBlend.faded(placed, opacity)

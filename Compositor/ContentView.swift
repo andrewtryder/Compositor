@@ -34,6 +34,10 @@ struct ContentView: View {
                 BrushControls(session: session)
                 Divider()
             }
+            if session.tool == .reshape {
+                MeshWarpControls(session: session)
+                Divider()
+            }
             if session.tool.isSelectionTool {
                 LassoControls(session: session)
                 Divider()

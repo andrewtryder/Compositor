@@ -222,12 +222,71 @@ final class TransformOverlay: NSView {
         if let center = rgbSplitCenter ?? volumetricLight { drawRGBSplitCenter(center) }
         else if session.tool == .crop { drawCrop() }
         else if let line = gradientLine { drawGradientLine(line) }
+        else if session.tool == .reshape { drawMeshWarp() }
         else { drawTransformHandles() }
         drawSelection()
         drawLassoDraft()
         drawSnapGuides()
         drawDistances()
         drawDragOutSize()
+    }
+
+    /// ReShape control-point grid in document space, converted through the viewport.
+    private func drawMeshWarp() {
+        guard let edit = session.meshWarpEdit, let document = session.document,
+              let context = NSGraphicsContext.current?.cgContext else { return }
+        let mesh = edit.mesh
+        let transform = edit.transform
+        let hairline = 1 / max(session.viewport.backingScale, 1)
+        context.saveGState()
+        context.setLineWidth(hairline)
+        context.setStrokeColor(NSColor.systemCyan.withAlphaComponent(0.85).cgColor)
+        let path = CGMutablePath()
+        for row in 0..<mesh.pointRows {
+            for column in 0..<mesh.pointColumns {
+                let index = mesh.index(column: column, row: row)
+                let uv = mesh.positions[index]
+                let documentPoint = transform.point(CGPoint(x: CGFloat(uv.x), y: CGFloat(uv.y)))
+                let view = session.viewport.viewPoint(from: documentPoint, documentSize: document.size)
+                if column + 1 < mesh.pointColumns {
+                    let next = mesh.positions[mesh.index(column: column + 1, row: row)]
+                    let nextDoc = transform.point(CGPoint(x: CGFloat(next.x), y: CGFloat(next.y)))
+                    let nextView = session.viewport.viewPoint(from: nextDoc, documentSize: document.size)
+                    path.move(to: view)
+                    path.addLine(to: nextView)
+                }
+                if row + 1 < mesh.pointRows {
+                    let next = mesh.positions[mesh.index(column: column, row: row + 1)]
+                    let nextDoc = transform.point(CGPoint(x: CGFloat(next.x), y: CGFloat(next.y)))
+                    let nextView = session.viewport.viewPoint(from: nextDoc, documentSize: document.size)
+                    path.move(to: view)
+                    path.addLine(to: nextView)
+                }
+            }
+        }
+        context.addPath(path)
+        context.strokePath()
+
+        let selected = edit.selectedIndex
+        for (index, uv) in mesh.positions.enumerated() {
+            let documentPoint = transform.point(CGPoint(x: CGFloat(uv.x), y: CGFloat(uv.y)))
+            let view = session.viewport.viewPoint(from: documentPoint, documentSize: document.size)
+            let radius: CGFloat = index == selected ? 5.5 : 4
+            let rect = CGRect(x: view.x - radius, y: view.y - radius, width: radius * 2, height: radius * 2)
+            if index == selected {
+                NSColor.systemYellow.setFill()
+            } else if mesh.stickyBorders, mesh.isBorder(index) {
+                NSColor.secondaryLabelColor.setFill()
+            } else {
+                NSColor.white.setFill()
+            }
+            NSBezierPath(ovalIn: rect).fill()
+            NSColor.black.withAlphaComponent(0.75).setStroke()
+            let ring = NSBezierPath(ovalIn: rect)
+            ring.lineWidth = hairline
+            ring.stroke()
+        }
+        context.restoreGState()
     }
 
     /// A Marquee's or shape's size, a line's length, or a resized layer's size, as it's dragged: in a dark label just
