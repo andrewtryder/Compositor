@@ -8,6 +8,12 @@ struct LayersPanel: View {
     /// it out past both edges, over the edge that resizes it.
     static let widths: ClosedRange<Double> = 261...372
 
+    private var activeLayerHasCorrectionStack: Bool {
+        guard let id = session.activeLayerID,
+              let layer = session.document?.layers.first(where: { $0.id == id }) else { return false }
+        return layer.correctionStack != nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             LayersHeader(session: session)
@@ -34,6 +40,13 @@ struct LayersPanel: View {
             Divider()
             LayersFooter(session: session)
 
+            // Correction stack inspector for layers with non-destructive corrections
+            if activeLayerHasCorrectionStack,
+               let activeLayerID = session.activeLayerID {
+                Divider()
+                CorrectionStackInspector(session: session, layerID: activeLayerID)
+                    .id(activeLayerID)
+            }
         }
         .frame(width: width)
         .task(id: session.adjustmentEditingID) {

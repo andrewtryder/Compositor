@@ -366,6 +366,36 @@ extension EditorSession {
         brushRevision += 1
     }
 
+    /// Opens the ReShape mesh editor on a correction-stack node, preserving upstream
+    /// Camera Raw corrections and the node's existing mesh.
+    func beginMeshWarpForCorrectionStack(layerID: UUID, nodeID: UUID) {
+        guard canEditLayers, let layer = document?.layers.first(where: { $0.id == layerID }),
+              let stack = layer.correctionStack,
+              let nodeIndex = stack.nodes.firstIndex(where: { $0.id == nodeID }),
+              stack.nodes[nodeIndex].kind == .reshape,
+              let mesh = stack.nodes[nodeIndex].mesh else { return }
+
+        // Render everything upstream of this reshape node as the edit input stage.
+        var upstream = stack
+        upstream.nodes = Array(stack.nodes.prefix(upTo: nodeIndex))
+        do {
+            let stage = try LayerCorrectionRenderer.renderCopy(upstream)
+            let thumb = try PixelAdjust.thumbnail(of: stage.image)
+            let sourceAsset = ImportedImage(image: stage.image, thumbnail: thumb, name: layer.name)
+            pauseGIFForEditing(for: layer.id)
+            finishOpacityEdit()
+            commitTransform()
+            cancelCrop()
+            tool = .reshape
+            meshWarpEdit = MeshWarpEdit(layerID: layer.id, layerName: layer.name,
+                                        image: sourceAsset.image,
+                                        transform: displayedTransform(for: layer), mesh: mesh,
+                                        thumbnail: sourceAsset.thumbnail)
+        } catch {
+            brushError = error.localizedDescription
+        }
+    }
+
     /// Clears editable mesh state, keeping the current rendered layer pixels as the new source.
     /// One document-history entry. Required before painting or filters on a ReShape layer.
     /// Multi-node correction stacks bake every node (`Bake Corrections`); reshape-only keeps the

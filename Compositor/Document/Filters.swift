@@ -637,6 +637,8 @@ final class FilterEdit {
     /// The layer had no pixels yet (an empty layer); the filter started it from clear ones.
     @ObservationIgnored var startedEmpty = false
     @ObservationIgnored var preparedPreview: CGImage?
+    /// Target correction-stack node ID for Camera Raw Full / Geometry editing.
+    var cameraRawTargetNodeID: UUID? = nil
     /// Where `preparedPreview` goes: the grown layer it was made from, or nil for the layer's own place. A blur grows
     /// the layer as it gets bigger; the last preview stays up where it belongs until the next one replaces it.
     @ObservationIgnored var preparedTransform: LayerTransform?

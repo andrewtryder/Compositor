@@ -799,6 +799,11 @@ var rawImporting = false
 /// Tests assign this to develop without a sheet.
 @ObservationIgnored var confirmRawDevelop: ((URL, RawDevelopSettings) async -> RawDevelopSettings?)?
 
+/// RAW development re-edit sheet for existing RAW-backed layers.
+var showRawDevelopEditor = false { didSet { resumeFileRequests() } }
+/// The layer ID being edited in the RAW development re-edit sheet.
+var rawDevelopEditorLayerID: UUID?
+
     /// Puts the develop sheet up and waits for the choice; nil means the import was cancelled.
     func developRaw(_ url: URL) async -> RawDevelopSettings? {
         let asShot = RawImporter.asShot(url) ?? RawDevelopSettings()

@@ -55,7 +55,7 @@ nonisolated enum LayerCorrectionError: Error, Equatable, LocalizedError, Sendabl
 }
 
 /// One editable correction in the stack. Runtime mesh is live; persistence uses `MeshWarpPersistentState`.
-nonisolated struct LayerCorrectionNode: Equatable, @unchecked Sendable {
+nonisolated struct LayerCorrectionNode: Identifiable, Equatable, @unchecked Sendable {
     var id: UUID
     var kind: LayerCorrectionKind
     var enabled: Bool
