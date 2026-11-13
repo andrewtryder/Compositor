@@ -267,16 +267,19 @@ final class TransformOverlay: NSView {
         context.addPath(path)
         context.strokePath()
 
-        let selected = edit.selectedIndex
         for (index, uv) in mesh.positions.enumerated() {
             let documentPoint = transform.point(CGPoint(x: CGFloat(uv.x), y: CGFloat(uv.y)))
             let view = session.viewport.viewPoint(from: documentPoint, documentSize: document.size)
-            let radius: CGFloat = index == selected ? 5.5 : 4
+            let selected = edit.selection.contains(index: index) || index == edit.selectedIndex
+            let radius: CGFloat = selected ? 5.5 : 4
             let rect = CGRect(x: view.x - radius, y: view.y - radius, width: radius * 2, height: radius * 2)
-            if index == selected {
+            if selected {
                 NSColor.systemYellow.setFill()
-            } else if mesh.stickyBorders, mesh.isBorder(index) {
+            } else if mesh.stickyBorders, mesh.isCorner(index) {
                 NSColor.secondaryLabelColor.setFill()
+            } else if mesh.stickyBorders, mesh.isBorder(index) {
+                // Edge points may slide along the border.
+                NSColor.systemTeal.setFill()
             } else {
                 NSColor.white.setFill()
             }
