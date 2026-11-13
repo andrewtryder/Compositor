@@ -1,0 +1,37 @@
+# Milestone 8.7 — Non-destructive geometry performance
+
+Wall-clock milliseconds, medians of 5 runs after 1 warm-up.
+GPU kernel-only times are not treated as full Apply latency.
+
+## 1024×1024
+- MeshWarpEdit session create median: 9.14 ms
+- Initial source upload (first MeshWarpEdit): 12.56 ms
+- Mesh triangle upload median: 0.01 ms
+- Warm GPU mesh render median: 4.22 ms
+- GPU readback to CGImage median: 6.95 ms
+- Full MeshWarpEdit.commitImage median: 12.07 ms (usedMetal=true)
+- CPU MeshWarpRaster fallback median: 2130.81 ms
+- Two-node stack render (CR→ReShape, no cache) median: 799.90 ms
+- Two-node stack render (cache hit) median: 0.04 ms
+
+## 4000×3000
+- MeshWarpEdit session create median: 119.46 ms
+- Initial source upload (first MeshWarpEdit): 101.57 ms
+- Mesh triangle upload median: 0.01 ms
+- Warm GPU mesh render median: 26.86 ms
+- GPU readback to CGImage median: 107.02 ms
+- Full MeshWarpEdit.commitImage median: 133.01 ms (usedMetal=true)
+- CPU MeshWarpRaster fallback median: 24902.13 ms
+- Two-node stack render (CR→ReShape, no cache) median: 9012.04 ms
+- Two-node stack render (cache hit) median: 0.08 ms
+
+## 6000×4000
+- MeshWarpEdit session create median: 221.92 ms
+- Initial source upload (first MeshWarpEdit): 210.07 ms
+- Mesh triangle upload median: 0.01 ms
+- Warm GPU mesh render median: 54.66 ms
+- GPU readback to CGImage median: 169.77 ms
+- Full MeshWarpEdit.commitImage median: 233.78 ms (usedMetal=true)
+- CPU MeshWarpRaster fallback median: 47701.15 ms
+- Two-node stack render (CR→ReShape, no cache) median: 16672.60 ms
+- Two-node stack render (cache hit) median: 0.12 ms
