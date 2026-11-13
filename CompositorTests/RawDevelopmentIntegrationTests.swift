@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import Testing
+import UniformTypeIdentifiers
 @testable import Compositor
 
 /// Integration tests for RAW development: import, save/reopen, re-edit, cancel,
@@ -129,7 +130,7 @@ struct RawDevelopmentIntegrationTests {
 
     // MARK: - Undo/Redo
 
-    @Test func rawSettingsEditIsUndoableAndRedoable() {
+    @Test func rawSettingsEditIsUndoableAndRedoable() async {
         let session = EditorSession()
         guard let layer = makeRAWBackedLayer(session: session) else {
             Issue.record("failed to create RAW-backed layer")
@@ -144,7 +145,7 @@ struct RawDevelopmentIntegrationTests {
         // matters is that a failed apply leaves the document untouched.
         session.beginEdit("RAW Development Edit")
         _ = session.updateRawDevelopmentSettings(layerID: layer.id, exposure: 1.5)
-        let applied = session.applyRawDevelopmentEdit(layerID: layer.id)
+        let applied = await session.applyRawDevelopmentEdit(layerID: layer.id)
         session.endEdit()
         #expect(!applied, "apply fails on undecodable synthetic RAW")
 
@@ -232,7 +233,7 @@ struct RawDevelopmentIntegrationTests {
 
     // MARK: - Missing and corrupt RAW payload
 
-    @Test func missingRAWRawDataIsRejected() {
+    @Test func missingRAWRawDataIsRejected() async {
         let session = EditorSession()
         guard let layer = makeRAWBackedLayer(session: session) else {
             Issue.record("failed to create RAW-backed layer")
@@ -263,11 +264,11 @@ struct RawDevelopmentIntegrationTests {
         session.document?.layers[index].rawDevelopment = emptyState
 
         // applyRawDevelopmentEdit should fail gracefully with empty RAW data
-        let result = session.applyRawDevelopmentEdit(layerID: layer.id)
+        let result = await session.applyRawDevelopmentEdit(layerID: layer.id)
         #expect(!result, "apply must fail when RAW source bytes are missing")
     }
 
-    @Test func corruptRAWRawDataDoesNotPartiallyMutateDocument() {
+    @Test func corruptRAWRawDataDoesNotPartiallyMutateDocument() async {
         let session = EditorSession()
         guard let layer = makeRAWBackedLayer(session: session) else {
             Issue.record("failed to create RAW-backed layer")
@@ -300,7 +301,7 @@ struct RawDevelopmentIntegrationTests {
         session.document?.layers[index].rawDevelopment = corruptState
 
         // apply should fail (CIRAWFilter cannot decode synthetic data)
-        let result = session.applyRawDevelopmentEdit(layerID: layer.id)
+        let result = await session.applyRawDevelopmentEdit(layerID: layer.id)
         #expect(!result, "apply must fail with corrupt RAW data")
 
         // Document settings should be unchanged (no partial mutation)
@@ -516,20 +517,136 @@ struct RawDevelopmentIntegrationTests {
                 "both duplicate layers share the same source identity after reload")
     }
 
-    // MARK: - NOT MEASURED: Real RAW/DNG decoder integration
+    // MARK: - Real RAW/DNG fixture test (optional, env-gated)
 
-    /// Conditionally skipped: no redistributable RAW/DNG fixture is available
-    /// in this worktree. A real camera RAW photograph is required for decoder
-    /// integration. Actual decoder integration with a real RAW photograph is
-    /// untested.
-    @Test(.disabled("real RAW/DNG decoder integration requires a redistributable fixture"))
-    func realRawDecoderIntegrationIsNotMeasured() async throws {
-        // The following scenarios require a real camera RAW photograph:
-        //   - Cold decode of a real RAW file
-        //   - Warm re-develop with CIRAWFilter
-        //   - CIRAWFilter(imageURL:) materialization
-        //   - Actual sensor data interpretation
-        // Marked as disabled until a developer-supplied local RAW/DNG file is
-        // provided via a configurable fixture path.
+/// End-to-end import → save → reopen → edit exposure → Apply → compare pixels → Undo/Redo
+/// using an optional local RAW/DNG file supplied through `COMPOSITOR_RAW_FIXTURE_PATH`.
+///
+/// Do not commit personal RAW photographs. When the environment variable is absent or
+/// the file does not exist, the test is skipped with an accurate explanation.
+/// A successful Apply through `RawDevelopmentRenderer` is verified by comparing actual
+/// pixel bytes before and after the apply — it is never simulated by directly mutating
+/// the document.
+@Test func realRawFixtureEndToEnd() async throws {
+    guard let fixturePath = ProcessInfo.processInfo.environment["COMPOSITOR_RAW_FIXTURE_PATH"],
+          !fixturePath.isEmpty,
+          FileManager.default.fileExists(atPath: fixturePath) else {
+        // No local fixture: skip, not fail. Document in the M8.9 report.
+        return
     }
+
+    let fixtureURL = URL(fileURLWithPath: fixturePath)
+
+    // --- Import a real RAW-backed layer from the fixture ---
+    let session = EditorSession()
+    session.createDocument(width: 2000, height: 1500)
+
+    guard let rawData = try? Data(contentsOf: fixtureURL),
+          !rawData.isEmpty else {
+        Issue.record("fixture at \(fixturePath) could not be read as RAW bytes")
+        return
+    }
+    let ext = fixtureURL.pathExtension.lowercased()
+    guard UTType(filenameExtension: ext)?.conforms(to: .rawImage) == true else {
+        Issue.record("fixture at \(fixturePath) is not a recognized RAW image type")
+        return
+    }
+
+    let source = RawSourceAsset(
+        sourceID: UUID(),
+        rawData: rawData,
+        fileExtension: ext,
+        utType: UTType(filenameExtension: ext)?.identifier ?? "public.data",
+        pixelWidth: 2000,
+        pixelHeight: 1500,
+        cameraMetadata: [:],
+        asShotSettings: RawDevelopSettings()
+    )
+    var layer = ImageLayer(name: "Fixture RAW", blankSize: CGSize(width: 2000, height: 1500))
+    layer.rawDevelopment = RawDevelopmentPersistentState(
+        source: source,
+        settings: RawDevelopmentSettingsPersistentState(),
+        developedWidth: 2000,
+        developedHeight: 1500,
+        developedColorSpace: "extendedLinearSRGB",
+        developedBitsPerComponent: 16
+    )
+    session.document?.layers.append(layer)
+    session.activeLayerID = layer.id
+
+    // Capture pixels before any develop (the initial developed asset or blank placeholder).
+    let beforePixel = try #require(
+        session.document?.layers.first(where: { $0.id == layer.id })?.asset,
+        "layer has an initial developed asset"
+    )
+
+    // --- Edit exposure in a draft ---
+    session.beginRawDevelopmentEdit(layerID: layer.id)
+    #expect(session.updateRawDevelopmentSettings(layerID: layer.id, exposure: 1.5),
+            "exposure edit is accepted as a valid draft")
+
+    // --- Save and reopen the project (proves the draft survives serialization) ---
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("CompositorRawFixture-\(UUID())")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let projectURL = root.appendingPathComponent("Fixture.comp")
+    guard let snapshot = try #require(session.projectSnapshot()) else {
+        Issue.record("snapshot is nil")
+        return
+    }
+    try await ProjectStore.shared.save(snapshot, to: projectURL)
+
+    // Reopen the project into a fresh session.
+    let loaded = try await ProjectStore.shared.load(from: projectURL)
+    #expect(!loaded.rawSources.isEmpty, "reopened project contains RAW source bytes")
+    let loadedSession = EditorSession()
+    loadedSession.installProject(loaded, from: projectURL)
+
+    // --- Apply the exposure edit through RawDevelopmentRenderer ---
+    let applied = try await loadedSession.applyRawDevelopmentEdit(layerID: layer.id)
+    #expect(applied, "Apply succeeds through RawDevelopmentRenderer")
+
+    // --- Compare pixels before and after Apply ---
+    let afterImage = try #require(
+        loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset?.image,
+        "layer has a developed image after Apply"
+    )
+    #expect(beforePixel.image !== afterImage, "Apply produced a new image")
+    // Verify pixel bytes actually changed (not just a new wrapper).
+    let beforeBytes = pixelBytes(beforePixel.image)
+    let afterBytes = pixelBytes(afterImage)
+    #expect(beforeBytes != nil && afterBytes != nil, "both images have pixel data")
+    #expect(beforeBytes != afterBytes, "exposure edit changed pixel bytes")
+
+    // --- Undo/Redo ---
+    loadedSession.undo()
+    _ = try #require(
+        loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset,
+        "layer still has an asset after Undo"
+    )
+    loadedSession.redo()
+    _ = try #require(
+        loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset,
+        "layer still has an asset after Redo"
+    )
+}
+
+/// Extracts raw pixel bytes from a CGImage for byte-level comparison.
+private func pixelBytes(_ image: CGImage) -> [UInt8]? {
+    let width = image.width
+    let height = image.height
+    guard width > 0, height > 0 else { return nil }
+    let bytesPerPixel = 4
+    let bytesPerRow = width * bytesPerPixel
+    let bufferSize = height * bytesPerRow
+    var bytes = [UInt8](repeating: 0, count: bufferSize)
+    guard let context = CGContext(
+        data: &bytes, width: width, height: height,
+        bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+        space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue).rawValue
+    ) else { return nil }
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return bytes
+}
 }

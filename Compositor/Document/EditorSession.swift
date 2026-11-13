@@ -794,8 +794,8 @@ var rawImporting = false
 @ObservationIgnored private var cameraRawAfterImport: UUID?
 @ObservationIgnored private var rawContinuation: CheckedContinuation<RawDevelopSettings?, Never>?
 /// Draft RAW development state captured at the start of an edit, so cancel restores the
-/// exact pre-edit state rather than resetting to As Shot. Keyed by layer ID.
-@ObservationIgnored private var rawDrafts: [UUID: RawDevelopmentPersistentState] = [:]
+    /// exact pre-edit state rather than resetting to As Shot. Keyed by layer ID.
+    @ObservationIgnored var rawDrafts: [UUID: RawDevelopmentPersistentState] = [:]
 /// Tests assign this to develop without a sheet.
 @ObservationIgnored var confirmRawDevelop: ((URL, RawDevelopSettings) async -> RawDevelopSettings?)?
 
@@ -845,13 +845,15 @@ var rawImporting = false
     /// Updates the draft RAW development settings for the given layer. Does not
     /// re-render; use `applyRawDevelopmentEdit` to commit. Returns false if the
     /// layer is not RAW-backed, the edit was not begun, or values are invalid.
+    /// Validates the *completed* draft, not only the previous state, so NaN,
+    /// infinity, out-of-range values, and unsupported feature combinations are
+    /// rejected before the draft is accepted.
     @discardableResult
     func updateRawDevelopmentSettings(layerID: UUID, exposure: Float? = nil, temperature: Float? = nil,
                                       tint: Float? = nil, boost: Float? = nil, noiseReduction: Float? = nil,
                                       lensCorrection: Bool? = nil, highlightRecovery: Bool? = nil) -> Bool {
         guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
-              var draft = rawDrafts[layerID] ?? document?.layers[index].rawDevelopment,
-              draft.settings.isValid() else { return false }
+              var draft = rawDrafts[layerID] ?? document?.layers[index].rawDevelopment else { return false }
         if let exposure { draft.settings.exposure = exposure }
         if let temperature { draft.settings.temperature = temperature }
         if let tint { draft.settings.tint = tint }
@@ -859,6 +861,8 @@ var rawImporting = false
         if let noiseReduction { draft.settings.noiseReduction = noiseReduction }
         if let lensCorrection { draft.settings.lensCorrection = lensCorrection }
         if let highlightRecovery { draft.settings.highlightRecovery = highlightRecovery }
+        // Validate the completed draft, not only the previous state.
+        guard draft.settings.isValid() else { return false }
         rawDrafts[layerID] = draft
         return true
     }
@@ -875,15 +879,15 @@ var rawImporting = false
     }
 
     /// Applies pending RAW development settings to the given layer: re-reads
-    /// the original RAW source, develops at 16-bit, updates the displayed
-    /// layer while preserving identity, masks, and transforms. Commits one
-    /// document Undo action containing both settings and rendered output.
+    /// the original RAW source, develops at 16-bit via `RawDevelopmentRenderer`,
+    /// updates the displayed layer while preserving identity, masks, and transforms.
+    /// Commits one document Undo action containing both settings and rendered output.
     /// Returns false if the layer is not RAW-backed, the edit was not begun,
     /// or development fails (leaving prior state untouched).
     @discardableResult
-    func applyRawDevelopmentEdit(layerID: UUID) -> Bool {
+    func applyRawDevelopmentEdit(layerID: UUID) async -> Bool {
         guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
-              let draft = rawDrafts.removeValue(forKey: layerID) ?? document?.layers[index].rawDevelopment else { return false }
+              let draft = rawDrafts.removeValue(forKey: layerID) else { return false }
 
         let source = draft.source
         let settings = draft.settings.makeSettings()
@@ -892,23 +896,21 @@ var rawImporting = false
         let rawData = source.rawData
         guard !rawData.isEmpty else { return false }
 
-        // Write bytes to a temporary file for CIRAWFilter consumption.
-        let tmpURL: URL
-        do {
-            tmpURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-                "compositor-raw-apply-\(UUID().uuidString).\(source.fileExtension)")
-            try rawData.write(to: tmpURL, options: .atomic)
-        } catch { return false }
-        defer { try? FileManager.default.removeItem(at: tmpURL) }
+        // Develop through the RawDevelopmentRenderer actor (CIRAWFilter, 16-bit,
+        // revision-based cancellation, temp file cleanup).
+        let revision = RawDevelopmentRenderer.shared.beginDevelop(
+            source: source,
+            settings: settings,
+            sixteenBit: true
+        )
 
-        // Develop from original RAW at 16-bit precision.
-        let developed: CGImage
-        do { developed = try RawImporter.develop(tmpURL, settings: settings, limit: nil, sixteenBit: true) }
-        catch { return false }
+        // Wait for the develop to complete on the renderer actor.
+        let result = await RawDevelopmentRenderer.shared.waitForDevelop(revision: revision)
+        guard case let .success(developedImage) = result else { return false }
 
         // Build the 16-bit asset; do not report success if the asset can't be made.
         var asset: ImportedImage
-        do { asset = try DeepLayer.asset(developed, name: source.fileName()) }
+        do { asset = try DeepLayer.asset(developedImage, name: source.fileName()) }
         catch { return false }
 
         // Preserve lens geometry from the source metadata (EXIF focal length, inferred sensor width).
@@ -1035,6 +1037,8 @@ var rawImporting = false
         activeLayerID = snapshot.activeLayerID
         isMaskSelected = keepMaskTarget && activeLayer?.mask != nil
         if changedCanvas, let document { viewport.fit(documentSize: document.size) }
+        // Clear stale RAW drafts when history is restored; drafts don't survive undo/redo.
+        rawDrafts.removeAll()
     }
 
     /// Nestable transaction boundary; future tools can group a complete gesture.
@@ -1102,6 +1106,8 @@ var rawImporting = false
     func deleteLayer(_ id: UUID) {
         guard canEditLayers, document?.layers.contains(where: { $0.id == id }) == true else { return }
         guard !deleteWithLiveMaskChoice(id) else { return }
+        // Clear any pending RAW draft for the deleted layer.
+        rawDrafts.removeValue(forKey: id)
         finishDeletingLayer(id, baked: [:])
     }
 

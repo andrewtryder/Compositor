@@ -84,16 +84,43 @@ nonisolated struct ProjectRawDevelopmentRecord: Codable, Sendable {
     var developedColorSpace: String
     /// 8 or 16 bits per component.
     var developedBitsPerComponent: Int
+    /// Original As Shot development defaults read from the file.
+    /// Stored separately from `settings` so edited values can't overwrite the originals.
+    var asShotSettings: RawDevelopmentSettingsPersistentState?
+    /// Camera metadata extracted from EXIF/TIFF (Make, Model, focal length, etc.).
+    var cameraMetadata: [String: String]?
+    /// Original sensor color space, if determinable.
+    var colorSpace: String?
+    /// Original sensor bits per component.
+    var bitsPerComponent: Int?
+    /// Which RAW features this camera's decoder supports.
+    var supportsNoiseReduction: Bool = false
+    var supportsLensCorrection: Bool = false
+    var supportsHighlightRecovery: Bool = false
 
     init(sourceFile: String, settings: RawDevelopmentSettingsPersistentState,
          developedWidth: Int, developedHeight: Int,
-         developedColorSpace: String, developedBitsPerComponent: Int) {
+         developedColorSpace: String, developedBitsPerComponent: Int,
+         asShotSettings: RawDevelopmentSettingsPersistentState? = nil,
+         cameraMetadata: [String: String]? = nil,
+         colorSpace: String? = nil,
+         bitsPerComponent: Int? = nil,
+         supportsNoiseReduction: Bool = false,
+         supportsLensCorrection: Bool = false,
+         supportsHighlightRecovery: Bool = false) {
         self.sourceFile = sourceFile
         self.settings = settings
         self.developedWidth = developedWidth
         self.developedHeight = developedHeight
         self.developedColorSpace = developedColorSpace
         self.developedBitsPerComponent = developedBitsPerComponent
+        self.asShotSettings = asShotSettings
+        self.cameraMetadata = cameraMetadata
+        self.colorSpace = colorSpace
+        self.bitsPerComponent = bitsPerComponent
+        self.supportsNoiseReduction = supportsNoiseReduction
+        self.supportsLensCorrection = supportsLensCorrection
+        self.supportsHighlightRecovery = supportsHighlightRecovery
     }
 }
 
@@ -478,25 +505,39 @@ actor ProjectStore {
                       type.conforms(to: .rawImage) else {
                     throw ProjectError.invalid
                 }
-                // Preserve the original sourceID from the package filename so identity survives reload
-                // across duplicate layers, saves, and reopens. Format: <sourceID>.raw-source.<ext>
-                let sourceID: UUID
+                // Reject malformed source-ID references: filename must be <valid-UUID>.raw-source.<ext>
                 let fileBase = rawRecord.sourceFile.components(separatedBy: ".").first ?? ""
-                if let fileID = UUID(uuidString: fileBase) {
-                    sourceID = fileID
-                } else {
-                    sourceID = layer.id
+                guard let sourceID = UUID(uuidString: fileBase) else {
+                    throw ProjectError.invalid
                 }
-                // Dimensions and metadata come from the persisted record; decoder validation
-                // happens at develop time, not load time (raw bytes may not be decodable yet).
+                // Reconstruct camera metadata from string-keyed dictionary.
+                var cameraMetadata: [String: Any] = [:]
+                if let stored = rawRecord.cameraMetadata {
+                    for (key, value) in stored {
+                        cameraMetadata[key] = value
+                    }
+                }
+                // As Shot settings are preserved independently of edited settings.
+                let asShotSettings: RawDevelopSettings
+                if let asShotPersistent = rawRecord.asShotSettings {
+                    asShotSettings = asShotPersistent.makeSettings()
+                } else {
+                    // Backward compatibility: v25 projects written before this fix.
+                    asShotSettings = rawRecord.settings.makeSettings()
+                }
                 let sourceAsset = RawSourceAsset(sourceID: sourceID,
                                                  rawData: rawData,
                                                  fileExtension: ext,
                                                  utType: type.identifier,
                                                  pixelWidth: rawRecord.developedWidth > 0 ? rawRecord.developedWidth : 0,
                                                  pixelHeight: rawRecord.developedHeight > 0 ? rawRecord.developedHeight : 0,
-                                                 cameraMetadata: [:],
-                                                 asShotSettings: rawRecord.settings.makeSettings())
+                                                 cameraMetadata: cameraMetadata,
+                                                 colorSpace: rawRecord.colorSpace,
+                                                 bitsPerComponent: rawRecord.bitsPerComponent ?? 0,
+                                                 asShotSettings: asShotSettings,
+                                                 supportsNoiseReduction: rawRecord.supportsNoiseReduction,
+                                                 supportsLensCorrection: rawRecord.supportsLensCorrection,
+                                                 supportsHighlightRecovery: rawRecord.supportsHighlightRecovery)
                 rawSources[layer.id] = sourceAsset
             }
             guard let gif = layer.gif else { continue }
@@ -636,10 +677,12 @@ actor ProjectStore {
                       layer.adjustment == nil, layer.gif == nil else { throw ProjectError.invalid }
                 guard raw.settings.isValid() else { throw ProjectError.invalid }
                 // sourceFile format: <sourceID>.raw-source.<ext> where sourceID is a UUID
-                // (which itself contains hyphens), so check from the end.
+                // (which itself contains hyphens), so check from the end. Reject malformed
+                // source-ID references rather than falling back to the layer ID.
                 let components = raw.sourceFile.components(separatedBy: ".")
                 guard components.count >= 3,
-                      components[components.count - 2] == "raw-source" else { throw ProjectError.invalid }
+                      components[components.count - 2] == "raw-source",
+                      UUID(uuidString: components.first ?? "") != nil else { throw ProjectError.invalid }
             }
             // Layer masks arrived in version 4, folder masks in version 6.
             guard layer.maskFile == nil || (manifest.version >= (layer.isGroup == true ? 6 : 4)

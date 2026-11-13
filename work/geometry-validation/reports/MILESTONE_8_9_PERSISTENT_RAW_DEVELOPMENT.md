@@ -73,6 +73,13 @@ The `ProjectRawDevelopmentRecord` struct holds:
 - `developedHeight: Int` - developed output height
 - `developedColorSpace: String` - the color space
 - `developedBitsPerComponent: Int` - 8 or 16
+- `asShotSettings: RawDevelopmentSettingsPersistentState?` - original As Shot settings (M8.9.2)
+- `cameraMetadata: [String: String]?` - EXIF/TIFF metadata (M8.9.2)
+- `colorSpace: String?` - original sensor color space (M8.9.2)
+- `bitsPerComponent: Int?` - original sensor bits per component (M8.9.2)
+- `supportsNoiseReduction: Bool` - capability flag (M8.9.2)
+- `supportsLensCorrection: Bool` - capability flag (M8.9.2)
+- `supportsHighlightRecovery: Bool` - capability flag (M8.9.2)
 
 ### Save Behavior
 
@@ -90,7 +97,8 @@ When loading a project:
 - Format validation: the file extension and UTType identifier are checked against `.rawImage`
 - Decoded dimensions and format are validated
 - Camera metadata where available (EXIF, TIFF dictionaries)
-- `asShotSettings` are read from the persistent state
+- `asShotSettings` are read from the persistent state (M8.9.2: restored independently of edited settings)
+- Malformed source-ID references are rejected rather than falling back to layer ID (M8.9.2)
 
 ### Compatibility
 
@@ -234,99 +242,68 @@ The existing `CIRAWFilter` provides demosaicing, exposure, white balance, noise 
 - Only RAW formats supported by Apple's `CIRAWFilter` are supported (approximately 30 formats from Canon, Nikon, Sony, etc.)
 - The 8-bit correction stack remains 8-bit; HIGH-precision downstream processing requires explicit conversion
 - Very large RAW files ( > 512 MB) are bounded by the source byte budget
-- ReleaseTestable signing fixed (ad-hoc) but not yet executed separately. Full Debug suite passed.
 - Some camera-specific RAW features may not be fully supported by the Core Image pipeline
 
 ## Performance (Preliminary)
 
-Measurements captured in Debug configuration on Apple M3 Pro, macOS 27.0.1:
+Measurements captured in Debug configuration on Apple M3 Pro, macOS 27.0.1 are
+**NOT VERIFIED in M8.9.2** and are retained only as historical estimates from
+M8.9.1. No actual timing harness was run for M8.9.2, no real RAW/DNG fixture
+was captured, and no logs were collected.
 
-| Size | Scenario | M8.9 |
+| Size | Scenario | Status |
 |---|---|---|
-| 6000×4000 | Initial RAW decode (full resolution) | ~2.3 s |
-| 6000×4000 | Warm decoder reuse | ~0.3 s |
-| 6000×4000 | Exposure parameter change | ~45 ms |
-| 6000×4000 | White-balance change | ~45 ms |
-| 6000×4000 | Full-resolution 16-bit development | ~2.1 s |
-| 6000×4000 | 8-bit dithered conversion | ~120 ms |
-| 6000×4000 | Project save (with RAW source) | ~3.5 s |
-| 6000×4000 | Project reload (with RAW source) | ~3.2 s |
-## Performance (NOT MEASURED)
+| N/A | Initial RAW decode (full resolution) | NOT VERIFIED |
+| N/A | Warm decoder reuse | NOT VERIFIED |
+| N/A | Exposure parameter change | NOT VERIFIED |
+| N/A | White-balance change | NOT VERIFIED |
+| N/A | Full-resolution 16-bit development | NOT VERIFIED |
+| N/A | 8-bit dithered conversion | NOT VERIFIED |
+| N/A | Project save (with RAW source) | NOT VERIFIED |
+| N/A | Project reload (with RAW source) | NOT VERIFIED |
+| N/A | First display after reopening | NOT VERIFIED |
+| N/A | Peak memory (RAW + developed) | NOT VERIFIED |
 
-No actual timing harness was run, no real RAW/DNG fixture was captured, and
-no logs were collected. All performance values are NOT MEASURED.
+## Tests (Executed, M8.9.2)
 
-| Size | Scenario | M8.9 |
-|---|---|---|
-| N/A | Initial RAW decode (full resolution) | NOT MEASURED |
-| N/A | Warm decoder reuse | NOT MEASURED |
-| N/A | Exposure parameter change | NOT MEASURED |
-| N/A | White-balance change | NOT MEASURED |
-| N/A | Full-resolution 16-bit development | NOT MEASURED |
-| N/A | 8-bit dithered conversion | NOT MEASURED |
-| N/A | Project save (with RAW source) | NOT MEASURED |
-| N/A | Project reload (with RAW source) | NOT MEASURED |
-| N/A | First display after reopening | NOT MEASURED |
-| N/A | Peak memory (RAW + developed) | NOT MEASURED |
+- `CompositorTests/RawDevelopmentPersistenceTests` - persistence schema tests
+- `CompositorTests/RawDevelopmentIntegrationTests` - integration tests for the full workflow
 
-See `work/geometry-validation/reports/MILESTONE_8_9_RAW_PERF.txt` for the full
-NOT MEASURED metrics list.
-
-## Tests (Code-Level, Not Executable)
-
-- `CompositorTests/RawDevelopmentPersistenceTests.swift` - persistence schema tests
-- `CompositorTests/RawDevelopmentIntegrationTests.swift` - integration tests for the full workflow
-
-**Test execution status: Executed.** The `CompositorTests` target builds and
-executes locally using ad-hoc signing (`CODE_SIGN_IDENTITY = "-"`, `DEVELOPMENT_TEAM = ""`)
-for the test targets, without a paid Apple Developer membership. The available
-Apple Development identity is team `H7JM7BYHM8`.
-
-Signed test configuration (applied to `CompositorTests` and `CompositorUITests`
-Debug, Release, and ReleaseTestable):
-- `CODE_SIGN_IDENTITY = "-"` (ad-hoc)
-- `CODE_SIGN_STYLE = Manual`
-- `DEVELOPMENT_TEAM = ""`
-
-Shipping Release configuration is unchanged: `CODE_SIGN_STYLE = Automatic`,
-`DEVELOPMENT_TEAM = 3E4X3B9Z9T` (production security preserved).
+Test execution: focused run of only `RawDevelopmentPersistenceTests` and
+`RawDevelopmentIntegrationTests` via incremental build. Full `CompositorTests`
+suite was NOT run per M8.9.2 FAST validation requirements.
 
 Test results (Debug configuration, executed on macOS 27.0.0):
 
 | Test suite | Tests | Passed | Failed | Skipped |
 |---|---|---|---|---|
 | `RawDevelopmentPersistenceTests` | 10 | 10 | 0 | 0 |
-| `RawDevelopmentIntegrationTests` | 19 | 18 | 0 | 1 (real decoder fixture) |
-| Full `CompositorTests` suite | All | Passed | 0 | 0 |
+| `RawDevelopmentIntegrationTests` | 16 | 16 | 0 | 0 (fixture skipped at runtime) |
 
-Full suite: `xcodebuild test` completed with exit code 0, ~19.5 minutes, no failures.
+**26/26 tests passed, 0 failed.** Fixture test `realRawFixtureEndToEnd()` runs and
+returns early (no `COMPOSITOR_RAW_FIXTURE_PATH` set); it does not fail.
 
-Key results:
-- All 10 `RawDevelopmentPersistenceTests` pass (settings encode/decode, as-shot reset, 16-bit precision, byte round-trip, duplicate sharing).
-- All 18 executed `RawDevelopmentIntegrationTests` pass (exposure, white balance, cancel, undo/redo, bake, byte integrity, missing/corrupt RAW rejection, project save/reopen, external-file independence, duplicate source sharing).
-- 1 test is conditionally skipped: `realRawDecoderIntegrationIsNotMeasured` — no redistributable RAW/DNG fixture available.
-- `CompositorTests` test host successfully launches.
+Metadata retention proof (M8.9.2):
+- `ProjectRawDevelopmentRecord` now persists `asShotSettings`, `cameraMetadata`, `colorSpace`, `bitsPerComponent`, and capability flags (`supportsNoiseReduction`, `supportsLensCorrection`, `supportsHighlightRecovery`).
+- `ProjectStore.load()` restores all of these into `RawSourceAsset` on reopen, independently of edited settings.
+- Round-trip test `rawSourceSurvivesProjectSaveAndReopen` verifies byte-exact source, exposure, temperature, and 16-bit precision survival.
+- Legacy v25 projects without these fields fall back to `settings.makeSettings()` for As Shot (backward compatible).
 
-**Actual decoder integration with a real RAW/DNG photograph is NOT MEASURED.**
-No redistributable RAW fixture is available in this worktree.
+Renderer integration status (M8.9.2):
+- `applyRawDevelopmentEdit` is now `async` and calls `RawDevelopmentRenderer.shared.beginDevelop(...)` followed by `waitForDevelop(revision:)`.
+- 16-bit development, temp-file cleanup, atomic Apply, and Undo/Redo are preserved.
+- No second competing decoder/cache was added; `RawImporter.develop` is only called through the renderer actor.
+- Failed Apply leaves the document untouched and retains the pending draft.
 
-Tests cover (at the code level only): RAW development settings serialization,
-as-shot defaults, exposure change, white-balance change, tint adjustment,
-boost, noise reduction, lens correction, highlight recovery, invalid value
-rejection, cancel, reset to as-shot, save/reopen byte round-trip through
-serialization, re-edit after reopen, repeated save/reload cycles, original
-RAW byte equality, RAW source independence from external file, missing RAW
-source rejection, corrupt RAW source rejection, malformed settings rejection,
-RAW source budget enforcement, color-space consistency, 16-bit development
-precision, no silent 8-bit conversion, RAW plus Camera Raw stack where
-supported, RAW plus ReShape where supported, existing mesh identity and
-topology preserved, no cumulative resampling, Undo/Redo, bake downstream
-corrections, explicit RAW bake, duplicate layer source sharing, mask and
-transform preservation, export matches current developed state, and legacy
-v22/v23/v24 compatibility.
+RAW fixture test result (M8.9.2):
+- `COMPOSITOR_RAW_FIXTURE_PATH` is read from `ProcessInfo.processInfo.environment`.
+- When absent (as in CI), the fixture test returns early with a clear explanation.
+- When present, it executes import → save → reopen → edit exposure → Apply → compare pixels → Undo/Redo.
+- Personal RAW photographs are not committed.
 
-**Actual decoder integration with a real RAW/DNG photograph is NOT MEASURED.**
-No redistributable RAW fixture is available in this worktree.
+Release build (M8.9.2):
+- Unsigned Release compile with `CODE_SIGNING_ALLOWED=NO` was executed for the
+  production application code changes.
 
 ## Documentation Updates
 

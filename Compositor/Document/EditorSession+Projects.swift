@@ -62,13 +62,26 @@ extension EditorSession {
             if let rawDevelopment = layer.rawDevelopment {
                 rawSources[layer.id] = rawDevelopment.source
                 rawSourceFile = rawDevelopment.source.fileName()
+                let asShotPersistent = RawDevelopmentSettingsPersistentState(rawDevelopment.source.asShotSettings)
+                var cameraMetadata: [String: String] = [:]
+                for (key, value) in rawDevelopment.source.cameraMetadata {
+                    cameraMetadata[key] = String(describing: value)
+                }
                 raw = ProjectRawDevelopmentRecord(
                     sourceFile: rawSourceFile ?? "\(layer.id.uuidString).raw-source.dng",
                     settings: rawDevelopment.settings,
                     developedWidth: rawDevelopment.developedWidth,
                     developedHeight: rawDevelopment.developedHeight,
                     developedColorSpace: rawDevelopment.developedColorSpace,
-                    developedBitsPerComponent: rawDevelopment.developedBitsPerComponent)
+                    developedBitsPerComponent: rawDevelopment.developedBitsPerComponent,
+                    asShotSettings: asShotPersistent,
+                    cameraMetadata: cameraMetadata,
+                    colorSpace: rawDevelopment.source.colorSpace,
+                    bitsPerComponent: rawDevelopment.source.bitsPerComponent,
+                    supportsNoiseReduction: rawDevelopment.source.supportsNoiseReduction,
+                    supportsLensCorrection: rawDevelopment.source.supportsLensCorrection,
+                    supportsHighlightRecovery: rawDevelopment.source.supportsHighlightRecovery
+                )
             }
             return ProjectLayerRecord(id: layer.id, name: layer.name, isVisible: layer.isVisible,
                 transform: layer.transform, imageFile: asset?.file(for: layer.id), parentID: layer.parentID, isGroup: layer.isGroup, opacity: layer.opacity, blendMode: layer.blendMode, maskFile: layer.mask == nil ? nil : "\(layer.id.uuidString).mask.png", maskEnabled: layer.mask?.isEnabled, maskSourceID: layer.maskSourceID, adjustment: layer.adjustment, maskPlacement: layer.mask?.placement, maskLinked: layer.mask?.isLinked, shape: layer.liveShape?.style, effects: layer.effects, text: layer.liveText?.style, gif: gif, reshape: reshape, correctionStack: correction, rawSourceFile: rawSourceFile, rawDevelopment: raw)
@@ -115,6 +128,8 @@ extension EditorSession {
         sourceImageURL = nil
         renamingLayerID = nil
         history.reset()
+        // Clear stale RAW drafts when a new project is loaded.
+        rawDrafts.removeAll()
         viewport.fit(documentSize: document!.size)
     }
 
@@ -150,6 +165,8 @@ extension EditorSession {
         projectURL = nil
         sourceImageURL = nil
         history.reset()
+        // Clear stale RAW drafts when the project changes.
+        rawDrafts.removeAll()
     }
 
     func createNewProject(width: Int, height: Int, resolution: Double = 72, background: CGColor? = nil) {

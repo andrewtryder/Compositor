@@ -93,10 +93,17 @@ actor RawDevelopmentRenderer {
         return revision
     }
 
-    /// Call before applying a develop result to ensure it's the latest revision.
-    func checkRevision(_ revision: Int, against inFlightRevision: Int) -> Bool {
-        return revision == inFlightRevision
-    }
+/// Call before applying a develop result to ensure it's the latest revision.
+func checkRevision(_ revision: Int, against inFlightRevision: Int) -> Bool {
+    return revision == inFlightRevision
+}
+
+/// Wait for a develop operation to complete and return its result. Returns `nil`
+/// if the revision is unknown or the task was already removed.
+func waitForDevelop(revision: Int) async -> DevelopResult? {
+    guard let task = inFlightTasks[revision] else { return nil }
+    return await task.value
+}
 
     /// Cancel any in-flight develop with a lower revision than the given one.
     func cancelOlder(than revision: Int) {
