@@ -3,8 +3,8 @@ import CoreImage
 import Foundation
 import simd
 
-/// In-progress ReShape mesh edit on one layer. Apply rasterizes into the layer (undoable);
-/// Cancel restores the snapshot taken at begin.
+/// In-progress ReShape mesh edit on one layer. Apply stores editable mesh + source and
+/// updates the layer's display pixels (one document undo); Cancel drops the session only.
 @Observable
 final class MeshWarpEdit {
     let layerID: UUID
@@ -12,8 +12,10 @@ final class MeshWarpEdit {
     /// Layer pixel size when editing began.
     let width: Int
     let height: Int
-    /// Original layer pixels (8-bit RGBA preview path).
+    /// Immutable unwarped source pixels (8-bit). Never replaced by a warped result.
     let originalImage: CGImage
+    /// Thumbnail for the immutable source when committing persistent state.
+    let originalThumbnail: CGImage
     /// Layer transform at begin (placement unchanged by warp).
     let transform: LayerTransform
     var mesh: MeshWarpGrid
@@ -43,12 +45,14 @@ final class MeshWarpEdit {
 
     @ObservationIgnored private var gpuSession: MetalMeshWarpSession?
 
-    init(layerID: UUID, layerName: String, image: CGImage, transform: LayerTransform, mesh: MeshWarpGrid) {
+    init(layerID: UUID, layerName: String, image: CGImage, transform: LayerTransform, mesh: MeshWarpGrid,
+         thumbnail: CGImage? = nil) {
         self.layerID = layerID
         self.layerName = layerName
         self.width = image.width
         self.height = image.height
         self.originalImage = image
+        self.originalThumbnail = thumbnail ?? ((try? PixelAdjust.thumbnail(of: image)) ?? image)
         self.transform = transform
         self.mesh = mesh
         self.gpuSession = MetalMeshWarpSession(image: image)
@@ -280,38 +284,80 @@ extension EditorSession {
     var canBeginMeshWarp: Bool {
         guard canEditLayers, brushStroke == nil, warpStroke == nil, levels == nil,
               filterEdit == nil, transformEdit == nil,
-              let layer = activeLayer, layer.asset != nil, !layer.isGroup,
+              let layer = activeLayer, layer.asset != nil || layer.reshape != nil, !layer.isGroup,
               activeLayerID.map({ document?.effectiveVisibleIDs.contains($0) == true }) == true
         else { return false }
         return true
     }
 
+    /// Message when a destructive pixel edit would discard editable ReShape state.
+    func reshapeDestructiveRefusal(for layer: ImageLayer) -> String? {
+        guard layer.reshape != nil else { return nil }
+        return "“\(layer.name)” has an editable ReShape mesh. Bake ReShape before painting or applying filters."
+    }
+
     func beginMeshWarp(preset: MeshWarpGrid.Preset = .points8) {
         cancelMeshWarp()
-        guard canBeginMeshWarp, let layer = activeLayer, let asset = layer.asset else {
+        guard canBeginMeshWarp, let layer = activeLayer else {
             brushError = paintRefusal
             return
         }
-        if asset.deep != nil || DeepLayer.isHDR(asset.image) {
+        if layer.gifAnimation != nil {
+            brushError = "ReShape cannot edit an animated GIF layer. Rasterize the frame first."
+            return
+        }
+        let sourceAsset: ImportedImage
+        let mesh: MeshWarpGrid
+        if let reshape = layer.reshape {
+            sourceAsset = reshape.source
+            mesh = reshape.mesh
+        } else if let asset = layer.asset {
+            sourceAsset = asset
+            guard let identity = MeshWarpGrid.identity(pointColumns: preset.rawValue, pointRows: preset.rawValue,
+                                                       stickyBorders: true, propagation: 0.25)
+            else { return }
+            mesh = identity
+        } else {
+            return
+        }
+        if sourceAsset.deep != nil || DeepLayer.isHDR(sourceAsset.image) {
             brushError = "ReShape currently supports 8-bit layers. Convert the layer to 8-bit first."
             return
         }
-        guard let mesh = MeshWarpGrid.identity(pointColumns: preset.rawValue, pointRows: preset.rawValue,
-                                               stickyBorders: true, propagation: 0.25)
-        else { return }
+        if sourceAsset.image.bitsPerComponent > 8 {
+            brushError = "ReShape currently supports 8-bit layers. Convert the layer to 8-bit first."
+            return
+        }
         pauseGIFForEditing(for: layer.id)
         finishOpacityEdit()
         commitTransform()
         cancelCrop()
         tool = .reshape
-        meshWarpEdit = MeshWarpEdit(layerID: layer.id, layerName: layer.name, image: asset.image,
-                                    transform: displayedTransform(for: layer), mesh: mesh)
+        meshWarpEdit = MeshWarpEdit(layerID: layer.id, layerName: layer.name, image: sourceAsset.image,
+                                    transform: displayedTransform(for: layer), mesh: mesh,
+                                    thumbnail: sourceAsset.thumbnail)
     }
 
     func cancelMeshWarp() {
         guard let edit = meshWarpEdit else { return }
         edit.gpuSessionInvalidate()
         meshWarpEdit = nil
+        brushRevision += 1
+    }
+
+    /// Clears editable mesh state, keeping the current rendered layer pixels as the new source.
+    /// One document-history entry. Required before painting or filters on a ReShape layer.
+    func bakeReshape(layerID: UUID? = nil) {
+        let id = layerID ?? activeLayerID
+        guard canEditLayers, let id,
+              let index = document?.layers.firstIndex(where: { $0.id == id }),
+              var layer = document?.layers[index],
+              layer.reshape != nil else { return }
+        if meshWarpEdit?.layerID == id { cancelMeshWarp() }
+        beginEdit("Bake ReShape")
+        layer.reshape = nil
+        document?.layers[index] = layer
+        endEdit()
         brushRevision += 1
     }
 
@@ -357,18 +403,34 @@ extension EditorSession {
         if edit.toolRedo() { brushRevision += 1 }
     }
 
-    /// Commits the warped pixels into the layer as one undo step.
+    /// Commits editable mesh + immutable source and refreshes display pixels as one undo step.
     func applyMeshWarp() {
         guard let edit = meshWarpEdit,
               let index = document?.layers.firstIndex(where: { $0.id == edit.layerID }),
-              let layer = document?.layers[index],
-              layer.asset != nil
+              let layer = document?.layers[index]
         else {
             cancelMeshWarp()
             return
         }
         if edit.mesh.isIdentity {
-            cancelMeshWarp()
+            // Identity with prior persistent mesh: restore source as display and clear reshape.
+            if layer.reshape != nil {
+                let source = ImportedImage(image: edit.originalImage, thumbnail: edit.originalThumbnail,
+                                           name: layer.name)
+                do {
+                    var edited = try layerByEditingPixels(layer, asset: source, transform: layer.transform, mask: layer.mask)
+                    edited.reshape = nil
+                    beginEdit("ReShape")
+                    document?.layers[index] = edited
+                    endEdit()
+                } catch {
+                    brushError = error.localizedDescription
+                    return
+                }
+            }
+            edit.gpuSessionInvalidate()
+            meshWarpEdit = nil
+            brushRevision += 1
             return
         }
         var sample = MeshWarpRenderer.Sample()
@@ -378,9 +440,27 @@ extension EditorSession {
             brushError = "ReShape could not render the mesh."
             return
         }
-        let asset = ImportedImage(image: warped, thumbnail: thumbnail, name: layer.name)
+        let display = ImportedImage(image: warped, thumbnail: thumbnail, name: layer.name)
+        let source = ImportedImage(image: edit.originalImage, thumbnail: edit.originalThumbnail, name: layer.name)
+        // Retain both display and source against the document budget.
+        let used = (document?.layers ?? []).reduce(0) { total, candidate in
+            let assetPixels = candidate.id == layer.id ? 0
+                : (candidate.asset.map { $0.image.width * $0.image.height } ?? 0)
+            let reshapePixels = candidate.id == layer.id ? 0
+                : (candidate.reshape.map { $0.source.image.width * $0.source.image.height } ?? 0)
+            let frames = candidate.gifAnimation?.framePixels.values
+                .reduce(0) { $0 + $1.image.width * $1.image.height } ?? 0
+            return total + assetPixels + reshapePixels + frames
+        }
+        let needed = display.image.width * display.image.height
+            + source.image.width * source.image.height
+        guard needed <= DocumentLimits.documentPixelBudget - used else {
+            brushError = "ReShape source and result exceed this project’s \(DocumentLimits.documentBudgetMegapixels)-megapixel limit."
+            return
+        }
         do {
-            let edited = try layerByEditingPixels(layer, asset: asset, transform: layer.transform, mask: layer.mask)
+            var edited = try layerByEditingPixels(layer, asset: display, transform: layer.transform, mask: layer.mask)
+            edited.reshape = LayerReshape(mesh: edit.mesh, source: source)
             beginEdit("ReShape")
             document?.layers[index] = edited
             endEdit()

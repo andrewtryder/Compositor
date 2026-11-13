@@ -35,6 +35,10 @@ extension EditorSession {
         commitTransform()
         guard let plan = mergePlan(), let document else { return }
         let layers = document.layers
+        if layers.contains(where: { plan.ids.contains($0.id) && $0.reshape != nil }) {
+            brushError = "Bake ReShape on layers before merging. Merging would discard editable mesh state."
+            return
+        }
         let kept = Set(plan.ids)
         // Only the merged layers, cut loose from anything outside the merge.
         let subset = layers.filter { kept.contains($0.id) }.map { layer -> ImageLayer in

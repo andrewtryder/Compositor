@@ -7,6 +7,8 @@ extension EditorSession {
         var images: [UUID: ImportedImage] = [:]
         var masks: [UUID: ImportedImage] = [:]
         var animations: [UUID: GIFAnimation] = [:]
+        var reshapeSources: [UUID: ImportedImage] = [:]
+        var reshapeMeshes: [UUID: MeshWarpPersistentState] = [:]
         let layers = document.layers.map { layer in
             let asset = displayedAsset(for: layer)
             if let asset { images[layer.id] = asset }
@@ -21,13 +23,21 @@ extension EditorSession {
                     }, deletedFrameIndices: animation.deletedFrameIndices.sorted(), frameOrder: animation.frameOrder,
                     timing: animation.timing == GIFFrameTiming() ? nil : ProjectGIFTimingRecord(animation.timing))
             }
+            var reshape: ProjectReshapeRecord?
+            if let state = layer.reshape {
+                reshapeSources[layer.id] = state.source
+                reshapeMeshes[layer.id] = state.persistentState
+                reshape = ProjectReshapeRecord(
+                    sourceFile: "\(layer.id.uuidString).reshape-source.png",
+                    meshFile: "\(layer.id.uuidString).reshape.json")
+            }
             return ProjectLayerRecord(id: layer.id, name: layer.name, isVisible: layer.isVisible,
-                transform: layer.transform, imageFile: asset?.file(for: layer.id), parentID: layer.parentID, isGroup: layer.isGroup, opacity: layer.opacity, blendMode: layer.blendMode, maskFile: layer.mask == nil ? nil : "\(layer.id.uuidString).mask.png", maskEnabled: layer.mask?.isEnabled, maskSourceID: layer.maskSourceID, adjustment: layer.adjustment, maskPlacement: layer.mask?.placement, maskLinked: layer.mask?.isLinked, shape: layer.liveShape?.style, effects: layer.effects, text: layer.liveText?.style, gif: gif)
+                transform: layer.transform, imageFile: asset?.file(for: layer.id), parentID: layer.parentID, isGroup: layer.isGroup, opacity: layer.opacity, blendMode: layer.blendMode, maskFile: layer.mask == nil ? nil : "\(layer.id.uuidString).mask.png", maskEnabled: layer.mask?.isEnabled, maskSourceID: layer.maskSourceID, adjustment: layer.adjustment, maskPlacement: layer.mask?.placement, maskLinked: layer.mask?.isLinked, shape: layer.liveShape?.style, effects: layer.effects, text: layer.liveText?.style, gif: gif, reshape: reshape)
         }
         return ProjectSnapshot(manifest: ProjectManifest(resolution: document.resolution, documentID: document.id, width: document.width,
             height: document.height, activeLayerID: activeLayerID, layers: layers,
             guides: document.guides.isEmpty ? nil : document.guides), images: images, masks: masks,
-            animations: animations)
+            animations: animations, reshapeSources: reshapeSources, reshapeMeshes: reshapeMeshes)
     }
 
     /// Called only after the entire package has successfully validated and loaded.
@@ -96,12 +106,17 @@ extension ProjectSnapshot {
     /// so none of them leaves part of a layer behind.
     var documentLayers: [ImageLayer] {
         manifest.layers.map {
-            ImageLayer(id: $0.id, asset: images[$0.id], name: $0.name,
+            var reshape: LayerReshape?
+            if let persistent = reshapeMeshes[$0.id], let source = reshapeSources[$0.id] {
+                reshape = LayerReshape(persistent: persistent, source: source)
+            }
+            return ImageLayer(id: $0.id, asset: images[$0.id], name: $0.name,
                        isVisible: $0.isVisible, transform: $0.transform, parentID: $0.parentID, isGroup: $0.isGroup == true, opacity: $0.opacity ?? 1, blendMode: $0.blendMode ?? .normal, mask: mask(for: $0), maskSourceID: $0.maskSourceID, adjustment: $0.adjustment,
                        shape: LayerShape.loaded($0.shape, image: images[$0.id]?.image),
                        effects: $0.effects,
                        text: LayerText.loaded($0.text, image: images[$0.id]?.image),
-                       gifAnimation: animations[$0.id])
+                       gifAnimation: animations[$0.id],
+                       reshape: reshape)
         }
     }
 }

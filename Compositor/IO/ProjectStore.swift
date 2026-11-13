@@ -17,7 +17,7 @@ extension UTType {
 
 nonisolated struct ProjectManifest: Codable, Sendable {
     /// The format version new saves write.
-    static let current = 21
+    static let current = 22
     /// Every version `load` accepts: each one a release has written (1 through `current`), and 27 from the
     /// GIF branch's own builds. Leaving out 15 and 16 once locked out projects saved by 1.5.4 and 1.5.5.
     /// The package-header and manifest checks both read this, so they can't drift apart when `current` is bumped.
@@ -61,6 +61,15 @@ nonisolated struct ProjectLayerRecord: Codable, Sendable {
     var text: LayerTextStyle? = nil
     /// The embedded animation and masks scoped to individual frames. Missing before version 27.
     var gif: ProjectGIFRecord? = nil
+    /// Editable ReShape mesh + immutable source asset. Missing before version 22.
+    var reshape: ProjectReshapeRecord? = nil
+}
+
+nonisolated struct ProjectReshapeRecord: Codable, Sendable {
+    /// `<layer UUID>.reshape-source.png` under `images/`.
+    let sourceFile: String
+    /// `<layer UUID>.reshape.json` under `images/`.
+    let meshFile: String
 }
 
 nonisolated struct ProjectGIFRecord: Codable, Sendable {
@@ -138,6 +147,10 @@ nonisolated struct ProjectSnapshot: @unchecked Sendable {
     let images: [UUID: ImportedImage]
     var masks: [UUID: ImportedImage] = [:]
     var animations: [UUID: GIFAnimation] = [:]
+    /// Immutable ReShape sources keyed by layer id (rendered display stays in `images`).
+    var reshapeSources: [UUID: ImportedImage] = [:]
+    /// Validated mesh payloads keyed by layer id.
+    var reshapeMeshes: [UUID: MeshWarpPersistentState] = [:]
 }
 
 nonisolated enum ProjectError: LocalizedError {
@@ -164,6 +177,9 @@ actor ProjectStore {
         try validate(snapshot.manifest)
         let animatedIDs = Set(snapshot.manifest.layers.filter { $0.gif != nil }.map(\.id))
         guard Set(snapshot.animations.keys) == animatedIDs else { throw ProjectError.invalid }
+        let reshapeIDs = Set(snapshot.manifest.layers.filter { $0.reshape != nil }.map(\.id))
+        guard Set(snapshot.reshapeSources.keys) == reshapeIDs,
+              Set(snapshot.reshapeMeshes.keys) == reshapeIDs else { throw ProjectError.invalid }
         var images: [String: FileWrapper] = [:]
         var pixels = 0, maskPixels = 0
         var gifBytes = 0, thumbnailPixels = 0
@@ -189,8 +205,19 @@ actor ProjectStore {
             }
             guard data.count <= 512 * 1024 * 1024 else { throw ProjectError.tooLarge }
             if layer.gif != nil, !isMask, asset.deep != nil { throw ProjectError.invalid }
+            if layer.reshape != nil, !isMask, asset.deep != nil { throw ProjectError.invalid }
             images[filename] = FileWrapper(regularFileWithContents: data)
           }
+            if let reshape = layer.reshape {
+                guard let source = snapshot.reshapeSources[layer.id],
+                      let mesh = snapshot.reshapeMeshes[layer.id],
+                      let display = snapshot.images[layer.id]?.image else { throw ProjectError.missingImage }
+                try validateReshape(mesh: mesh, source: source, display: display, record: reshape, layerID: layer.id)
+                try checkSize(width: source.image.width, height: source.image.height, used: &pixels)
+                images[reshape.sourceFile] = FileWrapper(regularFileWithContents: try pngData(source.image))
+                let meshData = try mesh.encodedJSON()
+                images[reshape.meshFile] = FileWrapper(regularFileWithContents: meshData)
+            }
             guard let gif = layer.gif else { continue }
             guard let animation = snapshot.animations[layer.id], let image = snapshot.images[layer.id]?.image else {
                 throw ProjectError.missingImage
@@ -259,6 +286,8 @@ actor ProjectStore {
         var images: [UUID: ImportedImage] = [:]
         var masks: [UUID: ImportedImage] = [:]
         var animations: [UUID: GIFAnimation] = [:]
+        var reshapeSources: [UUID: ImportedImage] = [:]
+        var reshapeMeshes: [UUID: MeshWarpPersistentState] = [:]
         var pixels = 0, maskPixels = 0
         var gifBytes = 0, thumbnailPixels = 0
         for layer in manifest.layers {
@@ -303,8 +332,26 @@ actor ProjectStore {
                 return ImportedImage(image: standard, thumbnail: thumbnail, name: layer.name)
             }
             if layer.gif != nil, !isMask, asset.deep != nil { throw ProjectError.invalid }
+            if layer.reshape != nil, !isMask, asset.deep != nil { throw ProjectError.invalid }
             if isMask { masks[layer.id] = asset } else { images[layer.id] = asset }
           }
+            if let reshape = layer.reshape {
+                let sourceFile = url.appendingPathComponent("images").appendingPathComponent(reshape.sourceFile)
+                try checkFile(sourceFile, inside: url, maximumBytes: 512 * 1024 * 1024)
+                let source = try readPNG(sourceFile, name: layer.name, isMask: false, used: &pixels)
+                let meshFile = url.appendingPathComponent("images").appendingPathComponent(reshape.meshFile)
+                try checkFile(meshFile, inside: url, maximumBytes: MeshWarpPersistentState.maximumEncodedBytes)
+                let meshData = try Data(contentsOf: meshFile)
+                let mesh: MeshWarpPersistentState
+                do { mesh = try MeshWarpPersistentState.decode(from: meshData) }
+                catch { throw ProjectError.invalid }
+                guard let display = images[layer.id]?.image else { throw ProjectError.missingImage }
+                try validateReshape(mesh: mesh, source: source, display: display, record: reshape, layerID: layer.id)
+                // Rebuild triangulation; reject if the payload cannot become a live mesh.
+                _ = try mesh.makeGrid()
+                reshapeSources[layer.id] = source
+                reshapeMeshes[layer.id] = mesh
+            }
             guard let gif = layer.gif else { continue }
             let file = url.appendingPathComponent("images").appendingPathComponent(gif.sourceFile)
             let byteCount = try checkFile(file, inside: url, maximumBytes: GIFSource.byteLimit)
@@ -328,7 +375,8 @@ actor ProjectStore {
             try checkGIFBudget(source, bytes: &gifBytes, thumbnails: &thumbnailPixels)
             animations[layer.id] = animation
         }
-        return ProjectSnapshot(manifest: manifest, images: images, masks: masks, animations: animations)
+        return ProjectSnapshot(manifest: manifest, images: images, masks: masks, animations: animations,
+                               reshapeSources: reshapeSources, reshapeMeshes: reshapeMeshes)
     }
 
     private func validate(_ manifest: ProjectManifest) throws {
@@ -344,10 +392,18 @@ actor ProjectStore {
             if layer.shape?.smoothing == true {
                 guard manifest.version >= 14 else { throw ProjectError.invalid }
             }
+            if let reshape = layer.reshape {
+                guard manifest.version >= 22, layer.imageFile != nil, layer.isGroup != true,
+                      layer.adjustment == nil, layer.gif == nil,
+                      reshape.sourceFile == "\(layer.id.uuidString).reshape-source.png",
+                      reshape.meshFile == "\(layer.id.uuidString).reshape.json" else {
+                    throw ProjectError.invalid
+                }
+            }
             if let gif = layer.gif {
                 let identityLimit = manifest.version >= 17 ? GIFTimelineLimits.frameIdentityLimit : GIFTimelineLimits.maxFrames
                 guard manifest.version >= 17, layer.imageFile != nil, layer.isGroup != true,
-                      layer.adjustment == nil, layer.text == nil, layer.shape == nil,
+                      layer.adjustment == nil, layer.text == nil, layer.shape == nil, layer.reshape == nil,
                       gif.sourceFile == "\(layer.id.uuidString).gif",
                       (0..<identityLimit).contains(gif.selectedFrameIndex),
                       gif.geometry.map(\.isValid) ?? true else { throw ProjectError.invalid }
@@ -464,6 +520,20 @@ actor ProjectStore {
             throw ProjectError.tooLarge
         }
         used += width * height
+    }
+
+    private func validateReshape(mesh: MeshWarpPersistentState, source: ImportedImage, display: CGImage,
+                                 record: ProjectReshapeRecord, layerID: UUID) throws {
+        guard record.sourceFile == "\(layerID.uuidString).reshape-source.png",
+              record.meshFile == "\(layerID.uuidString).reshape.json",
+              source.deep == nil, source.image.bitsPerComponent <= 8, !DeepLayer.isHDR(source.image),
+              source.image.width == mesh.imageWidth, source.image.height == mesh.imageHeight,
+              display.width == mesh.imageWidth, display.height == mesh.imageHeight,
+              mesh.schemaVersion == MeshWarpPersistentState.schemaVersion else {
+            throw ProjectError.invalid
+        }
+        // Ensure the payload reconstructs; triangulation is derived, not trusted from disk.
+        do { _ = try mesh.makeGrid() } catch { throw ProjectError.invalid }
     }
 
     private func validateAnimation(_ animation: GIFAnimation, record: ProjectGIFRecord, image: CGImage) throws {
