@@ -1,58 +1,121 @@
 # Camera Raw — Geometry Backend (Track A continuation)
 
-Baseline: `2f3d1cc8dcad9979e0351c1c627d6aadca165c07` (PR #5 Track A checkpoint)
 Branch: `camera-raw-geometry-backend`
 Worktree: `/Users/atr/code/Compositor-geometry-backend`
+Base: `camera-raw-perspective-intensity-framing` (PR #5)
+Draft PR: https://github.com/andrewtryder/Compositor/pull/6
 
-Backend-first milestone. Unified GUI and extensive photographic GUI validation are deferred.
+Backend-first milestone. No polished GUI / screenshots.
 
-## Phase 1 — Expand to Fit integration
+### Release `ENABLE_TESTABILITY` (provisional)
 
-- `CameraRawGeometryExpansion` maps CI warp corners → layer-CG coverage and a `LayerTransform` using the same center-preserving rule as FilterEdit blur growth.
-- `geometry.applyResult` / `CameraRawSettings.applyResult` / `PixelFilter.runResult` return expansion metadata.
-- Preview and `commitFilter` place expanded Camera Raw results via `preparedTransform` / committed layer transform.
-- Masks on the old grid are carried onto the new footprint (same path as blur growth).
-- Document canvas is not resized as a side effect.
-- Selection + Expand falls back to Keep Original Size (blend requires matching footprints).
-- 16-bit layers: Expand commits through the 8-bit filter path because `DeepLayer.run` requires same-size results.
-- Framing picker enabled in Geometry controls.
+Project Release sets `ENABLE_TESTABILITY = YES` so Release `CompositorTests` can `@testable import Compositor`. This is a **provisional** CI/test-host fix only: before production distribution it must be limited to test builds (e.g. a dedicated Test configuration or `OTHER_SWIFT_FLAGS` gated for testing), not left on the shipping Release app module. Release optimization settings (`SWIFT_OPTIMIZATION_LEVEL`, whole-module opts) are unchanged.
 
-## Phase 2 — Horizon engine
+## Status legend
 
-- `CameraRawHorizonSettings` + `CameraRawHorizon`: Automatic, Angle, Horizontal/Vertical reference, Amount, reset.
-- Rotation matches manual Rotate corner math; endpoint order is invariant for references.
-- Composition: Horizon after perspective; skipped when it would double-apply roll with Auto Level unless used as Level substitute. Auto Full ranking unchanged.
+| Tag | Meaning |
+|---|---|
+| Algorithm | Core math / renderer exists |
+| Pixel | Deterministic pixel / numerical tests pass |
+| Document | Normal `PixelFilter` / `EditorSession` Apply path executes it |
+| Precision | Bit-depth / color-space behavior verified or explicitly refused |
+| Serialization | Codable API exists; Camera Raw Apply remains destructive (pixels committed) |
+| GUI | Panel / toolbar controls |
+| Not implemented | Out of scope or deferred |
+
+## Phase 1 — Expand to Fit
+
+| Item | Status |
+|---|---|
+| Expansion metadata + layer placement | Algorithm · Pixel · Document |
+| Preview / commit place via `geometryExpansion.layerTransform` | Document |
+| Coverage-only transform (not union with original bounds) | Algorithm · Pixel — fixes Constrain Crop of expanded output |
+| Document canvas not resized for Expand | Document |
+| Selection + Expand → Keep Original Size | Document |
+| 16-bit / HDR Expand | **Precision: refused** — coerced to Keep Original Size; never silent 8-bit Expand |
+| Framing picker in Geometry controls | GUI (existing Framing control only) |
+
+`supportsExpandToFit(on:)` returns false when `asset.deep != nil`. Preview and commit both coerce Expand → Keep; deep commit always uses `DeepLayer.run` / 16-bit path.
+
+## Phase 2 — Horizon
+
+| Item | Status |
+|---|---|
+| Modes: Automatic, Angle, H/V reference, Amount | Algorithm · Pixel |
+| Endpoint order invariant | Algorithm · Pixel |
+| Composed into destination corners **before** framing / Expand | Algorithm · Pixel · Document (`CameraRawSettings.applyResult`) |
+| Skip double roll with Auto Level (Automatic = Level substitute) | Algorithm · Pixel |
+| Auto Full candidate ranking | Untouched |
+| Dedicated Horizon GUI | GUI pending |
 
 ## Phase 3 — Perspective tools
 
-- `CameraRawPerspectiveToolState` / `CameraRawPerspectiveTools`: vertical, horizontal, combined, rectangle, eight-point, manual keystone.
-- Existing two-/four-guide solver paths retained; tools only supply guides.
-- H/V Ratio ≡ existing Aspect polish (documented alias).
+| Item | Status |
+|---|---|
+| Vertical / horizontal / combined / rectangle / eight-point / keystone | Algorithm · Document (via `CameraRawPerspectiveTools.applying` → guides) |
+| Vertical-guide pixel warp test | Pixel (synthetic tapering grid) |
+| H/V Ratio ≡ Aspect polish | Algorithm · Pixel |
+| Degenerate guide rejection (full matrix of tools) | Partial — solver rejects bad guides; not every kind has a dedicated pixel test |
+| Tool UI | GUI pending |
 
-## Phase 4 — Crop / framing APIs
+## Phase 4 — Crop / framing
 
-- `CameraRawGeometryCrop` + `CameraRawGeometryCropRequest`: coordinate conversion, aspect constraint, opaque inscribed rect (shared algorithm with Constrain Crop).
-- Keep Original Size / Expand to Fit remain independent of Constrain Crop.
+| Item | Status |
+|---|---|
+| Keep Original Size / Expand to Fit | Algorithm · Pixel · Document |
+| Constrain Crop (opaque inscribed) | Algorithm · Pixel · Document |
+| `CameraRawGeometryCrop` free / aspect / constrained plans | Algorithm · Pixel (opaque plan tested) |
+| Expand then crop footprint = coverage + transform | Pixel |
+| Crop request UI beyond Constrain Crop | GUI pending |
 
 ## Phase 5 — Miniature Effect
 
-- `CameraRawMiniatureSettings` + renderer via `CIMaskedVariableBlur` (linear band / circular), continuous masks, identity at zero strength.
-- Wired through `CameraRawGeometryBackend.apply` for API use; not yet a Camera Raw panel section.
+| Item | Status |
+|---|---|
+| Linear / circular masked variable blur | Algorithm · Pixel |
+| Zero strength identity; focus vs periphery | Pixel (impulse pattern) |
+| Wired into `CameraRawSettings.applyResult` after geometry | Document |
+| Independent of projective pipeline | Algorithm |
+| Panel UI | GUI pending |
 
 ## Phase 6 — Backend facade
 
-- `CameraRawGeometryBackendSettings` / `CameraRawGeometryBackend` document composition order and provide `apply` / `reset`.
-- ReShape / mesh stays separate (PR #4); not composed here.
+| Item | Status |
+|---|---|
+| `CameraRawGeometryBackend` composition order | Algorithm · Document (shared with `CameraRawSettings.applyResult`) |
+| ReShape / mesh | Not implemented here (PR #4) |
 
-## Tests (Debug)
+## Safety pass (this session)
 
-- `CameraRawGeometryBackendTests` — passed
-- `CameraRawPerspectiveIntensityFramingTests` — passed
+1. **16-bit Expand**: refuse / coerce; preserve depth on Keep path.
+2. **Footprint**: `layerTransform` uses coverage only.
+3. **Integration**: Horizon, perspective tools, Miniature execute on the normal Camera Raw Apply path.
+4. **Horizon + Expand**: horizon degrees fed into corner framing so expansion metadata includes roll.
+5. **Release tests**: project Release `ENABLE_TESTABILITY = YES` so `@testable import Compositor` resolves.
 
-## Known limitations
+## Tests
 
-- Horizon / perspective-tools / miniature / crop-request are backend APIs; not fully surfaced in the Camera Raw sheet (except Framing + existing perspective).
-- Expand + layer selection coerced to Keep Original Size.
-- Expand on 16-bit layers uses the 8-bit commit path.
-- Release CompositorTests module compatibility issue from Track A remains unaddressed here.
-- No ViewPoint RE repeated; no proprietary code copied.
+| Suite | Debug | Release |
+|---|---|---|
+| `CameraRawGeometrySafetyTests` | passed | passed |
+| `CameraRawGeometryBackendTests` | passed | (compiled with Release host) |
+| `CameraRawPerspectiveIntensityFramingTests` | passed (prior) | — |
+
+## Remaining backend gaps
+
+- Full 16-bit **variable-footprint** Expand (needs DeepLayer same-size constraint lift) — currently refused.
+- Broader per-tool perspective pixel suites (H/V/combined/rect/8pt/keystone).
+- Document-level Undo/Redo placement harness for Expand + crop (footprint unit-tested; session history not yet).
+- Miniature: asymmetric / transition smoothness / alpha fringe cases beyond impulse center/corner.
+- Free-crop / preserved-aspect crop pixel cases beyond opaque auto crop.
+- GUI for Horizon, tools, Miniature, crop request.
+- Advanced ReShape / AI segmentation / ViewPoint toolbar — not in scope.
+
+## Proposed follow-up commit (do not create yet)
+
+```
+Camera Raw: refuse 16-bit Expand, fix crop placement, wire Horizon/Miniature
+
+Keep Expand from silently dithering deep layers; map expanded footprints from
+coverage alone; compose Horizon before framing; enable Release testability.
+```

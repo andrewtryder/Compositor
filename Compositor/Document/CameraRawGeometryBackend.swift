@@ -11,7 +11,17 @@ nonisolated struct CameraRawGeometryBackendSettings: Equatable, Sendable, Codabl
     var crop = CameraRawGeometryCropRequest()
     var miniature = CameraRawMiniatureSettings()
 
-    init() {}
+    init(geometry: CameraRawGeometrySettings = CameraRawGeometrySettings(),
+         horizon: CameraRawHorizonSettings = CameraRawHorizonSettings(),
+         perspectiveTools: CameraRawPerspectiveToolState = CameraRawPerspectiveToolState(),
+         crop: CameraRawGeometryCropRequest = CameraRawGeometryCropRequest(),
+         miniature: CameraRawMiniatureSettings = CameraRawMiniatureSettings()) {
+        self.geometry = geometry
+        self.horizon = horizon
+        self.perspectiveTools = perspectiveTools
+        self.crop = crop
+        self.miniature = miniature
+    }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -38,12 +48,14 @@ nonisolated enum CameraRawGeometryBackend {
     /// 1. Lens distortion (optics)
     /// 2. Volume
     /// 3. Perspective / upright / tool guides (with Perspective Amount)
-    /// 4. Horizon rotation (skipped when Upright already owns roll, unless horizon is explicitly forced)
+    /// 4. Horizon rotation (composed into destination corners before framing)
     /// 5. Framing (Keep Original Size / Expand to Fit) + independent Constrain Crop / crop request
     /// 6. Miniature effect
     /// 7. Color grade (Camera Raw light/color/…)
     ///
     /// Auto Full candidate ranking is never modified here.
+    /// Horizon, perspective tools, and Miniature are executed by `CameraRawSettings.applyResult` on the
+    /// PixelFilter / EditorSession path (not API-only).
     static let compositionOrder = [
         "lensDistortion", "volume", "perspective", "horizon", "framingCrop", "miniature", "colorGrade"
     ]
@@ -63,8 +75,7 @@ nonisolated enum CameraRawGeometryBackend {
         let horizon = settings.horizon.normalized
         guard !horizon.isIdentity else { return false }
         let upright = settings.geometry.upright
-        // Auto Level / Guided already encode roll; Horizon stays available for Angle / references when upright is off,
-        // or when the caller set Automatic horizon as a dedicated Level substitute.
+        // Auto Level already owns roll when its guides are active; Automatic horizon is the Level substitute.
         if upright == .autoLevel { return horizon.mode == .automatic }
         if upright == .guided || upright == .autoVertical || upright == .autoFull {
             return horizon.mode == .angle || horizon.mode == .horizontalReference || horizon.mode == .verticalReference
@@ -72,31 +83,21 @@ nonisolated enum CameraRawGeometryBackend {
         return true
     }
 
-    /// Applies geometry + optional horizon + miniature. Does not run the color grade.
+    static func horizonDegrees(settings: CameraRawGeometryBackendSettings, width: Int, height: Int,
+                               automaticAngle: Double? = nil) -> Double? {
+        guard shouldApplyHorizon(settings) else { return nil }
+        return CameraRawHorizon.rotationDegrees(settings: settings.horizon, width: width, height: height,
+                                                automaticAngle: automaticAngle)
+    }
+
+    /// Applies geometry + Horizon (into corners) + optional crop request + miniature. Does not run the color grade.
     static func apply(_ image: CGImage, settings: CameraRawGeometryBackendSettings,
                       automaticHorizonAngle: Double? = nil) throws -> CameraRawGeometryResult {
         let settings = settings.normalized
-        var working = try geometry(applying: settings).applyResult(image)
-        if shouldApplyHorizon(settings),
-           let homo = CameraRawHorizon.homography(settings: settings.horizon, width: working.image.width,
-                                                  height: working.image.height, automaticAngle: automaticHorizonAngle),
-           homo != .identity {
-            let width = working.image.width, height = working.image.height
-            let corners = CameraRawPerspective.perspectiveCorners(homography: homo, width: width, height: height)
-            let identity = CameraRawPerspective.identityCorners(width: Double(width), height: Double(height))
-            let unchanged = zip(corners, identity).allSatisfy { hypot($0.x - $1.x, $0.y - $1.y) < 0.05 }
-            if !unchanged {
-                var horizonGeometry = CameraRawGeometrySettings()
-                horizonGeometry.upright = .off
-                horizonGeometry.rotate = CameraRawHorizon.rotationDegrees(settings: settings.horizon, width: width,
-                                                                           height: height, automaticAngle: automaticHorizonAngle) ?? 0
-                // Horizon runs on the current footprint; framing was already applied in the perspective stage.
-                horizonGeometry.framingMode = .keepOriginalSize
-                horizonGeometry.perspectiveAmount = 100
-                let rotated = try horizonGeometry.applyResult(working.image)
-                working = CameraRawGeometryResult(image: rotated.image, expansion: working.expansion)
-            }
-        }
+        let geometry = geometry(applying: settings)
+        let degrees = horizonDegrees(settings: settings, width: image.width, height: image.height,
+                                     automaticAngle: automaticHorizonAngle)
+        var working = try geometry.applyResult(image, horizonDegrees: degrees)
         if let crop = try CameraRawGeometryCrop.plan(request: settings.crop, image: working.image,
                                                      originalSize: CGSize(width: image.width, height: image.height)),
            crop.width < CGFloat(working.image.width) - 0.5 || crop.height < CGFloat(working.image.height) - 0.5,

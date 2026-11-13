@@ -226,9 +226,12 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
     }
 
     /// Same as `apply`, plus an expansion describing how to place a resized result on the document.
-    func applyResult(_ image: CGImage) throws -> CameraRawGeometryResult {
+    /// `horizonDegrees` is composed into the destination corners before framing so Expand bounds stay complete.
+    func applyResult(_ image: CGImage, horizonDegrees: Double? = nil) throws -> CameraRawGeometryResult {
         let settings = normalized
-        guard settings.adjusts else { return CameraRawGeometryResult(image: image, expansion: nil) }
+        let needsPerspective = settings.usesSolverGuides || settings.usesManualPerspective || settings.usesPolish
+            || (horizonDegrees.map { abs($0) > 1e-9 } ?? false)
+        guard settings.adjusts || needsPerspective else { return CameraRawGeometryResult(image: image, expansion: nil) }
         let width = image.width, height = image.height
         guard width > 0, height > 0 else { return CameraRawGeometryResult(image: image, expansion: nil) }
         var working = image
@@ -236,8 +239,8 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
             working = try settings.applyVolume(working)
         }
         var expansion: CameraRawGeometryExpansion?
-        if settings.usesSolverGuides || settings.usesManualPerspective || settings.usesPolish {
-            let perspective = try settings.applyPerspectiveResult(working)
+        if needsPerspective {
+            let perspective = try settings.applyPerspectiveResult(working, horizonDegrees: horizonDegrees)
             working = perspective.image
             expansion = perspective.expansion
         }
@@ -275,9 +278,9 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
         return result
     }
 
-    private func applyPerspectiveResult(_ image: CGImage) throws -> CameraRawGeometryResult {
+    private func applyPerspectiveResult(_ image: CGImage, horizonDegrees: Double? = nil) throws -> CameraRawGeometryResult {
         let width = image.width, height = image.height
-        let corners = outputCorners(width: width, height: height)
+        let corners = outputCorners(width: width, height: height, horizonDegrees: horizonDegrees)
         let identity = CameraRawPerspective.identityCorners(width: Double(width), height: Double(height))
         let unchanged = zip(corners, identity).allSatisfy {
             hypot($0.x - $1.x, $0.y - $1.y) < 0.05
@@ -381,7 +384,9 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
 
     /// Core Image corner positions with y measured upward from the bottom (TL, TR, BR, BL).
     /// Perspective Amount blends the keystone/roll homography toward identity before Aspect / Scale / Offset.
-    func outputCorners(width: Int, height: Int) -> [CGPoint] {
+    /// Optional `horizonDegrees` rotates those destination corners about the image center before polish/framing,
+    /// so Expand to Fit bounds include Horizon.
+    func outputCorners(width: Int, height: Int, horizonDegrees: Double? = nil) -> [CGPoint] {
         let w = Double(width), h = Double(height)
         let identity = CameraRawPerspective.identityCorners(width: w, height: h)
         let amount = ImageAdjustmentPixels.clamp(perspectiveAmount, Self.amountRange, 100) / 100
@@ -407,6 +412,10 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
                 // Degenerate blend: refuse the keystone rather than invent an intermediate.
                 perspectiveCorners = identity
             }
+        }
+        if let degrees = horizonDegrees, degrees.isFinite, abs(degrees) > 1e-9,
+           let homo = CameraRawHorizon.rotationHomography(degrees: degrees, width: w, height: h) {
+            perspectiveCorners = perspectiveCorners.map { homo.applying($0) }
         }
         return Self.polish(corners: perspectiveCorners, width: w, height: h, aspect: aspect, scale: scale,
                            offsetX: offsetX, offsetY: offsetY)

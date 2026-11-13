@@ -26,11 +26,12 @@ nonisolated struct CameraRawGeometryExpansion: Equatable, Sendable {
             && abs(coverageInInput.height - CGFloat(inputHeight)) < 0.5
     }
 
-    /// Document placement for the expanded pixels, preserving rotation/flip/sampling and the visual position of
-    /// content that still corresponds to the original coverage region (same rule as FilterEdit blur growth).
+    /// Document placement for the output bitmap. Uses `coverageInInput` alone (not unioned with the original bounds)
+    /// so Constrain Crop / manual crop of an expanded canvas stays aligned with the kept pixels.
     func layerTransform(from base: LayerTransform) -> LayerTransform {
         let bounds = CGRect(x: 0, y: 0, width: inputWidth, height: inputHeight)
-        let target = bounds.union(coverageInInput).integral
+        let target = coverageInInput
+        guard bounds.width > 0, bounds.height > 0, target.width > 0, target.height > 0 else { return base }
         var expanded = base
         expanded.size = CGSize(width: target.width * base.size.width / bounds.width,
                                height: target.height * base.size.height / bounds.height)
@@ -49,6 +50,19 @@ nonisolated struct CameraRawGeometryExpansion: Equatable, Sendable {
         guard kept.width >= 1, kept.height >= 1,
               kept.width.isFinite, kept.height.isFinite else { return nil }
         return CameraRawGeometryExpansion(inputWidth: inputWidth, inputHeight: inputHeight, coverageInInput: kept)
+    }
+
+    /// True when bitmap size, coverage, and transform describe the same document rectangle (within a pixel).
+    func footprintMatches(image: CGImage, base: LayerTransform, placed: LayerTransform, tolerance: CGFloat = 1.0) -> Bool {
+        guard image.width == outputWidth, image.height == outputHeight else { return false }
+        let expected = layerTransform(from: base)
+        return abs(expected.origin.x - placed.origin.x) <= tolerance
+            && abs(expected.origin.y - placed.origin.y) <= tolerance
+            && abs(expected.size.width - placed.size.width) <= tolerance
+            && abs(expected.size.height - placed.size.height) <= tolerance
+            && expected.rotation == placed.rotation
+            && expected.flipX == placed.flipX
+            && expected.flipY == placed.flipY
     }
 }
 
@@ -73,10 +87,19 @@ extension CameraRawPerspective {
 }
 
 extension CameraRawGeometrySettings {
+    /// Expand to Fit needs a variable-size Camera Raw commit. 16-bit/HDR layers cannot change footprint through
+    /// `DeepLayer.run` without an 8-bit surface; Expand is refused rather than silently reducing precision.
+    static func supportsExpandToFit(on asset: ImportedImage) -> Bool {
+        asset.deep == nil
+    }
+
+    static let expandUnsupportedOnDeepLayersMessage =
+        "Expand to Fit is unavailable on 16-bit and HDR layers. Keep Original Size preserves full precision."
+
     /// Planned Expand to Fit coverage for the current corners, or nil when Keep Original Size / unchanged / unsafe.
-    func plannedExpansion(width: Int, height: Int) -> CameraRawGeometryExpansion? {
+    func plannedExpansion(width: Int, height: Int, horizonDegrees: Double? = nil) -> CameraRawGeometryExpansion? {
         guard framingMode == .expandToFit, width > 0, height > 0 else { return nil }
-        let corners = outputCorners(width: width, height: height)
+        let corners = outputCorners(width: width, height: height, horizonDegrees: horizonDegrees)
         let identity = CameraRawPerspective.identityCorners(width: Double(width), height: Double(height))
         let unchanged = zip(corners, identity).allSatisfy {
             hypot($0.x - $1.x, $0.y - $1.y) < 0.05

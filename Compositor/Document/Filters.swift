@@ -799,6 +799,11 @@ final class FilterEdit {
                                                         showsMixer: showsCameraRawMixer, showsGrading: showsCameraRawGrading,
                                                         showsDetail: showsCameraRawDetail, showsOptics: showsCameraRawOptics,
                                                         showsGeometry: showsCameraRawGeometry, showsCalibration: showsCameraRawCalibration)
+            // Never silently expand a 16-bit/HDR layer through an 8-bit surface.
+            if !CameraRawGeometrySettings.supportsExpandToFit(on: original),
+               value.cameraRaw.geometry.framingMode == .expandToFit {
+                value.cameraRaw.geometry.framingMode = .keepOriginalSize
+            }
         }
         return value
     }
@@ -971,6 +976,12 @@ extension EditorSession {
         if edit.waitsForDepth, settings.normalized == edit.settings, preview == edit.preview { return }
         edit.settings = settings.normalized
         edit.preview = preview
+        if edit.kind == .cameraRaw,
+           !CameraRawGeometrySettings.supportsExpandToFit(on: edit.original),
+           edit.settings.cameraRaw.geometry.framingMode == .expandToFit {
+            edit.settings.cameraRaw.geometry.framingMode = .keepOriginalSize
+            edit.previewError = CameraRawGeometrySettings.expandUnsupportedOnDeepLayersMessage
+        }
         // A bigger blur needs more room around the layer than it was given.
         if FilterEdit.blurMargin(edit.kind, edit.settings) > edit.grownMargin {
             do { try edit.growForBlur() }
@@ -1152,25 +1163,28 @@ extension EditorSession {
                     return (try DeepLayer.asset(result, name: job.kind.rawValue), grown)
                 }
                 if let deep {
-                    // Expand to Fit changes dimensions; DeepLayer.run requires a same-size result, so Camera Raw
-                    // Expand commits through the 8-bit filter path (layer depth follows the committed asset).
-                    if job.kind == .cameraRaw, job.settings.cameraRaw.geometry.framingMode == .expandToFit,
-                       job.settings.cameraRaw.geometry.plannedExpansion(width: job.image.width, height: job.image.height) != nil {
-                        let made = try PixelFilter.runResult(job)
-                        let placed = made.geometryExpansion?.layerTransform(from: baseTransform) ?? grown
-                        return (ImportedImage(image: made.image, thumbnail: try PixelAdjust.thumbnail(of: made.image),
-                                              name: job.kind.rawValue), placed)
+                    // Expand on 16-bit/HDR is refused (renderSettings already coerces Keep Original Size). Preserve
+                    // precision through DeepLayer.run; never commit an 8-bit expanded substitute.
+                    var keepSettings = job.settings
+                    if job.kind == .cameraRaw, keepSettings.cameraRaw.geometry.framingMode == .expandToFit {
+                        keepSettings.cameraRaw.geometry.framingMode = .keepOriginalSize
                     }
+                    var runJob = FilterJob(kind: job.kind, image: job.image, settings: keepSettings, scale: job.scale,
+                                           selection: job.selection, mapping: job.mapping, seed: job.seed)
+                    runJob.canvas = job.canvas
+                    runJob.canvasSides = job.canvasSides
+                    runJob.cameraRawBrightness = job.cameraRawBrightness
+                    runJob.cameraRawUsesGPU = job.cameraRawUsesGPU
                     let input = try deepGrid.map { try DeepLayer.padded(deep, to: $0.size, inside: $0.inside) } ?? deep
                     var result: CGImage
-                    if job.kind.runsAtSixteenBits {
-                        var run = job
+                    if runJob.kind.runsAtSixteenBits {
+                        var run = runJob
                         run.image = input
                         run.sixteenBit = true
                         result = try PixelFilter.run(run)
                     } else {
-                        result = try DeepLayer.run(input, mixesChannels: job.kind.mixesChannels) { half in
-                            var run = job
+                        result = try DeepLayer.run(input, mixesChannels: runJob.kind.mixesChannels) { half in
+                            var run = runJob
                             run.image = half
                             return try PixelFilter.run(run)
                         }
@@ -1181,7 +1195,7 @@ extension EditorSession {
                         placed = PixelFilter.trimmedTransform(grown, crop: crop, width: result.width, height: result.height)
                         result = cropped
                     }
-                    return (try DeepLayer.asset(result, name: job.kind.rawValue), placed)
+                    return (try DeepLayer.asset(result, name: runJob.kind.rawValue), placed)
                 }
                 let rendered = try cached.map { (image: $0, geometryExpansion: nil as CameraRawGeometryExpansion?) }
                     ?? PixelFilter.runResult(job)

@@ -93,6 +93,14 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     var optics = CameraRawOpticsSettings()
     var geometry = CameraRawGeometrySettings()
     var calibration = CameraRawCalibrationSettings()
+    /// Dedicated Horizon correction. Defaults off; composed into geometry corners before framing.
+    var horizon = CameraRawHorizonSettings()
+    /// Typed perspective-tool state. Defaults leave `geometry.guides` / manual keystone alone.
+    var perspectiveTools = CameraRawPerspectiveToolState()
+    /// Miniature / tilt-shift. Defaults identity; runs after geometry, before the color grade.
+    var miniature = CameraRawMiniatureSettings()
+    /// Optional automatic horizon angle from the last Auto Level observation (degrees). Not persisted.
+    var automaticHorizonAngle: Double? = nil
 
     var adjustsLight: Bool {
         exposure != 0 || contrast != 0 || highlights != 0 || shadows != 0 || whites != 0 || blacks != 0
@@ -108,7 +116,8 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     var adjustsGrading: Bool { grading.adjusts }
     var adjustsDetail: Bool { detail.adjusts }
     var adjustsOptics: Bool { optics.adjusts }
-    var adjustsGeometry: Bool { geometry.adjusts }
+    var adjustsGeometry: Bool { geometry.adjusts || !horizon.isIdentity || !miniature.isIdentity
+        || perspectiveTools.kind != .automatic }
     var adjustsCalibration: Bool { calibration.adjusts }
     var isIdentity: Bool {
         !adjustsLight && !adjustsColor && !adjustsEffects && !adjustsCurve && !adjustsMixer && !adjustsGrading
@@ -158,6 +167,8 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         result.optics = optics.normalized
         result.geometry = geometry.normalized
         result.calibration = calibration.normalized
+        result.horizon = horizon.normalized
+        result.miniature = miniature.normalized
         return result
     }
 
@@ -193,7 +204,13 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         if !showsGrading { result.grading = CameraRawGradingSettings() }
         if !showsDetail { result.detail = CameraRawDetailSettings() }
         if !showsOptics { result.optics = CameraRawOpticsSettings() }
-        if !showsGeometry { result.geometry = CameraRawGeometrySettings() }
+        if !showsGeometry {
+            result.geometry = CameraRawGeometrySettings()
+            result.horizon = CameraRawHorizonSettings()
+            result.perspectiveTools = CameraRawPerspectiveToolState()
+            result.miniature = CameraRawMiniatureSettings()
+            result.automaticHorizonAngle = nil
+        }
         if !showsCalibration { result.calibration = CameraRawCalibrationSettings() }
         return result
     }
@@ -242,9 +259,19 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
                 source = try Self.applyLensDistort(source, k: distortionK)
                 earlyDistortion = true
             }
-            let geometry = try settings.geometry.applyResult(source)
-            source = geometry.image
-            geometryExpansion = geometry.expansion
+            let geometry = CameraRawPerspectiveTools.applying(settings.perspectiveTools, to: settings.geometry)
+            let backend = CameraRawGeometryBackendSettings(
+                geometry: geometry, horizon: settings.horizon, perspectiveTools: settings.perspectiveTools,
+                miniature: settings.miniature)
+            let horizonDegrees = CameraRawGeometryBackend.horizonDegrees(
+                settings: backend, width: source.width, height: source.height,
+                automaticAngle: settings.automaticHorizonAngle)
+            let geometryResult = try geometry.applyResult(source, horizonDegrees: horizonDegrees)
+            source = geometryResult.image
+            geometryExpansion = geometryResult.expansion
+            if !settings.miniature.isIdentity {
+                source = try CameraRawMiniature.apply(source, settings: settings.miniature, scale: CGFloat(pixelScale))
+            }
         }
         func applyTable(_ table: [Float]?, pixels: UnsafeMutablePointer<UInt8>, width: Int, height: Int, stride: Int, clipping: Int32) {
             if usesGPU, clipping == 0, let table,
