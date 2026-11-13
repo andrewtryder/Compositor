@@ -17,10 +17,10 @@ nonisolated final class MetalMeshWarp: Sendable {
         var triangleUploadMilliseconds: Double = 0
     }
 
-    fileprivate let device: MTLDevice
-    fileprivate let queue: MTLCommandQueue
-    fileprivate let bufferPipeline: MTLComputePipelineState
-    fileprivate let texturePipeline: MTLComputePipelineState
+    let device: MTLDevice
+    let queue: MTLCommandQueue
+    let bufferPipeline: MTLComputePipelineState
+    let texturePipeline: MTLComputePipelineState
     private struct Buffers {
         let source: MTLBuffer
         let destination: MTLBuffer
@@ -28,14 +28,14 @@ nonisolated final class MetalMeshWarp: Sendable {
     }
     private let buffers = Mutex<Buffers?>(nil)
 
-    fileprivate struct Parameters {
+    struct Parameters {
         var width: UInt32
         var height: UInt32
         var stride: UInt32
         var triangleCount: UInt32
     }
 
-    fileprivate struct TriangleGPU {
+    struct TriangleGPU {
         var d0x: Float, d0y: Float, d1x: Float, d1y: Float, d2x: Float, d2y: Float
         var s0x: Float, s0y: Float, s1x: Float, s1y: Float, s2x: Float, s2y: Float
     }
@@ -132,7 +132,7 @@ nonisolated final class MetalMeshWarp: Sendable {
                      mesh: mesh, sample: &sample)
     }
 
-    fileprivate static func pack(_ triangles: [MeshWarpTriangle]) -> [TriangleGPU] {
+    static func pack(_ triangles: [MeshWarpTriangle]) -> [TriangleGPU] {
         var packed = [TriangleGPU]()
         packed.reserveCapacity(triangles.count)
         for triangle in triangles {

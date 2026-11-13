@@ -376,7 +376,7 @@ extension EditorSession {
               let index = document?.layers.firstIndex(where: { $0.id == id }),
               var layer = document?.layers[index] else { return }
         if let stack = layer.correctionStack {
-            if stack.nodes.count > 1 || stack.hasCameraRawGeometry {
+            if stack.nodes.count > 1 || stack.hasAnyCameraRaw {
                 try? bakeAllCorrections(layerID: id)
                 return
             }

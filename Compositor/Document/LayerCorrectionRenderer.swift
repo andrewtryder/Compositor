@@ -3,11 +3,19 @@ import Foundation
 
 /// Evaluates a `LayerCorrectionStack` from the immutable source. Stage caches are reused when a
 /// node and all upstream nodes are unchanged (`revision` + cache entries).
+///
+/// Mesh stages prefer a resident `LayerCorrectionGPUContext` when supplied; otherwise they fall
+/// back to one-shot `MeshWarpRenderer` / CPU. Metal usage is recorded from actual command completion,
+/// never inferred from device presence alone.
 nonisolated enum LayerCorrectionRenderer {
     nonisolated struct Options: Sendable {
         var preferMetalMesh: Bool = true
         /// When true, reuse `stack.stageCache` entries that match the current revision.
         var useCache: Bool = true
+        /// Session-owned resident GPU working set. Not serializable.
+        var gpuContext: LayerCorrectionGPUContext? = nil
+        /// When true and Metal is available, fail instead of silently falling back to CPU for mesh.
+        var requireMetalMeshWhenAvailable: Bool = false
     }
 
     static func render(_ stack: inout LayerCorrectionStack,
@@ -39,19 +47,30 @@ nonisolated enum LayerCorrectionRenderer {
             }
 
             let started = CFAbsoluteTimeGetCurrent()
-            let stageMetal: Bool
+            var timing = LayerCorrectionRenderResult.StageTiming(
+                nodeID: node.id, kind: node.kind, milliseconds: 0, usedMetal: false, cacheHit: false)
             let output: CGImage
             var stageExpansion: CameraRawGeometryExpansion?
 
             switch node.kind {
             case .cameraRawGeometry:
-                if LayerCorrectionStack.usesExpand(node.cameraRaw), stack.hasReshape {
+                if node.usesExpandToFit, stack.hasReshape {
                     throw LayerCorrectionError.expandWithReshape
                 }
                 let applied = try CameraRawGeometryBackend.apply(current, settings: node.cameraRaw)
                 output = applied.image
                 stageExpansion = applied.expansion
-                stageMetal = false
+                timing.fallbackReason = "Camera Raw geometry (CPU)"
+
+            case .cameraRawFull:
+                if node.usesExpandToFit, stack.hasReshape {
+                    throw LayerCorrectionError.expandWithReshape
+                }
+                // Reuse the existing Camera Raw Filter algorithms — no duplicate color engine.
+                let applied = try node.cameraRawFull.applyResult(current, usesGPU: false)
+                output = applied.image
+                stageExpansion = applied.expansion
+                timing.fallbackReason = "Camera Raw full (CPU Filter path)"
 
             case .reshape:
                 guard let mesh = node.mesh else {
@@ -64,32 +83,64 @@ nonisolated enum LayerCorrectionRenderer {
                 }
                 if mesh.isIdentity {
                     output = current
-                    stageMetal = false
+                    timing.fallbackReason = "identity mesh"
                 } else if options.preferMetalMesh {
-                    var sample = MeshWarpRenderer.Sample()
-                    // Prefer resident session path when available via MeshWarpRenderer (Metal first).
-                    guard let warped = MeshWarpRenderer.apply(source: current, mesh: mesh, sample: &sample) else {
-                        throw LayerCorrectionError.unsupported("ReShape could not render the mesh.")
+                    let warped: CGImage
+                    if let gpu = options.gpuContext {
+                        var sample = LayerCorrectionGPUContext.MeshSample()
+                        guard let image = gpu.apply(source: current, mesh: mesh, sample: &sample) else {
+                            throw LayerCorrectionError.unsupported("ReShape could not render the mesh.")
+                        }
+                        warped = image
+                        timing.usedMetal = sample.usedMetal
+                        timing.metalAvailable = sample.metalAvailable
+                        timing.fallbackReason = sample.fallbackReason
+                        timing.sourceUploadMilliseconds = sample.sourceUploadMilliseconds
+                        timing.triangleUploadMilliseconds = sample.triangleUploadMilliseconds
+                        timing.kernelMilliseconds = sample.kernelMilliseconds
+                        timing.gpuMilliseconds = sample.gpuMilliseconds
+                        timing.syncMilliseconds = sample.syncMilliseconds
+                        timing.readbackMilliseconds = sample.readbackMilliseconds
+                        timing.allocationMilliseconds = sample.allocationMilliseconds
+                    } else {
+                        var sample = MeshWarpRenderer.Sample()
+                        guard let image = MeshWarpRenderer.apply(source: current, mesh: mesh, sample: &sample) else {
+                            throw LayerCorrectionError.unsupported("ReShape could not render the mesh.")
+                        }
+                        warped = image
+                        timing.usedMetal = sample.usedMetal
+                        timing.metalAvailable = MetalMeshWarp.shared != nil
+                        timing.fallbackReason = sample.usedMetal ? nil : "one-shot MeshWarpRenderer CPU/Metal fail"
+                        timing.sourceUploadMilliseconds = sample.uploadMilliseconds
+                        timing.triangleUploadMilliseconds = sample.triangleUploadMilliseconds
+                        timing.kernelMilliseconds = sample.kernelMilliseconds
+                        timing.gpuMilliseconds = sample.gpuMilliseconds
+                        timing.readbackMilliseconds = sample.readbackMilliseconds
+                    }
+                    if options.requireMetalMeshWhenAvailable,
+                       MetalMeshWarp.shared != nil,
+                       !timing.usedMetal {
+                        throw LayerCorrectionError.unsupported(
+                            "Metal mesh expected but fell back (\(timing.fallbackReason ?? "unknown")).")
                     }
                     output = warped
-                    stageMetal = sample.usedMetal
                 } else {
-                    var timing = MeshWarpRaster.Timing()
-                    guard let warped = MeshWarpRaster.apply(source: current, mesh: mesh, timing: &timing) else {
+                    var rasterTiming = MeshWarpRaster.Timing()
+                    guard let warped = MeshWarpRaster.apply(source: current, mesh: mesh, timing: &rasterTiming) else {
                         throw LayerCorrectionError.unsupported("ReShape CPU raster failed.")
                     }
                     output = warped
-                    stageMetal = false
+                    timing.fallbackReason = "preferMetalMesh=false (CPU MeshWarpRaster)"
+                    timing.kernelMilliseconds = rasterTiming.milliseconds
                 }
             }
 
-            let ms = (CFAbsoluteTimeGetCurrent() - started) * 1000
-            usedMetal = usedMetal || stageMetal
+            timing.milliseconds = (CFAbsoluteTimeGetCurrent() - started) * 1000
+            usedMetal = usedMetal || timing.usedMetal
             stagesRendered += 1
-            timings.append(.init(nodeID: node.id, kind: node.kind, milliseconds: ms,
-                                 usedMetal: stageMetal, cacheHit: false))
+            timings.append(timing)
 
-            stack.stageCache[node.id] = LayerCorrectionStack.CachedStage(
+            stack.storeStage(LayerCorrectionStack.CachedStage(
                 revision: stack.revision,
                 image: output,
                 expansion: stageExpansion,
@@ -97,7 +148,7 @@ nonisolated enum LayerCorrectionRenderer {
                 inputHeight: current.height,
                 outputWidth: output.width,
                 outputHeight: output.height
-            )
+            ), for: node.id)
             current = output
             if let stageExpansion { expansion = stageExpansion }
         }

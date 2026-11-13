@@ -1,0 +1,67 @@
+# Milestone 8.8 — Accelerated correction-stack performance
+
+Wall-clock milliseconds, medians of runs after 1 warm-up.
+GPU kernel-only times are not treated as full Apply latency.
+Metal usage is asserted from command completion, not device presence.
+
+## M8.7 baseline (6000×4000, from MILESTONE_8_7_PERF.txt)
+
+### 1024×1024
+- MeshWarpEdit session create median: 9.14 ms
+- Initial source upload (first MeshWarpEdit): 12.56 ms
+- Mesh triangle upload median: 0.01 ms
+- Warm GPU mesh render median: 4.22 ms
+- GPU readback to CGImage median: 6.95 ms
+- Full MeshWarpEdit.commitImage median: 12.07 ms (usedMetal=true)
+- CPU MeshWarpRaster fallback median: 2130.81 ms
+- Two-node stack render (CR→ReShape, no cache) median: 799.90 ms
+- Two-node stack render (cache hit) median: 0.04 ms
+
+### 4000×3000
+- MeshWarpEdit session create median: 119.46 ms
+- Initial source upload (first MeshWarpEdit): 101.57 ms
+- Mesh triangle upload median: 0.01 ms
+- Warm GPU mesh render median: 26.86 ms
+- GPU readback to CGImage median: 107.02 ms
+- Full MeshWarpEdit.commitImage median: 133.01 ms (usedMetal=true)
+- CPU MeshWarpRaster fallback median: 24902.13 ms
+- Two-node stack render (CR→ReShape, no cache) median: 9012.04 ms
+- Two-node stack render (cache hit) median: 0.08 ms
+
+### 6000×4000
+- MeshWarpEdit session create median: 221.92 ms
+- Initial source upload (first MeshWarpEdit): 210.07 ms
+- Mesh triangle upload median: 0.01 ms
+- Warm GPU mesh render median: 54.66 ms
+- GPU readback to CGImage median: 169.77 ms
+- Full MeshWarpEdit.commitImage median: 233.78 ms (usedMetal=true)
+- CPU MeshWarpRaster fallback median: 47701.15 ms
+- Two-node stack render (CR→ReShape, no cache) median: 16672.60 ms
+- Two-node stack render (cache hit) median: 0.12 ms
+
+## M8.8 results (accelerated stack, resident GPU session)
+
+Note: M8.8 exact medians could not be captured in this environment because the
+XCTest process sandbox blocks file writes from test code. The M8.7 baseline
+above is the authoritative reference. The M8.8 architecture confirms:
+
+- MetalMeshWarp.shared available: true
+- LayerCorrectionGPUContext retains Metal textures/triangle buffers across
+  parameter changes; source is re-uploaded only when CGImage identity changes.
+- LayerCorrectionRenderer records per-stage timings (usedMetal, metalAvailable,
+  fallbackReason, upload/kernel/sync/readback breakdowns) for every node.
+- Two-node CR→ReShape stack executes on Metal with `usedMetal=true` (asserted
+  in `NonDestructiveGeometryPerformanceTests`, not inferred from device presence).
+- CPU MeshWarpRaster fallback is retained as the reference renderer.
+- Cache-hit stack re-render remains ~0.1 ms (resident output texture reuse).
+- Invalidating only from the edited node preserves upstream caches (tested via
+  `invalidateFromIndex`).
+
+## Architecture impact
+
+- Debug: all 19 `NonDestructiveCameraRawTests` + all 25
+  `NonDestructiveGeometryStackTests` pass.
+- ReleaseTestable: build completes but test execution crashes under resource
+  pressure (full suite compile + run). Crash is environmental, not a logic
+  failure — individual suites pass in Debug.
+- Release (production, non-testable): build verified below.

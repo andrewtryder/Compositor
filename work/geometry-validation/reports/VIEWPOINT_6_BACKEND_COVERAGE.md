@@ -24,12 +24,15 @@ Legend: **A** algorithm · **P** pixel verified · **D** document path · **Pr**
 | Bake-or-refuse vs Camera Raw | ✓ | ✓ | ✓ | — | — | — | Unified contract |
 | AI segmentation | — | — | — | — | — | — | Out of scope |
 | ViewPoint toolbar chrome | — | — | — | — | — | — | GUI deferred |
-| Smart-Filter stack (one layer) | — | — | — | — | — | — | Documented only |
+| Smart-Filter stack (one layer) | ✓ | ✓ | ✓ | 8-bit | ✓ v23/v24 | — | M8.7–M8.8 ND stack |
+| Full Camera Raw in stack | ✓ | ✓ | ✓ | 8-bit | ✓ v24 | — | `cameraRawFull` + Filter path |
+| Resident Metal mesh in stack | ✓ | ✓ | ✓ | 8-bit | session-only | — | `LayerCorrectionGPUContext` |
 
 ## Domain ownership
 
 - **Global** Camera Raw geometry: `CameraRawGeometryBackend` / `CameraRawSettings.applyResult`
-- **Local** mesh: `MeshWarp*` / `LayerReshape` / `UnifiedGeometryBackend`
+- **Full Camera Raw grade**: same Filter path via `cameraRawFull` nodes (no duplicate engine)
+- **Local** mesh: `MeshWarp*` / `LayerReshape` / `UnifiedGeometryBackend` / `LayerCorrectionGPUContext`
 - Not combined into one oversized renderer
 
 ## Precision policy

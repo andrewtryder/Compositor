@@ -28,7 +28,7 @@ extension EditorSession {
             var reshape: ProjectReshapeRecord?
             var correction: ProjectCorrectionStackRecord?
             let stack = layer.correctionStack
-            let persistStack = stack.map { !$0.nodes.isEmpty && ($0.hasCameraRawGeometry || $0.nodes.count > 1) } ?? false
+            let persistStack = stack.map { !$0.nodes.isEmpty && ($0.hasAnyCameraRaw || $0.nodes.count > 1) } ?? false
             if persistStack, let stack,
                let persistent = try? LayerCorrectionStackPersistentState(stack: stack) {
                 correctionSources[layer.id] = stack.source
@@ -61,9 +61,14 @@ extension EditorSession {
         var manifest = ProjectManifest(resolution: document.resolution, documentID: document.id, width: document.width,
             height: document.height, activeLayerID: activeLayerID, layers: layers,
             guides: document.guides.isEmpty ? nil : document.guides)
-        // v23 when a correction-stack record is written. Reshape-only packages stay at v22.
-        // Ordinary documents without reshape/stack still write `current` (23).
-        if !correctionStacks.isEmpty {
+        // v24 when any stack carries full Camera Raw; v23 for geometry/reshape stacks;
+        // reshape-only packages stay at v22. Ordinary documents write `current`.
+        let needsFullCameraRaw = correctionStacks.values.contains { state in
+            state.nodes.contains { $0.kind == .cameraRawFull }
+        }
+        if needsFullCameraRaw {
+            manifest.version = 24
+        } else if !correctionStacks.isEmpty {
             manifest.version = 23
         } else if !reshapeMeshes.isEmpty {
             manifest.version = 22
