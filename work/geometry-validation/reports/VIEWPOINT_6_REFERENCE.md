@@ -1,101 +1,150 @@
-# ViewPoint 6 reference
+# ViewPoint 6.1 reference (hands-on)
 
-Installed build inspected on this Mac on 12 Nov 2026. Observations from the running application are separate from strings and document types found in the application bundle. Nothing here was copied into Compositor, and ReShape is not part of Milestone 7.
+Research date: 12 Nov 2026.  
+Installed app: `/Applications/DxO ViewPoint 6.app` (also listed as `DxO Viewpoint 6.app` on this volume).  
+This report separates **confirmed UI behavior** from **bundle/string declarations**. Nothing proprietary was copied into Compositor. ReShape is not implemented yet.
 
 ## Installed version
 
-Confirmed from `Contents/Info.plist` of `/Applications/DxO Viewpoint 6.app` (the same bundle as `DxO ViewPoint 6.app`):
+Confirmed from `Info.plist` via REA `inspect_plist` and Launch Services:
 
-- Display name: DxO ViewPoint 6
-- Short version: 6.1
-- Long version: 6.1.0.699
-- Bundle id: `com.dxo.dvpv6.standalone`
-- Executable: `DxOViewPoint6` (universal Mach-O; the opened slice is arm64)
-- Minimum system: macOS 13.3
-- Copyright string: (c) 2026, DxO Labs
-- UI toolkit declared by `qt.conf`: Qt
-- `NSAppleScriptEnabled` is absent. No scripting dictionary was found in the plist.
+| Field | Value |
+| --- | --- |
+| Display name | DxO ViewPoint 6 |
+| Short version | 6.1 |
+| Long version | 6.1.0.699 |
+| Bundle id | `com.dxo.dvpv6.standalone` |
+| Executable | `DxOViewPoint6` (universal Mach-O; arm64 slice used) |
+| Minimum system | macOS 13.3 |
+| License material on disk | `~/Library/Application Support/DxO/Licenses/viewpoint6.key` (presence only; contents not read) |
 
-ViewPoint 5.15, used for the earlier window-wall export, is a different application (`com.dxo.dvpv5.standalone`). Its JPEG/TIFF save behavior does not describe this build.
+## REA tools actually used
 
-## What the running application showed
+| Tool | Purpose in this session |
+| --- | --- |
+| `open_binary` | Bind `/Applications/DxO ViewPoint 6.app` |
+| `inspect_plist` | Bundle id, versions, document types |
+| `observe_native_ui` | Screenshot + accessibility tree for browser and editor |
+| `close_binary` | End the Mach-O session when switching |
+| `computer_*` (Computer Use) | App-targeted presses for menus, Reset all, Export |
+| Shell `strings` on a thinned arm64 slice | Declared module / ReShape names (not live proof) |
+| Accessibility (`AXUIElement`) / System Events | Open menus, Export, Save sidecar |
+| `screencapture -l` | Window screenshots under `viewpoint6-research/screenshots/` |
 
-The process was already running (pid 46748). The on-screen window titled "DxO ViewPoint 6.1" is a dark thumbnail browser. It showed the ViewPoint sample set, including the window-wall photograph, with a folder sidebar, a sort control, and a thumbnail-size control. A second window was titled "DxO ViewPoint 6 Activation".
+Deep providers (`search_strings` via Ghidra/Hopper/Kuna) were unavailable for the universal Mach-O without a thinned reopen; string harvest used `lipo` + `strings` instead and is labeled **declared**.
 
-Accessibility did not return a usable tree for that window (Qt). REA's native UI observer rejected the window id as not belonging to the process it had bound. Clicks were refused because the window was off the current Space. Opening a synthetic TIFF with Launch Services did not replace the browser. The activation window was left as it was.
+## What opened successfully
 
-So this session did not reach the correction editor. Volume sliders, perspective tools, ReShape, crop, and export were not operated. The items below that come from the binary are labeled as declared, not as watched behavior.
+1. Launch showed an Activation window and the image browser. With `viewpoint6.key` present, the **correction editor still opened** for a local JPEG.
+2. `open -a "DxO ViewPoint 6" …/window-wall.jpg` loaded the editor titled `DxO ViewPoint 6.1 - window-wall.jpg` at **3648 × 5472 px**.
+3. Opening a **folder** via Launch Services produced a dialog: “This file cannot be opened by DxO ViewPoint 6.” Use Open folder in-browser or open a JPEG/TIFF file.
+4. PNG is not a declared document type (unchanged vs earlier notes). JPEG and TIFF opened.
 
-## Declared file types
+## Confirmed editor modules (accessibility)
 
-`CFBundleDocumentTypes` names these extensions. This is what the bundle claims it can open. It was not confirmed by opening a camera-original RAW, because the validation workspace has none.
+Right-rail sections observed live:
 
-- JPEG: jpe, jpg, jpeg
-- TIFF: tiff, tif
-- DNG: dng
-- RAW: CR2, CR3, ORF, ORI, RW2, RWL, NRW, NEF, CRW, MRW, ARW, RAF, PEF, MCR, SRW
-- DXO
+- Exposure Compensation, White Balance  
+- Distortion (Auto Optics Module / Manual)  
+- Volume deformation (Horizontal/Vertical, Diagonal)  
+- Perspective (Auto, guided tools, Intensity, Auto correct, Up/Down, Left/Right, H/V Ratio)  
+- Reshape Fusion (grid presets; expands when a grid is selected)  
+- Horizon (Auto, Horizontal Level, Vertical Level, Angle)  
+- Crop (Auto, Crop, Aspect Ratio Preserve, Constrain to image)  
+- Miniature effect  
 
-PNG is not a declared type. ViewPoint 5's earlier session also did not take PNG. That part matches. RAW and DNG as document types are new relative to what we exercised on ViewPoint 5. They are not yet confirmed by a successful open in 6.1.0.699.
+Toolbar: Browse, prev/next, compare, Fit, 1:1, flip/rotate, grid overlay, guides, **Export**, Reset all.
 
-## Declared correction modules
+### Distortion
 
-These names are user-facing strings and icon paths in the 6.1.0.699 executable. They describe the build's interface. They are not a record of using the controls.
+Auto help: “Automatic with DxO Optics Module”. On `window-wall.jpg` the panel shows that automated distortion needs information from the original image file, with **Open original image**. JPEG alone did not unlock Optics Module Auto in this session.
 
-**Lens distortion.** Strings include auto, manual, barrel, pincushion, and fisheye, plus "Activate auto distortion correction" and a module-status set of icons (ok, download, update, folder). Distortion can be discussed separately from volume: the bundle has both `CDistortionCorrection` and `CAnamorphosisCorrection`. Whether the installed editor lets you turn distortion off while volume stays on was not clicked.
+### Volume deformation
 
-**Volume deformation.** The label "Volume Deformation" is present. Mode names in the binary: `AnamorphosisRadial`, `AnamorphosisHorizontal`, `AnamorphosisVertical`, and an HV tool ("Horizontal / Vertical", icon `volume_deformation_HV`). A diagonal icon is `volume_deformation_diagonal`. There is also "Horizontal intensity". A string `DistortionAnamorphosisKeepEntireImage` exists. No slider range was read from the live panel.
+Live descriptions: **Horizontal/Vertical** and **Diagonal**. Declared binary names also include Radial / Horizontal / Vertical / HV (strings only).
 
-**Perspective.** Strings include Horizon (horizontal and vertical tools), Keystoning, "Verticals & Horizontals", "Horizontals only", an 8-point tool, and a rectangle tool. `KeystoningBlendingIntensity`, `KeystoningKeepCenter`, and `KeystoningKeepOriginalSize` are present. "Automatic mode is only available for Perspective and Horizon tool" is present. ViewPoint 5's earlier log used a Keystoning action named AutoFull with the UI label "Verticals & Horizontals". The same label exists here. The 6.1 intensity and crop behavior were not remeasured.
+### Perspective — Auto correct modes
 
-**Crop and framing.** `CCropSettings` is in the binary. `KeystoningKeepOriginalSize` suggests an option to keep the original canvas, which ViewPoint 5 did not do on the window-wall JPEG (that export was 3350×5022 from 3648×5472). Whether 6.1 defaults to shrinking the canvas was not checked.
+The Auto correct menu (opened with `show-menu`) lists exactly:
 
-## Save and export, as declared
+1. Verticals & Horizontals  
+2. Verticals only  
+3. Horizontals only  
 
-- "Export image as" and `CExportDialog` are present.
-- A DNG save task and strings `DNGExport`, `dngHighFidelityCompression`, and "Cannot stamp the Software tag for the DNG" are present. High-fidelity DNG is declared. It was not produced.
-- JPEG and TIFF are document types. The export dialog's actual format list was not opened, so the installed choices for those formats are not listed here.
-- ViewPoint 5 wrote a file only when its log said `onImageSaveComplete` and the file was on disk. That rule still applies. No 6.1 export was produced in this session.
-- Sidecar behavior was not observed. No new file appeared beside the synthetic TIFF because the editor did not open it.
+Declared symbols also include `AutoFullCorrection`, `AutoVerticalCorrection`, `AutoHorizontalCorrection`.
 
-## ReShape Fusion, as declared
+**Automation limitation:** Accessibility `press` on the menu row texts returned success but the MenuButton title often stayed `Verticals & Horizontals`, and three mode screenshots taken that way were **byte-identical**. Mode switching must be treated as **UI-visible but not reliably automation-selected** in this session. Keyboard / coordinate selection needs a follow-up pass.
 
-Not implemented in Compositor. Confirmed only as content of this build:
+Manual tools confirmed by description: Force Vertical Parallel, Force Horizontal Parallel, Rectangle, 8 points. Intensity default **100**. Manual Up/Down, Left/Right, H/V Ratio stayed at **0** after Auto (Auto does not mirror into those sliders).
 
-- The word "ReShape", undo commands `ReshapeMoveUndoCommand` and `ReshapeSliderUndoCommand`, and "Warp reshape changed".
-- Grid presets named `warpGrid4x4`, `warpGrid8x8`, `warpGrid16x16`, `warpGrid32x32`, and `warpGridCustom`, with matching idle icons.
-- Move, resize, and rotate warp cursors.
-- "Sticky border" / "Sticky borders changed".
-- Propagation (`propagationValueChanged`, `TransformationWithPropagation`).
-- `warp_sam`, and a `SAM` resource folder containing `Decoder`, `Encoder`, and `Matting` (dated folder `20260702163542`). That is the bundle's subject-selection material. The weights were not read, and no selection was made on screen.
-- "Could not restore Warp grid" and `GridWarpingActive` exist. Local subdivision, falloff shape, and how a selection boundary is drawn were not seen.
+### Horizon and Crop
 
-Interaction between ReShape and global perspective was not exercised. `skipWarp` and `DisabledWithKeystoningAuto` are strings only.
+Horizon Auto / Horizontal Level / Vertical Level / Angle observed.  
+Crop Auto / Crop / Aspect Ratio **Preserve** / **Constrain to image** observed.
 
-## Comparison with ViewPoint 5
+## Automatic perspective — measured window-wall run
 
-| Topic | ViewPoint 5.15, previously observed | ViewPoint 6.1.0.699 |
-| --- | --- | --- |
-| Version | 5.15, opened and exported | 6.1.0.699, browser observed, editor blocked by the activation window |
-| Window-wall export | JPEG 3350×5022, on disk | Not exported |
-| Perspective label | "Verticals & Horizontals" used | Same label is in the binary; not clicked |
-| RAW open | Not attempted | Declared for many RAW extensions; no camera-original file is in the validation workspace |
-| ReShape / SAM | Not part of that study | Declared, including grid sizes and a SAM folder; not operated |
+Photograph: `work/geometry-validation/originals/window-wall.jpg` (copy under `viewpoint6-research/input/`).
 
-## Relevant to Compositor, and still open
+| Step | Status size readout |
+| --- | ---: |
+| Reset all | 3648 × 5472 |
+| Perspective Auto (Auto correct title showed Verticals & Horizontals) | 4493 × 7035 |
+| Crop Auto afterward | 3350 × 5022 |
 
-Compositor's volume modes stay radial, horizontal, vertical, and horizontal-plus-vertical. ViewPoint's declared set uses those names plus an HV control and a diagonal icon. Matching slider values is out of scope for Milestone 7. `volumeStrengthScale` stays 0.55.
+Interpretation of the intermediate 4493×7035 size: the corrected canvas expands (empty margins) before Crop Auto shrinks to an opaque crop. Aspect scale ≈ **0.918** on each edge; area ratio ≈ **0.843** of the original pixel count.
 
-Open questions, all unverified in the running 6.1 editor:
+### Export (on disk)
 
-- Does a camera-original RAW open, and which lens fields are shown?
-- Can distortion be off while volume is on?
-- What are the live volume mode buttons and the slider limits?
-- Does perspective run before or after volume, and does intensity blend like `KeystoningBlendingIntensity`?
-- Does crop keep the original canvas or shrink it the way 5.15 did?
-- Which TIFF, JPEG, and DNG options does Export actually offer, and does a save write a sidecar?
-- For ReShape: is 4×4 through 32×32 the grid the user sees, can one cell subdivide, and does SAM matting drive the selection?
+- Path: `work/geometry-validation/viewpoint6-research/exports/vp6-window-wall-auto-vh.jpg.jpg`  
+- Decoded size: **3350 × 5022**, JPEG  
+- Export dialog: format JPEG, quality **80**, then a macOS save panel  
+- MD5 differs from ViewPoint 5’s `viewpoint/window-wall__auto-full.jpg` (also 3350×5022), so pixels are not identical, but **framing matches** the earlier VP5 Auto Full export dimensions.
 
-## Automation
+**Rule used:** an on-screen correction alone was not counted as a paired comparison; this export file exists and decodes.
 
-Not reliable in this session. The browser window was off-Space, the accessibility tree was empty, and an activation window was in front. ViewPoint 5's AppleScript and menu clicking were already a poor batch API. This build has no scripting flag in its plist. Do not treat coordinates from the 5.15 session as valid here.
+### Sidecar
+
+File menu **Save sidecar** wrote:
+
+`viewpoint6-research/input/window-wall.jpg.dvp`
+
+It is a ZIP. Observed JSON keys (no weights copied):
+
+- `manifest.json`: `writer_software=viewpoint`, `writer_version=6.1.0.699`, source name/uuid  
+- `private_data/viewpoint.json` parameters seen: `KeystoningMode=Auto`, `CropRatio≈0.666…`  
+
+Other correction state may live inside that private blob; only these keys were inspected.
+
+## Comparison with Compositor (window-wall)
+
+Compositor baseline (Milestone 6, Constrain Crop off in the recorded renders): Auto Full quality gate keeps the **vertical-only** solution; canvas stays **3648×5472** with transparency in empty corners; opaque coverage about **92.7%** for the vertical solution in the M6 report narrative.
+
+ViewPoint 6.1 on the same JPEG (Perspective Auto + Crop Auto, export):
+
+- Shrinks the delivered image to **3350×5022** (~91.8% linear).  
+- Bride and both window banks remain in frame (confirmed on screen and in the export dimensions).  
+- Does **not** keep the original pixel canvas; Crop Auto is the framing step.  
+- Distortion Optics Module Auto was unavailable without the original RAW.
+
+**Do not claim parity.** The shared photographic outcome is that both systems avoid the extreme two-family warp that used to destroy this frame. Representation differs (Compositor: same-size canvas + alpha; ViewPoint: smaller opaque JPEG).
+
+Stone-house and library-atrium were copied into `viewpoint6-research/input/` but **not** run through separate Auto/export cycles in this session.
+
+## Unverified / blocked
+
+- Reliable automation of Auto correct mode switching (Verticals only / Horizontals only / V&H) for separate exports.  
+- Forced missing-Metal / Optics Module with a camera-original RAW (none in the validation corpus).  
+- Whether Activation UI is required on a machine without `viewpoint6.key`.  
+- Pixel-level residual angle measurements on the VP6 export (export exists; quantitative angle compare not run here).  
+- Deep decompilation of correction math (providers unavailable for universal binary in-session).
+
+## Screenshots and artifacts (local, gitignored)
+
+Under `work/geometry-validation/viewpoint6-research/` (gitignored):
+
+- `screenshots/` — browser, editor, reshape grids, export dialogs  
+- `exports/vp6-window-wall-auto-vh.jpg.jpg`  
+- `input/*.jpg` copies + `window-wall.jpg.dvp`  
+
+See also `VIEWPOINT_6_RESHAPE_ANALYSIS.md` and `MILESTONE_8_ARCHITECTURE.md`.

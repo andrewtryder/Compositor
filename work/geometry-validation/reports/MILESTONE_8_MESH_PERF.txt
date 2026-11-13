@@ -1,0 +1,4 @@
+build=Debug (xcodebuild test); host=Mac15,6
+1024x1024 meshUpdate=0.04ms cpu=1960.46ms upload=0.28ms kernel=2.04ms readback=0.18ms gpu=1.73ms previewBuffer=17.38ms residentPreview=1.88ms residentKernel=1.77ms apply=10.72ms
+4000x3000 meshUpdate=0.03ms cpu=22236.55ms upload=3.96ms kernel=12.97ms readback=2.86ms gpu=12.33ms previewBuffer=183.51ms residentPreview=12.99ms residentKernel=12.80ms apply=119.08ms
+6000x4000 meshUpdate=0.02ms cpu=45436.83ms upload=11.56ms kernel=25.33ms readback=6.17ms gpu=24.62ms previewBuffer=304.86ms residentPreview=25.29ms residentKernel=25.15ms apply=205.00ms

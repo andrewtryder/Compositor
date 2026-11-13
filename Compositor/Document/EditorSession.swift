@@ -92,15 +92,55 @@ struct CanvasDocument: Equatable {
 }
 
 enum NavigationTool: String, CaseIterable {
-    case move, marquee, lasso, wand, crop, brush, spotHealing, cloneStamp, blur, gradient, shape, type, eyedropper, hand, zoom
+    case move, marquee, lasso, wand, crop, brush, spotHealing, cloneStamp, blur, reshape, gradient, shape, type, eyedropper, hand, zoom
     /// No tool (A): nothing in the tool rail is selected and canvas clicks do nothing.
     case idle
     /// Tools that paint with the brush tip, sharing its size, hardness, opacity, and keys.
     var isBrushTool: Bool { self == .brush || self == .spotHealing || self == .cloneStamp || self == .blur }
     /// Tools that draw and edit selections, sharing modifiers, moving, and nudging.
     var isSelectionTool: Bool { self == .marquee || self == .lasso || self == .wand }
-    var symbol: String { self == .type ? "textformat" : self == .eyedropper ? "eyedropper" : self == .marquee ? "rectangle.dashed" : self == .lasso ? "lasso" : self == .wand ? "wand.and.stars" : self == .brush ? "paintbrush.pointed" : self == .spotHealing ? "bandage" : self == .cloneStamp ? "seal" : self == .blur ? "drop" : self == .gradient ? "square.bottomhalf.filled" : self == .shape ? "square.on.circle" : self == .crop ? "crop" : self == .move ? "arrow.up.left.and.arrow.down.right" : self == .hand ? "hand.raised" : "magnifyingglass" }
-    var label: String { self == .type ? "Type (T)" : self == .eyedropper ? "Eyedropper (I)" : self == .marquee ? "Marquee (M)" : self == .lasso ? "Lasso (L)" : self == .wand ? "Magic (W) · Tab switches Wand and Object" : self == .brush ? "Brush (B) · Eraser (E)" : self == .spotHealing ? "Spot Healing Brush (J)" : self == .cloneStamp ? "Clone Stamp (S) · Option-click sets the source" : self == .blur ? "Smear (R)" : self == .gradient ? "Gradient (G)" : self == .shape ? "Shape (U) · Shift-U switches Rectangle/Ellipse" : self == .crop ? "Crop (C)" : self == .move ? "Move / Transform (V)" : self == .hand ? "Hand (H)" : "Zoom (Z)" }
+    var symbol: String {
+        switch self {
+        case .type: return "textformat"
+        case .eyedropper: return "eyedropper"
+        case .marquee: return "rectangle.dashed"
+        case .lasso: return "lasso"
+        case .wand: return "wand.and.stars"
+        case .brush: return "paintbrush.pointed"
+        case .spotHealing: return "bandage"
+        case .cloneStamp: return "seal"
+        case .blur: return "drop"
+        case .reshape: return "square.grid.3x3"
+        case .gradient: return "square.bottomhalf.filled"
+        case .shape: return "square.on.circle"
+        case .crop: return "crop"
+        case .move: return "arrow.up.left.and.arrow.down.right"
+        case .hand: return "hand.raised"
+        case .zoom: return "magnifyingglass"
+        case .idle: return "hand.raised"
+        }
+    }
+    var label: String {
+        switch self {
+        case .type: return "Type (T)"
+        case .eyedropper: return "Eyedropper (I)"
+        case .marquee: return "Marquee (M)"
+        case .lasso: return "Lasso (L)"
+        case .wand: return "Magic (W) · Tab switches Wand and Object"
+        case .brush: return "Brush (B) · Eraser (E)"
+        case .spotHealing: return "Spot Healing Brush (J)"
+        case .cloneStamp: return "Clone Stamp (S) · Option-click sets the source"
+        case .blur: return "Smear (R)"
+        case .reshape: return "ReShape"
+        case .gradient: return "Gradient (G)"
+        case .shape: return "Shape (U) · Shift-U switches Rectangle/Ellipse"
+        case .crop: return "Crop (C)"
+        case .move: return "Move / Transform (V)"
+        case .hand: return "Hand (H)"
+        case .zoom: return "Zoom (Z)"
+        case .idle: return "No tool"
+        }
+    }
 }
 
 private struct GIFLayerTimelineState {
@@ -483,6 +523,8 @@ final class EditorSession {
     @ObservationIgnored var brushStroke: BrushStroke? { didSet { resumeFileRequests() } }
     /// A Smudge or Liquify stroke in progress.
     @ObservationIgnored var warpStroke: WarpStroke? { didSet { resumeFileRequests() } }
+    /// ReShape mesh edit in progress.
+    var meshWarpEdit: MeshWarpEdit?
 
     var canTransform: Bool {
         guard canEditLayers else { return false }
@@ -526,7 +568,10 @@ final class EditorSession {
     func selectTool(_ value: NavigationTool) {
         if tool != value, !finishText() { return }
         guard !isProjectBusy, brushStroke == nil, warpStroke == nil, levels == nil else { return }
-        if tool != value { commitTransform(); cancelCrop(); resolveGradient(); cancelLasso(); cancelShape() }
+        if tool != value {
+            commitTransform(); cancelCrop(); resolveGradient(); cancelLasso(); cancelShape()
+            if value != .reshape { cancelMeshWarp() }
+        }
         let from = Self.tipFamily(tool), to = Self.tipFamily(value)
         if from != to, let parked = parkedBrushTips[to] {
             parkedBrushTips[from] = (brushSettings.diameter, brushSettings.hardness, brushSettings.opacity)
@@ -538,6 +583,7 @@ final class EditorSession {
         }
         tool = value
         if value.isBrushTool { _ = MetalBrushCoverage.shared }
+        if value == .reshape, meshWarpEdit == nil { beginMeshWarp() }
         if value == .crop, cropRect == nil, let document {
             cropRatioChoice = "Free"
             let canvas = CGRect(origin: .zero, size: document.size)
