@@ -280,10 +280,10 @@ extension EditorSession {
     }
 
     /// Writes rendered display + synced reshape projection. Caller owns `beginEdit`/`endEdit`.
-    fileprivate func commitCorrectionStack(_ stack: LayerCorrectionStack,
-                                           on layer: inout ImageLayer,
-                                           index: Int,
-                                           expandPlacement: Bool) throws {
+    func commitCorrectionStack(_ stack: LayerCorrectionStack,
+                               on layer: inout ImageLayer,
+                               index: Int,
+                               expandPlacement: Bool) throws {
         var working = stack
         try working.validatePrecision()
         try working.validateStageDimensions()

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Inspector for a layer's non-destructive correction stack (Camera Raw Geometry, Camera Raw Full, ReShape).
 struct CorrectionStackInspector: View {
@@ -6,7 +7,7 @@ struct CorrectionStackInspector: View {
     let layerID: UUID
 
     @State private var selectedNodeID: UUID?
-    @State private var showAddMenu = false
+    @State private var showNodeEditUnsupported = false
 
     private var layer: ImageLayer? {
         session.document?.layers.first(where: { $0.id == layerID })
@@ -26,24 +27,36 @@ struct CorrectionStackInspector: View {
                     // Add Camera Raw correction
                     if canAddCameraRaw {
                         Button("Add Camera Raw Correction") {
-                            try? session.addCorrection(kind: .cameraRawFull, layerID: layerID)
-                            selectedNodeID = layer?.correctionStack?.nodes.last?.id
+                            do {
+                                try session.addCorrection(kind: .cameraRawFull, layerID: layerID)
+                                selectedNodeID = layer?.correctionStack?.nodes.last?.id
+                            } catch {
+                                session.brushError = error.localizedDescription
+                            }
                         }
                         .disabled(session.showsBusy)
                     }
                     // Add Camera Raw Geometry
                     if canAddCameraRawGeometry {
                         Button("Add Camera Raw Geometry") {
-                            try? session.addCorrection(kind: .cameraRawGeometry, layerID: layerID)
-                            selectedNodeID = layer?.correctionStack?.nodes.last?.id
+                            do {
+                                try session.addCorrection(kind: .cameraRawGeometry, layerID: layerID)
+                                selectedNodeID = layer?.correctionStack?.nodes.last?.id
+                            } catch {
+                                session.brushError = error.localizedDescription
+                            }
                         }
                         .disabled(session.showsBusy)
                     }
                     // Add ReShape
                     if canAddReshape {
                         Button("Add ReShape Correction") {
-                            try? session.addCorrection(kind: .reshape, layerID: layerID)
-                            selectedNodeID = layer?.correctionStack?.nodes.last?.id
+                            do {
+                                try session.addCorrection(kind: .reshape, layerID: layerID)
+                                selectedNodeID = layer?.correctionStack?.nodes.last?.id
+                            } catch {
+                                session.brushError = error.localizedDescription
+                            }
                         }
                         .disabled(session.showsBusy)
                     }
@@ -59,18 +72,22 @@ struct CorrectionStackInspector: View {
 
             // Stack list
             if let stack, !stack.nodes.isEmpty {
-                ForEach(stack.nodes) { node in
+                ForEach(Array(stack.nodes.enumerated()), id: \.element.id) { index, node in
                     CorrectionStackRow(
                         session: session,
                         layerID: layerID,
                         node: node,
                         isSelected: selectedNodeID == node.id,
+                        index: index,
+                        total: stack.nodes.count,
                         onSelect: { selectedNodeID = node.id },
                         onEdit: { editNode(node) },
                         onToggle: { toggleNode(node) },
                         onReset: { resetNode(node) },
                         onRemove: { removeNode(node) },
-                        onBake: { bakeNode(node) }
+                        onBake: { bakeNode(node) },
+                        onMoveUp: { moveNodeUp(node) },
+                        onMoveDown: { moveNodeDown(node) }
                     )
                 }
             } else {
@@ -83,7 +100,11 @@ struct CorrectionStackInspector: View {
                 HStack {
                     Spacer()
                     Button("Bake All Corrections") {
-                        try? session.bakeAllCorrections(layerID: layerID)
+                        do {
+                            try session.bakeAllCorrections(layerID: layerID)
+                        } catch {
+                            session.brushError = error.localizedDescription
+                        }
                     }
                     .disabled(!session.canEditLayers || session.showsBusy)
                     .help("Collapse all corrections into the layer's pixels")
@@ -101,36 +122,58 @@ struct CorrectionStackInspector: View {
                 selectedNodeID = first
             }
         }
+        .alert("Cannot edit this node", isPresented: $showNodeEditUnsupported) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("This correction node type cannot be edited in the Camera Raw editor. Use ReShape for geometry edits, or bake the node to apply it destructively.")
+        }
+    }
+
+    /// Whether the active layer can host a new correction stack (8-bit compatible).
+    private var canCreateStack: Bool {
+        guard let layer = layer, let asset = layer.asset else { return false }
+        return session.canEditLayers
+            && asset.deep == nil
+            && asset.image.bitsPerComponent <= 8
+            && !DeepLayer.isHDR(asset.image)
     }
 
     private var canAddCameraRaw: Bool {
-        guard let stack else { return false }
-        return !stack.hasCameraRawFull && !stack.hasCameraRawGeometry && session.canEditLayers
+        canCreateStack && !stackHasAnyCameraRaw
     }
 
     private var canAddCameraRawGeometry: Bool {
-        guard let stack else { return false }
-        return !stack.hasCameraRawGeometry && !stack.hasCameraRawFull && session.canEditLayers
+        canCreateStack && !stackHasAnyCameraRaw
     }
 
     private var canAddReshape: Bool {
-        guard let stack else { return false }
-        return !stack.hasReshape && session.canEditLayers
+        canCreateStack && !(stack?.hasReshape ?? false)
     }
 
     private var canAddAnyCorrection: Bool {
         canAddCameraRaw || canAddCameraRawGeometry || canAddReshape
     }
 
+    /// True when the stack already holds any Camera Raw correction (full or geometry).
+    private var stackHasAnyCameraRaw: Bool {
+        guard let stack else { return false }
+        return stack.hasCameraRawFull || stack.hasCameraRawGeometry
+    }
+
     private func editNode(_ node: LayerCorrectionNode) {
         selectedNodeID = node.id
         switch node.kind {
         case .cameraRawFull:
-            session.beginFilter(.cameraRaw)
-            session.filterEdit?.cameraRawTargetNodeID = node.id
+            // Begin a node-scoped Camera Raw edit: commits back to this exact node.
+            guard session.beginCameraRawNodeEdit(layerID: layerID, nodeID: node.id) else {
+                session.brushError = "Could not open the Camera Raw editor for this node."
+                return
+            }
         case .cameraRawGeometry:
-            session.beginFilter(.cameraRaw)
-            session.filterEdit?.cameraRawTargetNodeID = node.id
+            // Camera Raw Geometry nodes need their geometry controls, not the full
+            // Camera Raw editor. Dedicated geometry editing is not yet available;
+            // show a clear explanation rather than opening an unrelated editor.
+            showNodeEditUnsupported = true
         case .reshape:
             // Open ReShape editor for this node
             session.beginMeshWarpForCorrectionStack(layerID: layerID, nodeID: node.id)
@@ -138,20 +181,60 @@ struct CorrectionStackInspector: View {
     }
 
     private func toggleNode(_ node: LayerCorrectionNode) {
-        try? session.setCorrectionEnabled(nodeID: node.id, enabled: !node.enabled, layerID: layerID)
+        do {
+            try session.setCorrectionEnabled(nodeID: node.id, enabled: !node.enabled, layerID: layerID)
+        } catch {
+            session.brushError = error.localizedDescription
+        }
     }
 
     private func resetNode(_ node: LayerCorrectionNode) {
-        try? session.resetCorrection(nodeID: node.id, layerID: layerID)
+        do {
+            try session.resetCorrection(nodeID: node.id, layerID: layerID)
+        } catch {
+            session.brushError = error.localizedDescription
+        }
     }
 
     private func removeNode(_ node: LayerCorrectionNode) {
-        try? session.removeCorrection(nodeID: node.id, layerID: layerID)
-        selectedNodeID = nil
+        do {
+            try session.removeCorrection(nodeID: node.id, layerID: layerID)
+            selectedNodeID = nil
+        } catch {
+            session.brushError = error.localizedDescription
+        }
     }
 
     private func bakeNode(_ node: LayerCorrectionNode) {
-        try? session.bakeCorrection(nodeID: node.id, layerID: layerID)
+        do {
+            try session.bakeCorrection(nodeID: node.id, layerID: layerID)
+        } catch {
+            session.brushError = error.localizedDescription
+        }
+    }
+
+    private func moveNodeUp(_ node: LayerCorrectionNode) {
+        guard let stack else { return }
+        let currentIndex = stack.nodes.firstIndex(where: { $0.id == node.id }) ?? 0
+        guard currentIndex > 0 else { return }
+        let beforeID = stack.nodes[currentIndex - 1].id
+        do {
+            try session.reorderCorrection(nodeID: node.id, before: beforeID, layerID: layerID)
+        } catch {
+            session.brushError = error.localizedDescription
+        }
+    }
+
+    private func moveNodeDown(_ node: LayerCorrectionNode) {
+        guard let stack else { return }
+        let currentIndex = stack.nodes.firstIndex(where: { $0.id == node.id }) ?? 0
+        guard currentIndex < stack.nodes.count - 1 else { return }
+        let beforeID = stack.nodes[currentIndex + 2].id
+        do {
+            try session.reorderCorrection(nodeID: node.id, before: beforeID, layerID: layerID)
+        } catch {
+            session.brushError = error.localizedDescription
+        }
     }
 }
 
@@ -160,12 +243,16 @@ private struct CorrectionStackRow: View {
     let layerID: UUID
     let node: LayerCorrectionNode
     let isSelected: Bool
+    let index: Int
+    let total: Int
     let onSelect: () -> Void
     let onEdit: () -> Void
     let onToggle: () -> Void
     let onReset: () -> Void
     let onRemove: () -> Void
     let onBake: () -> Void
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
 
     var body: some View {
         VStack(spacing: 4) {
@@ -198,6 +285,23 @@ private struct CorrectionStackRow: View {
                 .onTapGesture { onSelect() }
 
                 Spacer()
+
+                // Move Up / Move Down
+                Button(action: onMoveUp) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .disabled(!session.canEditLayers || index == 0)
+                .help(index == 0 ? "Already at the top" : "Move correction up")
+
+                Button(action: onMoveDown) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .disabled(!session.canEditLayers || index == total - 1)
+                .help(index == total - 1 ? "Already at the bottom" : "Move correction down")
 
                 // Node actions
                 HStack(spacing: 4) {

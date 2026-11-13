@@ -8,10 +8,26 @@ struct LayersPanel: View {
     /// it out past both edges, over the edge that resizes it.
     static let widths: ClosedRange<Double> = 261...372
 
-    private var activeLayerHasCorrectionStack: Bool {
+    private var activeLayer: ImageLayer? {
         guard let id = session.activeLayerID,
-              let layer = session.document?.layers.first(where: { $0.id == id }) else { return false }
-        return layer.correctionStack != nil
+              let layer = session.document?.layers.first(where: { $0.id == id }) else { return nil }
+        return layer
+    }
+
+    /// Whether the active layer can host a correction stack (compatible raster layer).
+    private var activeLayerCanHaveCorrections: Bool {
+        guard let layer = activeLayer else { return false }
+        // Correction stacks are 8-bit only; 16-bit/HDR RAW-backed layers cannot host one.
+        guard let asset = layer.asset, asset.deep == nil, asset.image.bitsPerComponent <= 8,
+              !DeepLayer.isHDR(asset.image) else { return false }
+        return true
+    }
+
+    /// Whether the active layer is a 16-bit/HDR RAW-backed layer that cannot take a stack.
+    private var activeLayerIsUnsupportedForCorrections: Bool {
+        guard let layer = activeLayer else { return false }
+        guard let asset = layer.asset else { return false }
+        return asset.deep != nil || asset.image.bitsPerComponent > 8 || DeepLayer.isHDR(asset.image)
     }
 
     var body: some View {
@@ -40,12 +56,25 @@ struct LayersPanel: View {
             Divider()
             LayersFooter(session: session)
 
-            // Correction stack inspector for layers with non-destructive corrections
-            if activeLayerHasCorrectionStack,
-               let activeLayerID = session.activeLayerID {
+            // Correction stack inspector for compatible layers — shown even before the first
+            // node exists so the Add entry point is reachable.
+            if let activeLayerID = session.activeLayerID {
                 Divider()
                 CorrectionStackInspector(session: session, layerID: activeLayerID)
                     .id(activeLayerID)
+            }
+
+            // Explain why correction stacks are unavailable for 16-bit / RAW-backed layers.
+            if activeLayerIsUnsupportedForCorrections {
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Corrections unavailable").font(.caption).bold()
+                    Text("Non-destructive correction stacks require 8-bit layers. This 16-bit RAW-backed layer keeps its original sensor data; bake it to 8-bit before adding corrections.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 6)
             }
         }
         .frame(width: width)

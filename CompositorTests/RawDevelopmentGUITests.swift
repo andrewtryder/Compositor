@@ -510,4 +510,244 @@ struct RawDevelopmentGUITests {
         // Sheet type exists.
         #expect(true, "CorrectionStackInspector and RawDevelopEditorSheet compile and instantiate")
     }
+
+    // MARK: 19. First correction node can be added to a compatible layer without a stack
+
+    @Test func addFirstCorrectionNodeWithoutExistingStack() {
+        let session = EditorSession()
+        guard makePlainRasterLayer(session: session) != nil else {
+            Issue.record("failed to create layer")
+            return
+        }
+        guard let id = session.activeLayerID else { return }
+        #expect(session.document?.layers.first(where: { $0.id == id })?.correctionStack == nil,
+                "no stack exists yet")
+        do {
+            try session.addCorrection(kind: .cameraRawFull, layerID: id)
+        } catch {
+            Issue.record("addCorrection failed: \(error)")
+            return
+        }
+        guard let stack = session.document?.layers.first(where: { $0.id == id })?.correctionStack else {
+            Issue.record("stack was not created")
+            return
+        }
+        #expect(stack.nodes.count == 1, "first correction node was created")
+        #expect(stack.nodes.first?.kind == .cameraRawFull, "first node is Camera Raw Full")
+        #expect(stack.nodes.first?.id != nil, "node has a stable UUID")
+    }
+
+    // MARK: 20. 16-bit RAW-backed layer cannot get a correction stack (explained, not silently baked)
+
+    @Test func sixteenBitRAWLayerRejectsCorrectionStack() {
+        let session = EditorSession()
+        guard let layer = makeRAWBackedLayer(session: session) else {
+            Issue.record("failed to create RAW-backed layer")
+            return
+        }
+        // RAW-backed layers are 16-bit: addCorrection should throw deepOrHDR.
+        do {
+            try session.addCorrection(kind: .cameraRawFull, layerID: layer.id)
+            Issue.record("addCorrection should have thrown for a 16-bit RAW-backed layer")
+        } catch let error as LayerCorrectionError {
+            guard case .deepOrHDR = error else {
+                Issue.record("expected deepOrHDR, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+        #expect(session.document?.layers.first(where: { $0.id == layer.id })?.correctionStack == nil,
+                "no stack was created on a 16-bit RAW-backed layer")
+    }
+
+    // MARK: 21. Camera Raw node edit opens with the node's actual settings
+
+    @Test func cameraRawNodeEditLoadsActualSettings() {
+        let session = EditorSession()
+        guard makePlainRasterLayer(session: session) != nil else {
+            Issue.record("failed to create layer")
+            return
+        }
+        guard let id = session.activeLayerID else { return }
+        do {
+            try session.addCorrection(kind: .cameraRawFull, layerID: id)
+        } catch {
+            Issue.record("addCorrection failed: \(error)")
+            return
+        }
+        guard let node = session.document?.layers.first(where: { $0.id == id })?.correctionStack?.nodes.first,
+              case .cameraRawFull = node.kind else {
+            Issue.record("cameraRawFull node missing")
+            return
+        }
+        // Change the node's settings directly to simulate persisted state.
+        do {
+            try session.editCameraRawFull(nodeID: node.id) { settings in
+                settings.exposure = 2.5
+                settings.temperature = 5600
+            }
+        } catch {
+            Issue.record("editCameraRawFull failed: \(error)")
+            return
+        }
+        // beginCameraRawNodeEdit should pick up the persisted settings.
+        let began = session.beginCameraRawNodeEdit(layerID: id, nodeID: node.id)
+        #expect(began, "beginCameraRawNodeEdit succeeds")
+        guard let edit = session.filterEdit else {
+            Issue.record("filter edit was not created")
+            return
+        }
+        #expect(edit.cameraRawTargetNodeID == node.id,
+                "filter edit targets the correct node")
+        #expect(edit.settings.cameraRaw.exposure == 2.5,
+                "filter edit loads the node's exposure")
+        #expect(edit.settings.cameraRaw.temperature == 5600,
+                "filter edit loads the node's temperature")
+        // Cancel without modifying the node.
+        session.cancelCameraRawNodeEdit()
+        #expect(session.filterEdit == nil, "filter edit cleared on cancel")
+        guard let unchanged = session.document?.layers.first(where: { $0.id == id })?.correctionStack?.nodes.first,
+              case .cameraRawFull = unchanged.kind else {
+            Issue.record("node missing after cancel")
+            return
+        }
+        #expect(unchanged.cameraRawFull.exposure == 2.5,
+                "cancel leaves node settings unchanged")
+    }
+
+    // MARK: 22. Camera Raw node edit applies to the intended node, not the raster source
+
+    @Test func cameraRawNodeEditAppliesToCorrectNode() {
+        let session = EditorSession()
+        guard makePlainRasterLayer(session: session) != nil else {
+            Issue.record("failed to create layer")
+            return
+        }
+        guard let id = session.activeLayerID else { return }
+        do {
+            try session.addCorrection(kind: .cameraRawFull, layerID: id)
+        } catch {
+            Issue.record("addCorrection failed: \(error)")
+            return
+        }
+        guard let node = session.document?.layers.first(where: { $0.id == id })?.correctionStack?.nodes.first else {
+            Issue.record("node missing")
+            return
+        }
+        // Commit an edit through the node-scoped pipeline.
+        guard session.beginCameraRawNodeEdit(layerID: id, nodeID: node.id) else {
+            Issue.record("beginCameraRawNodeEdit failed")
+            return
+        }
+        // Mutate the live filter settings.
+        session.filterEdit?.settings.cameraRaw.exposure = 1.5
+        let committed = session.commitCameraRawNodeEdit()
+        #expect(committed, "commitCameraRawNodeEdit succeeds")
+        #expect(session.filterEdit == nil, "filter edit cleared after commit")
+        // The target node should hold the new exposure; other nodes untouched.
+        guard let stack = session.document?.layers.first(where: { $0.id == id })?.correctionStack,
+              let updated = stack.nodes.first(where: { $0.id == node.id }) else {
+            Issue.record("stack or node missing after commit")
+            return
+        }
+        #expect(updated.cameraRawFull.exposure == 1.5,
+                "edited node holds the new exposure")
+        #expect(stack.nodes.count == 1, "no extra nodes were created")
+    }
+
+    // MARK: 23. Reordering produces visible error messages instead of silent failures
+
+    @Test func reorderCorrectionVisibleErrors() {
+        let session = EditorSession()
+        guard makePlainRasterLayer(session: session) != nil else {
+            Issue.record("failed to create layer")
+            return
+        }
+        guard let id = session.activeLayerID else { return }
+        do {
+            try session.addCorrection(kind: .cameraRawFull, layerID: id)
+            try session.addCorrection(kind: .reshape, layerID: id)
+        } catch {
+            Issue.record("addCorrection failed: \(error)")
+            return
+        }
+        guard let stack = session.document?.layers.first(where: { $0.id == id })?.correctionStack,
+              let reshapeNode = stack.nodes.first(where: { $0.kind == .reshape }) else {
+            Issue.record("nodes missing")
+            return
+        }
+        // Reorder to a non-existent target should throw a visible error.
+        do {
+            try session.reorderCorrection(nodeID: reshapeNode.id, before: UUID(), layerID: id)
+            Issue.record("reorder to missing node should have been rejected")
+        } catch let error as LayerCorrectionError {
+            _ = error // Expected: visible refusal.
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+        // Valid reorder succeeds.
+        guard let cameraRawNode = stack.nodes.first(where: { $0.kind == .cameraRawFull }) else {
+            Issue.record("cameraRaw node missing")
+            return
+        }
+        do {
+            try session.reorderCorrection(nodeID: cameraRawNode.id, before: nil, layerID: id)
+        } catch {
+            Issue.record("valid reorder should succeed: \(error)")
+        }
+        guard let restacked = session.document?.layers.first(where: { $0.id == id })?.correctionStack else {
+            Issue.record("stack missing after reorder")
+            return
+        }
+        #expect(restacked.nodes.first?.kind == .reshape,
+                "ReShape is first after valid reorder")
+        #expect(restacked.nodes.last?.kind == .cameraRawFull,
+                "Camera Raw Full is last after valid reorder")
+        // Node UUIDs preserved through reorder.
+        #expect(restacked.nodes.first?.id == reshapeNode.id,
+                "ReShape node UUID preserved")
+        #expect(restacked.nodes.last?.id == cameraRawNode.id,
+                "Camera Raw node UUID preserved")
+    }
+
+    // MARK: 24. ReShape opens the saved mesh and preserves node identity
+
+    @Test func reshapeOpensSavedMeshAndPreservesNodeIdentity() {
+        let session = EditorSession()
+        guard makePlainRasterLayer(session: session) != nil else {
+            Issue.record("failed to create layer")
+            return
+        }
+        guard let id = session.activeLayerID else { return }
+        do {
+            try session.addCorrection(kind: .reshape, layerID: id, meshPreset: .points4)
+        } catch {
+            Issue.record("addCorrection failed: \(error)")
+            return
+        }
+        guard let stack = session.document?.layers.first(where: { $0.id == id })?.correctionStack,
+              let node = stack.nodes.first(where: { $0.kind == .reshape }),
+              let mesh = node.mesh else {
+            Issue.record("reshape node with mesh missing")
+            return
+        }
+        let nodeID = node.id
+        #expect(mesh.isIdentity, "persisted mesh starts as identity")
+        #expect(node.meshImageWidth > 0 && node.meshImageHeight > 0,
+                "mesh dimensions match input stage")
+        // beginMeshWarpForCorrectionStack should reopen the same node.
+        session.beginMeshWarpForCorrectionStack(layerID: id, nodeID: nodeID)
+        #expect(session.meshWarpEdit?.layerID == id,
+                "mesh warp edit targets the correct layer")
+        // Cancel without modifying the node.
+        session.cancelMeshWarp()
+        #expect(session.meshWarpEdit == nil, "mesh warp edit cleared on cancel")
+        // The node is unchanged.
+        guard let unchanged = session.document?.layers.first(where: { $0.id == id })?.correctionStack?.nodes.first(where: { $0.id == nodeID }) else {
+            Issue.record("node missing after cancel")
+            return
+        }
+        #expect(unchanged.mesh?.isIdentity != false, "node mesh unchanged after cancel")
+    }
 }

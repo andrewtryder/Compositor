@@ -317,6 +317,9 @@ struct NativeLayerList: NSViewRepresentable {
         @objc func editRawDevelopmentAction(_ sender: Any?) {
             guard let id = session.activeLayerID,
                   session.document?.layers.first(where: { $0.id == id })?.rawDevelopment != nil else { return }
+            // Assign the layer ID before showing the sheet, so the sheet binds to the
+            // actually-right-clicked layer and not a previously active one.
+            session.rawDevelopEditorLayerID = id
             session.beginRawDevelopmentEdit(layerID: id)
             session.showRawDevelopEditor = true
         }
