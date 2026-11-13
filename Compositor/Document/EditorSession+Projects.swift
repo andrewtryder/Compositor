@@ -63,19 +63,27 @@ extension EditorSession {
                 rawSources[layer.id] = rawDevelopment.source
                 rawSourceFile = rawDevelopment.source.fileName()
                 let asShotPersistent = RawDevelopmentSettingsPersistentState(rawDevelopment.source.asShotSettings)
-                var cameraMetadata: [String: String] = [:]
-                for (key, value) in rawDevelopment.source.cameraMetadata {
-                    cameraMetadata[key] = String(describing: value)
+
+                // Store each metadata value as a JSON-encoded string so complex EXIF/TIFF
+                // dictionaries and arrays round-trip intact, rather than collapsing them to
+                // String(describing:) which loses structure.
+                let cameraMetadataJSON: [String: String] = rawDevelopment.source.cameraMetadata.mapValues { value in
+                    if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+                       let string = String(data: data, encoding: .utf8) {
+                        return string
+                    }
+                    return String(describing: value)
                 }
+
                 raw = ProjectRawDevelopmentRecord(
                     sourceFile: rawSourceFile ?? "\(layer.id.uuidString).raw-source.dng",
                     settings: rawDevelopment.settings,
                     developedWidth: rawDevelopment.developedWidth,
                     developedHeight: rawDevelopment.developedHeight,
                     developedColorSpace: rawDevelopment.developedColorSpace,
-                    developedBitsPerComponent: rawDevelopment.developedBitsPerComponent,
+                    developedBitsPerComponent: 16, // Output is always 16-bit via RawDevelopmentRenderer
                     asShotSettings: asShotPersistent,
-                    cameraMetadata: cameraMetadata,
+                    cameraMetadata: cameraMetadataJSON,
                     colorSpace: rawDevelopment.source.colorSpace,
                     bitsPerComponent: rawDevelopment.source.bitsPerComponent,
                     supportsNoiseReduction: rawDevelopment.source.supportsNoiseReduction,

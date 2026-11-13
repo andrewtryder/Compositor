@@ -537,48 +537,29 @@ struct RawDevelopmentIntegrationTests {
 
     let fixtureURL = URL(fileURLWithPath: fixturePath)
 
-    // --- Import a real RAW-backed layer from the fixture ---
+    // --- Import a real RAW-backed layer using the actual import API ---
     let session = EditorSession()
     session.createDocument(width: 2000, height: 1500)
 
-    guard let rawData = try? Data(contentsOf: fixtureURL),
-          !rawData.isEmpty else {
-        Issue.record("fixture at \(fixturePath) could not be read as RAW bytes")
-        return
-    }
-    let ext = fixtureURL.pathExtension.lowercased()
-    guard UTType(filenameExtension: ext)?.conforms(to: .rawImage) == true else {
-        Issue.record("fixture at \(fixturePath) is not a recognized RAW image type")
+    // Accept the develop sheet automatically so import proceeds without user interaction.
+    session.confirmRawDevelop = { _, settings in settings }
+
+    // Use the actual import path to develop the RAW and create a proper layer
+    await session.importImages([fixtureURL])
+
+    // Find the RAW-backed layer that was just imported
+    guard let layer = session.document?.layers.first(where: { $0.rawDevelopment != nil }),
+          let rawDev = layer.rawDevelopment else {
+        Issue.record("import did not create a RAW-backed layer")
         return
     }
 
-    let source = RawSourceAsset(
-        sourceID: UUID(),
-        rawData: rawData,
-        fileExtension: ext,
-        utType: UTType(filenameExtension: ext)?.identifier ?? "public.data",
-        pixelWidth: 2000,
-        pixelHeight: 1500,
-        cameraMetadata: [:],
-        asShotSettings: RawDevelopSettings()
-    )
-    var layer = ImageLayer(name: "Fixture RAW", blankSize: CGSize(width: 2000, height: 1500))
-    layer.rawDevelopment = RawDevelopmentPersistentState(
-        source: source,
-        settings: RawDevelopmentSettingsPersistentState(),
-        developedWidth: 2000,
-        developedHeight: 1500,
-        developedColorSpace: "extendedLinearSRGB",
-        developedBitsPerComponent: 16
-    )
-    session.document?.layers.append(layer)
-    session.activeLayerID = layer.id
-
-    // Capture pixels before any develop (the initial developed asset or blank placeholder).
-    let beforePixel = try #require(
+    // Capture pixels after initial import (as-shot development)
+    let beforeAsset = try #require(
         session.document?.layers.first(where: { $0.id == layer.id })?.asset,
-        "layer has an initial developed asset"
+        "layer has an initial developed asset after import"
     )
+    let beforeBytes = try #require(pixelBytes(beforeAsset.image), "initial asset has pixel data")
 
     // --- Edit exposure in a draft ---
     session.beginRawDevelopmentEdit(layerID: layer.id)
@@ -602,20 +583,25 @@ struct RawDevelopmentIntegrationTests {
     let loadedSession = EditorSession()
     loadedSession.installProject(loaded, from: projectURL)
 
+    // Find the reloaded layer (same ID should persist)
+    guard let reloadedLayer = loadedSession.document?.layers.first(where: { $0.id == layer.id }),
+          reloadedLayer.rawDevelopment != nil else {
+        Issue.record("reopened project does not contain the RAW-backed layer")
+        return
+    }
+
     // --- Apply the exposure edit through RawDevelopmentRenderer ---
     let applied = try await loadedSession.applyRawDevelopmentEdit(layerID: layer.id)
     #expect(applied, "Apply succeeds through RawDevelopmentRenderer")
 
     // --- Compare pixels before and after Apply ---
-    let afterImage = try #require(
-        loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset?.image,
+    let afterAsset = try #require(
+        loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset,
         "layer has a developed image after Apply"
     )
-    #expect(beforePixel.image !== afterImage, "Apply produced a new image")
+    let afterBytes = try #require(pixelBytes(afterAsset.image), "after asset has pixel data")
+    #expect(afterAsset.image !== beforeAsset.image, "Apply produced a new image")
     // Verify pixel bytes actually changed (not just a new wrapper).
-    let beforeBytes = pixelBytes(beforePixel.image)
-    let afterBytes = pixelBytes(afterImage)
-    #expect(beforeBytes != nil && afterBytes != nil, "both images have pixel data")
     #expect(beforeBytes != afterBytes, "exposure edit changed pixel bytes")
 
     // --- Undo/Redo ---

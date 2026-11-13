@@ -887,7 +887,7 @@ var rawImporting = false
     @discardableResult
     func applyRawDevelopmentEdit(layerID: UUID) async -> Bool {
         guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
-              let draft = rawDrafts.removeValue(forKey: layerID) else { return false }
+              let draft = rawDrafts[layerID] else { return false }
 
         let source = draft.source
         let settings = draft.settings.makeSettings()
@@ -896,9 +896,14 @@ var rawImporting = false
         let rawData = source.rawData
         guard !rawData.isEmpty else { return false }
 
+        // Capture the current document revision and layer identity for the guard check.
+        let documentID = document?.id
+        let layerIDAtStart = layerID
+        let layerSourceID = source.sourceID
+
         // Develop through the RawDevelopmentRenderer actor (CIRAWFilter, 16-bit,
         // revision-based cancellation, temp file cleanup).
-        let revision = RawDevelopmentRenderer.shared.beginDevelop(
+        let revision = await RawDevelopmentRenderer.shared.beginDevelop(
             source: source,
             settings: settings,
             sixteenBit: true
@@ -908,6 +913,17 @@ var rawImporting = false
         let result = await RawDevelopmentRenderer.shared.waitForDevelop(revision: revision)
         guard case let .success(developedImage) = result else { return false }
 
+        // DOCUMENT-REVISION GUARD: Verify the project, layer, and source haven't changed
+        // while we were awaiting the render.
+        guard let document = self.document,
+              document.id == documentID,
+              let layerIndex = document.layers.firstIndex(where: { $0.id == layerIDAtStart }),
+              document.layers[layerIndex].rawDevelopment?.source.sourceID == layerSourceID else {
+            // Document or layer changed - discard the stale render to avoid
+            // installing it into the wrong/outdated document state.
+            return false
+        }
+
         // Build the 16-bit asset; do not report success if the asset can't be made.
         var asset: ImportedImage
         do { asset = try DeepLayer.asset(developedImage, name: source.fileName()) }
@@ -916,15 +932,15 @@ var rawImporting = false
         // Preserve lens geometry from the source metadata (EXIF focal length, inferred sensor width).
         var focalLengthMm: Double = 0
         var sensorWidthMm: Double = 0
-        if let exif = draft.source.cameraMetadata["Exif"] as? [String: Any] {
-            if let focal = exif[kCGImagePropertyExifFocalLength as String] as? Double {
+        if let exif = draft.source.cameraMetadata["Exif"] as? [CFString: Any] {
+            if let focal = exif[kCGImagePropertyExifFocalLength] as? Double {
                 focalLengthMm = focal
-            } else if let focal = exif[kCGImagePropertyExifFocalLength as String] as? Float {
+            } else if let focal = exif[kCGImagePropertyExifFocalLength] as? Float {
                 focalLengthMm = Double(focal)
-            } else if let focal = exif[kCGImagePropertyExifFocalLength as String] as? Int {
+            } else if let focal = exif[kCGImagePropertyExifFocalLength] as? Int {
                 focalLengthMm = Double(focal)
             }
-            if let focal35 = exif[kCGImagePropertyExifFocalLenIn35mmFilm as String] as? Double,
+            if let focal35 = exif[kCGImagePropertyExifFocalLenIn35mmFilm] as? Double,
                focal35 > 0, focalLengthMm > 0 {
                 sensorWidthMm = 36 * focalLengthMm / focal35
             }
@@ -936,14 +952,17 @@ var rawImporting = false
         beginEdit("Apply RAW Development")
         defer { endEdit() }
 
-        document?.layers[index].asset = asset
-        document?.layers[index].rawDevelopment = RawDevelopmentPersistentState(
+        // Now remove the draft since the apply succeeded
+        rawDrafts.removeValue(forKey: layerID)
+
+        self.document?.layers[layerIndex].asset = asset
+        self.document?.layers[layerIndex].rawDevelopment = RawDevelopmentPersistentState(
             source: source,
             settings: draft.settings,
             developedWidth: source.pixelWidth,
             developedHeight: source.pixelHeight,
             developedColorSpace: draft.developedColorSpace,
-            developedBitsPerComponent: draft.developedBitsPerComponent
+            developedBitsPerComponent: 16 // Output is always 16-bit via RawDevelopmentRenderer
         )
         return true
     }
@@ -1331,7 +1350,7 @@ var rawImporting = false
                             developedWidth: size.width,
                             developedHeight: size.height,
                             developedColorSpace: detectedColorSpace ?? "extendedLinearSRGB",
-                            developedBitsPerComponent: detectedBitsPerComponent
+                            developedBitsPerComponent: 16 // Output is always 16-bit via RawDevelopmentRenderer
                         )
                     }
                     if rawOpensCameraRaw { cameraRawAfterImport = activeLayerID }

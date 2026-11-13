@@ -510,11 +510,17 @@ actor ProjectStore {
                 guard let sourceID = UUID(uuidString: fileBase) else {
                     throw ProjectError.invalid
                 }
-                // Reconstruct camera metadata from string-keyed dictionary.
+                // Reconstruct camera metadata from JSON-encoded strings.
                 var cameraMetadata: [String: Any] = [:]
                 if let stored = rawRecord.cameraMetadata {
-                    for (key, value) in stored {
-                        cameraMetadata[key] = value
+                    for (key, jsonString) in stored {
+                        if let data = jsonString.data(using: .utf8),
+                           let value = try? JSONSerialization.jsonObject(with: data, options: []) {
+                            cameraMetadata[key] = value
+                        } else {
+                            // Fallback for simple string values
+                            cameraMetadata[key] = jsonString
+                        }
                     }
                 }
                 // As Shot settings are preserved independently of edited settings.

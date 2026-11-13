@@ -82,13 +82,13 @@ nonisolated struct RawSourceAsset: Equatable, Sendable {
 
     /// Property-list-compatible metadata wrapper so `Any` values round-trip through
     /// `NSKeyedArchiver`/`JSONSerialization`-safe types.
-    private struct MetadataEntry: Codable, Sendable {
+    struct MetadataEntry: Codable, Sendable {
         let key: String
         let value: PlistValue
     }
 
     /// A property-list-safe value: string, int, double, bool, date, data, or nested arrays/dicts.
-    private enum PlistValue: Codable, Sendable, Equatable {
+    enum PlistValue: Codable, Sendable, Equatable {
         case string(String)
         case int(Int)
         case double(Double)
