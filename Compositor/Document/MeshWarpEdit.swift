@@ -238,15 +238,41 @@ final class MeshWarpEdit {
         let before = snapshot()
         var trial = mesh.positions
         for index in selected { trial[index] = mesh.rest[index] }
-        guard MeshWarpGrid.trianglesValid(pointColumns: mesh.pointColumns, pointRows: mesh.pointRows,
-                                          positions: trial) else {
+        var trialTopology = mesh.topology
+        trialTopology.writeBack(positions: trial)
+        guard MeshWarpGrid.leafTrianglesValid(trialTopology) else {
             lastWarning = "Resetting the selection would fold the mesh."
             return false
         }
         mesh.positions = trial
+        mesh.topology = trialTopology
         history.push(before)
         refreshPreview(waitForGPU: true)
         return true
+    }
+
+    /// Apply a local Perspective / Horizon / Volume correction to the current selection.
+    @discardableResult
+    func applyLocalCorrection(_ correction: MeshWarpLocalCorrection,
+                              policy: MeshWarpDisjointRegionPolicy = .independent) -> MeshWarpLocalStatus {
+        let region = MeshWarpCorrectionRegion.fromSelection(selection, mesh: mesh, policy: policy)
+        guard !region.resolvedVertexIndices(in: mesh).isEmpty else {
+            let status = MeshWarpLocalStatus.rejected("empty selection region")
+            lastWarning = status.reason
+            return status
+        }
+        let before = snapshot()
+        let status = mesh.applyLocalCorrection(correction, region: region,
+                                               imageWidth: width, imageHeight: height,
+                                               base: mesh.positions)
+        if status.ok {
+            history.push(before)
+            lastWarning = nil
+            refreshPreview(waitForGPU: true)
+        } else {
+            lastWarning = status.reason
+        }
+        return status
     }
 }
 
