@@ -13,6 +13,45 @@ nonisolated struct CameraRawHomography: Equatable, Sendable {
 
     static let identity = CameraRawHomography(m: (1, 0, 0, 0, 1, 0, 0, 0, 1))
 
+    /// Divide by a nonzero scale so equivalent matrices compare and blend consistently.
+    /// Prefers `m₈` (bottom-right); otherwise the largest-magnitude entry.
+    func normalized() -> CameraRawHomography? {
+        let entries = [m.0, m.1, m.2, m.3, m.4, m.5, m.6, m.7, m.8]
+        guard entries.allSatisfy(\.isFinite) else { return nil }
+        let scale: Double
+        if abs(m.8) > 1e-12 {
+            scale = m.8
+        } else if let peak = entries.max(by: { abs($0) < abs($1) }), abs(peak) > 1e-12 {
+            scale = peak
+        } else {
+            return nil
+        }
+        return CameraRawHomography(m: (
+            m.0 / scale, m.1 / scale, m.2 / scale,
+            m.3 / scale, m.4 / scale, m.5 / scale,
+            m.6 / scale, m.7 / scale, m.8 / scale
+        ))
+    }
+
+    /// `H(t) = (1 − t)I + tH` after normalizing `H`. `t` is clamped to 0…1.
+    /// Returns nil when the blend is non-finite or the mapped quad is not plausible.
+    func blendedTowardIdentity(amount t: Double, width: Double, height: Double) -> CameraRawHomography? {
+        let amount = t.isFinite ? min(1, max(0, t)) : 1
+        if amount <= 1e-9 { return .identity }
+        guard let normalized = normalized() else { return nil }
+        if amount >= 1 - 1e-9 {
+            return normalized.isPlausible(width: width, height: height) ? normalized : nil
+        }
+        let u = 1 - amount
+        let blended = CameraRawHomography(m: (
+            u * 1 + amount * normalized.m.0, amount * normalized.m.1, amount * normalized.m.2,
+            amount * normalized.m.3, u * 1 + amount * normalized.m.4, amount * normalized.m.5,
+            amount * normalized.m.6, amount * normalized.m.7, u * 1 + amount * normalized.m.8
+        ))
+        guard let result = blended.normalized(), result.isPlausible(width: width, height: height) else { return nil }
+        return result
+    }
+
     func applying(_ point: CGPoint) -> CGPoint {
         applyingFinite(point) ?? point
     }
@@ -351,5 +390,34 @@ nonisolated enum CameraRawPerspective {
             CGPoint(x: w, y: 0), CGPoint(x: 0, y: 0)
         ]
         return source.map { homography.applying($0) }
+    }
+
+    /// Source corners of an image of size `width`×`height` in CIPerspectiveTransform order (TL, TR, BR, BL).
+    static func identityCorners(width: Double, height: Double) -> [CGPoint] {
+        [
+            CGPoint(x: 0, y: height), CGPoint(x: width, y: height),
+            CGPoint(x: width, y: 0), CGPoint(x: 0, y: 0)
+        ]
+    }
+
+    /// Axis-aligned pixel bounds that cover `corners`, translated into a nonnegative origin.
+    /// Returns nil when corners are empty, non-finite, or the size exceeds `DocumentLimits`.
+    static func expandedFrame(corners: [CGPoint], maxSide: Int = DocumentLimits.maxSide) -> (size: CGSize, translation: CGVector)? {
+        guard !corners.isEmpty, corners.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return nil }
+        let minX = corners.map(\.x).min()!, maxX = corners.map(\.x).max()!
+        let minY = corners.map(\.y).min()!, maxY = corners.map(\.y).max()!
+        let width = maxX - minX, height = maxY - minY
+        guard width.isFinite, height.isFinite, width > 0.5, height > 0.5 else { return nil }
+        // Inclusive pixel grid: cover the continuous bbox without inventing extra margin.
+        let outW = Int(width.rounded(.up))
+        let outH = Int(height.rounded(.up))
+        guard (1...maxSide).contains(outW), (1...maxSide).contains(outH),
+              outW * outH <= DocumentLimits.maxSurfacePixels else { return nil }
+        return (CGSize(width: outW, height: outH), CGVector(dx: -minX, dy: -minY))
+    }
+
+    /// Corners shifted by `translation` so Expand to Fit can render into a nonnegative canvas.
+    static func translatedCorners(_ corners: [CGPoint], by translation: CGVector) -> [CGPoint] {
+        corners.map { CGPoint(x: $0.x + translation.dx, y: $0.y + translation.dy) }
     }
 }

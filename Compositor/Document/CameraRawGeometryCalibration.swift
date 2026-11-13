@@ -18,6 +18,13 @@ nonisolated enum CameraRawProjection: String, CaseIterable, Sendable, Codable {
     case rectilinear = "Rectilinear"
 }
 
+/// How the warped picture is framed after perspective.
+/// Expand to Fit grows the layer footprint via `CameraRawGeometryExpansion`; Keep Original Size is the legacy path.
+nonisolated enum CameraRawFramingMode: String, CaseIterable, Sendable, Codable {
+    case keepOriginalSize = "Keep Original Size"
+    case expandToFit = "Expand to Fit"
+}
+
 /// Volume (anamorphosis) mode matching ViewPoint modes 0–3.
 nonisolated enum CameraRawVolumeMode: String, CaseIterable, Sendable, Codable {
     case radial = "Radial"
@@ -57,6 +64,10 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
     var offsetX: Double = 0
     var offsetY: Double = 0
     var constrainCrop = false
+    /// Perspective correction strength 0…100. 100 matches the previous full-strength path; 0 is identity.
+    var perspectiveAmount: Double = 100
+    /// Keep Original Size preserves the layer footprint. Expand to Fit returns a larger bitmap and a placement.
+    var framingMode: CameraRawFramingMode = .keepOriginalSize
     var guides: [CameraRawGeometryGuide] = []
     /// Volume deformation 0…200. Zero leaves the picture unchanged.
     var volumeHorizontal: Double = 0
@@ -70,10 +81,41 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
     static let toneRange: ClosedRange<Double> = -100...100
     static let rotateRange: ClosedRange<Double> = -45...45
     static let volumeRange: ClosedRange<Double> = 0...200
+    static let amountRange: ClosedRange<Double> = 0...100
     /// Maps a 0…200 slider into ComputeAnamorphosis `b` (smaller b ⇒ stronger warp).
     /// Provisional. 0.55 keeps the top of the slider inside a fold-free range on the CPU kernel.
     /// It is not a measured match to any other product.
     static let volumeStrengthScale = 0.55
+
+    init() {}
+
+    /// Missing keys keep their defaults so older saved geometry still opens at full perspective strength.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        func read<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
+            try values.decodeIfPresent(T.self, forKey: key) ?? fallback
+        }
+        let base = Self()
+        upright = try read(.upright, base.upright)
+        projection = try read(.projection, base.projection)
+        vertical = try read(.vertical, base.vertical)
+        horizontal = try read(.horizontal, base.horizontal)
+        rotate = try read(.rotate, base.rotate)
+        aspect = try read(.aspect, base.aspect)
+        scale = try read(.scale, base.scale)
+        offsetX = try read(.offsetX, base.offsetX)
+        offsetY = try read(.offsetY, base.offsetY)
+        constrainCrop = try read(.constrainCrop, base.constrainCrop)
+        perspectiveAmount = try read(.perspectiveAmount, base.perspectiveAmount)
+        framingMode = try read(.framingMode, base.framingMode)
+        guides = try read(.guides, base.guides)
+        volumeHorizontal = try read(.volumeHorizontal, base.volumeHorizontal)
+        volumeVertical = try read(.volumeVertical, base.volumeVertical)
+        volumeRadial = try read(.volumeRadial, base.volumeRadial)
+        volumeMode = try read(.volumeMode, base.volumeMode)
+        focalLengthMm = try read(.focalLengthMm, base.focalLengthMm)
+        sensorWidthMm = try read(.sensorWidthMm, base.sensorWidthMm)
+    }
 
     var adjusts: Bool {
         usesSolverGuides || usesManualPerspective || usesVolume || usesPolish
@@ -110,6 +152,7 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
         result.scale = ImageAdjustmentPixels.clamp(scale, Self.toneRange, 0)
         result.offsetX = ImageAdjustmentPixels.clamp(offsetX, Self.toneRange, 0)
         result.offsetY = ImageAdjustmentPixels.clamp(offsetY, Self.toneRange, 0)
+        result.perspectiveAmount = ImageAdjustmentPixels.clamp(perspectiveAmount, Self.amountRange, 100)
         result.volumeHorizontal = ImageAdjustmentPixels.clamp(volumeHorizontal, Self.volumeRange, 0)
         result.volumeVertical = ImageAdjustmentPixels.clamp(volumeVertical, Self.volumeRange, 0)
         result.volumeRadial = ImageAdjustmentPixels.clamp(volumeRadial, Self.volumeRange, 0)
@@ -176,22 +219,36 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
         return a < 0 ? -r : r
     }
 
-    /// Perspective and volume on the pixel grid. Output matches the input size unless Constrain Crop trims empty edges.
+    /// Perspective and volume on the pixel grid. Prefer `applyResult` when Expand to Fit placement is needed.
     /// Lens distortion is applied by `CameraRawSettings.apply` before this.
     func apply(_ image: CGImage) throws -> CGImage {
+        try applyResult(image).image
+    }
+
+    /// Same as `apply`, plus an expansion describing how to place a resized result on the document.
+    /// `horizonDegrees` is composed into the destination corners before framing so Expand bounds stay complete.
+    func applyResult(_ image: CGImage, horizonDegrees: Double? = nil) throws -> CameraRawGeometryResult {
         let settings = normalized
-        guard settings.adjusts else { return image }
+        let needsPerspective = settings.usesSolverGuides || settings.usesManualPerspective || settings.usesPolish
+            || (horizonDegrees.map { abs($0) > 1e-9 } ?? false)
+        guard settings.adjusts || needsPerspective else { return CameraRawGeometryResult(image: image, expansion: nil) }
         let width = image.width, height = image.height
-        guard width > 0, height > 0 else { return image }
+        guard width > 0, height > 0 else { return CameraRawGeometryResult(image: image, expansion: nil) }
         var working = image
         if settings.usesVolume {
             working = try settings.applyVolume(working)
         }
-        if settings.usesSolverGuides || settings.usesManualPerspective || settings.usesPolish {
-            working = try settings.applyPerspective(working)
+        var expansion: CameraRawGeometryExpansion?
+        if needsPerspective {
+            let perspective = try settings.applyPerspectiveResult(working, horizonDegrees: horizonDegrees)
+            working = perspective.image
+            expansion = perspective.expansion
         }
-        guard settings.constrainCrop else { return working }
-        return try settings.applyConstrainCrop(working)
+        guard settings.constrainCrop else {
+            return CameraRawGeometryResult(image: working, expansion: expansion)
+        }
+        let cropped = try settings.applyConstrainCropResult(working, framing: settings.framingMode, expansion: expansion)
+        return cropped
     }
 
     private func applyVolume(_ image: CGImage) throws -> CGImage {
@@ -221,51 +278,80 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
         return result
     }
 
-    private func applyPerspective(_ image: CGImage) throws -> CGImage {
+    private func applyPerspectiveResult(_ image: CGImage, horizonDegrees: Double? = nil) throws -> CameraRawGeometryResult {
         let width = image.width, height = image.height
-        let corners = outputCorners(width: width, height: height)
-        let identity = [
-            CGPoint(x: 0, y: height), CGPoint(x: width, y: height),
-            CGPoint(x: width, y: 0), CGPoint(x: 0, y: 0)
-        ]
+        let corners = outputCorners(width: width, height: height, horizonDegrees: horizonDegrees)
+        let identity = CameraRawPerspective.identityCorners(width: Double(width), height: Double(height))
         let unchanged = zip(corners, identity).allSatisfy {
             hypot($0.x - $1.x, $0.y - $1.y) < 0.05
         }
-        if unchanged { return image }
+        if unchanged { return CameraRawGeometryResult(image: image, expansion: nil) }
         func vector(_ point: CGPoint) -> CIVector { CIVector(x: point.x, y: point.y) }
+        let renderWidth: Int
+        let renderHeight: Int
+        let renderCorners: [CGPoint]
+        let expansion: CameraRawGeometryExpansion?
+        if framingMode == .expandToFit,
+           let frame = CameraRawPerspective.expandedFrame(corners: corners),
+           let coverage = CameraRawPerspective.coverageInLayerPixels(corners: corners, width: width, height: height) {
+            renderWidth = Int(frame.size.width)
+            renderHeight = Int(frame.size.height)
+            renderCorners = CameraRawPerspective.translatedCorners(corners, by: frame.translation)
+            let planned = CameraRawGeometryExpansion(inputWidth: width, inputHeight: height, coverageInInput: coverage)
+            expansion = planned.isIdentityFootprint ? nil : planned
+        } else {
+            renderWidth = width
+            renderHeight = height
+            renderCorners = corners
+            expansion = nil
+        }
         let warped = CIImage(cgImage: image).applyingFilter("CIPerspectiveTransform", parameters: [
-            "inputTopLeft": vector(corners[0]),
-            "inputTopRight": vector(corners[1]),
-            "inputBottomRight": vector(corners[2]),
-            "inputBottomLeft": vector(corners[3]),
+            "inputTopLeft": vector(renderCorners[0]),
+            "inputTopRight": vector(renderCorners[1]),
+            "inputBottomRight": vector(renderCorners[2]),
+            "inputBottomLeft": vector(renderCorners[3]),
         ])
-        return try PixelAdjust.render(warped, width: width, height: height, isMask: false)
+        let imageOut = try PixelAdjust.render(warped, width: renderWidth, height: renderHeight, isMask: false)
+        return CameraRawGeometryResult(image: imageOut, expansion: expansion)
     }
 
-    private func applyConstrainCrop(_ image: CGImage) throws -> CGImage {
+    private func applyConstrainCropResult(_ image: CGImage, framing: CameraRawFramingMode,
+                                          expansion: CameraRawGeometryExpansion?) throws -> CameraRawGeometryResult {
         let width = image.width, height = image.height
         let context = try BrushRaster.context(width: width, height: height, mask: false)
         BrushRaster.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height), mask: false, context: context)
-        guard let data = context.data else { return image }
+        guard let data = context.data else {
+            return CameraRawGeometryResult(image: image, expansion: expansion)
+        }
         let bytes = data.assumingMemoryBound(to: UInt8.self)
         // The opaque bounding box still contains transparent corners after a rotation. Fit the largest
-        // axis-aligned rectangle that sits entirely on solid pixels, then scale it uniformly.
+        // axis-aligned rectangle that sits entirely on solid pixels.
         guard let crop = Self.inscribedOpaqueRect(bytes: bytes, width: width, height: height, stride: context.bytesPerRow),
               crop.width >= 1, crop.height >= 1,
               crop.width < CGFloat(width) - 0.5 || crop.height < CGFloat(height) - 0.5,
-              let cropped = image.cropping(to: crop) else { return image }
+              let cropped = image.cropping(to: crop) else {
+            return CameraRawGeometryResult(image: image, expansion: expansion)
+        }
+        if framing == .expandToFit {
+            // Expanded framing already chose the canvas; Constrain Crop only removes empty margins.
+            let next = expansion?.cropping(to: crop) ?? expansion
+            return CameraRawGeometryResult(image: cropped, expansion: next)
+        }
         let fitted = try BrushRaster.context(width: width, height: height, mask: false)
         let scale = min(CGFloat(width) / crop.width, CGFloat(height) / crop.height)
         let draw = CGRect(x: (CGFloat(width) - crop.width * scale) / 2, y: (CGFloat(height) - crop.height * scale) / 2,
                           width: crop.width * scale, height: crop.height * scale)
         BrushRaster.draw(cropped, in: draw, mask: false, context: fitted)
-        guard let fittedImage = fitted.makeImage() else { return image }
-        return fittedImage
+        guard let fittedImage = fitted.makeImage() else {
+            return CameraRawGeometryResult(image: image, expansion: expansion)
+        }
+        // Keep Original Size: result stays the input footprint; no layer expansion.
+        return CameraRawGeometryResult(image: fittedImage, expansion: nil)
     }
 
     /// Largest axis-aligned rectangle whose pixels are all opaque enough to count as picture, not fringe.
     /// Buffer row 0 is the top, matching `CGImage.cropping(to:)`.
-    private static func inscribedOpaqueRect(bytes: UnsafePointer<UInt8>, width: Int, height: Int, stride: Int) -> CGRect? {
+    static func inscribedOpaqueRect(bytes: UnsafePointer<UInt8>, width: Int, height: Int, stride: Int) -> CGRect? {
         guard width > 0, height > 0 else { return nil }
         var left = [Int](repeating: width, count: height)
         var right = [Int](repeating: -1, count: height)
@@ -297,23 +383,47 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
     }
 
     /// Core Image corner positions with y measured upward from the bottom (TL, TR, BR, BL).
-    func outputCorners(width: Int, height: Int) -> [CGPoint] {
+    /// Perspective Amount blends the keystone/roll homography toward identity before Aspect / Scale / Offset.
+    /// Optional `horizonDegrees` rotates those destination corners about the image center before polish/framing,
+    /// so Expand to Fit bounds include Horizon.
+    func outputCorners(width: Int, height: Int, horizonDegrees: Double? = nil) -> [CGPoint] {
         let w = Double(width), h = Double(height)
-        var corners: [CGPoint]
+        let identity = CameraRawPerspective.identityCorners(width: w, height: h)
+        let amount = ImageAdjustmentPixels.clamp(perspectiveAmount, Self.amountRange, 100) / 100
+        var perspectiveCorners = identity
         if upright != .off, let homo = CameraRawPerspective.homography(guides: guides, width: width, height: height) {
             // Guided / Auto: solver owns keystone. Vertical / Horizontal / Rotate are ignored.
-            corners = CameraRawPerspective.perspectiveCorners(homography: homo, width: width, height: height)
-        } else if upright == .off {
-            corners = Self.manualCorners(width: w, height: h, vertical: vertical, horizontal: horizontal,
-                                         rotation: rotate, projection: projection)
-        } else {
-            corners = [
-                CGPoint(x: 0, y: h), CGPoint(x: w, y: h),
-                CGPoint(x: w, y: 0), CGPoint(x: 0, y: 0)
-            ]
+            if amount >= 1 - 1e-9 {
+                perspectiveCorners = CameraRawPerspective.perspectiveCorners(homography: homo, width: width, height: height)
+            } else if let blended = homo.blendedTowardIdentity(amount: amount, width: w, height: h) {
+                perspectiveCorners = CameraRawPerspective.perspectiveCorners(homography: blended, width: width, height: height)
+            }
+        } else if upright == .off, vertical != 0 || horizontal != 0 || rotate != 0 {
+            let full = Self.manualCorners(width: w, height: h, vertical: vertical, horizontal: horizontal,
+                                          rotation: rotate, projection: projection)
+            if amount <= 1e-9 {
+                perspectiveCorners = identity
+            } else if amount >= 1 - 1e-9 {
+                perspectiveCorners = full
+            } else if let homo = CameraRawHomography.dlt(from: identity, to: full),
+                      let blended = homo.blendedTowardIdentity(amount: amount, width: w, height: h) {
+                perspectiveCorners = CameraRawPerspective.perspectiveCorners(homography: blended, width: width, height: height)
+            } else {
+                // Degenerate blend: refuse the keystone rather than invent an intermediate.
+                perspectiveCorners = identity
+            }
         }
-        return Self.polish(corners: corners, width: w, height: h, aspect: aspect, scale: scale,
+        if let degrees = horizonDegrees, degrees.isFinite, abs(degrees) > 1e-9,
+           let homo = CameraRawHorizon.rotationHomography(degrees: degrees, width: w, height: h) {
+            perspectiveCorners = perspectiveCorners.map { homo.applying($0) }
+        }
+        return Self.polish(corners: perspectiveCorners, width: w, height: h, aspect: aspect, scale: scale,
                            offsetX: offsetX, offsetY: offsetY)
+    }
+
+    /// Whether Perspective Amount currently affects the picture (solver or manual keystone/roll is active).
+    var perspectiveAmountApplies: Bool {
+        usesSolverGuides || usesManualPerspective
     }
 
     private static func manualCorners(width w: Double, height h: Double, vertical: Double, horizontal: Double,

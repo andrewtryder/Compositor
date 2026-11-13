@@ -384,7 +384,8 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 3E4X3B9Z9T;
 				ENABLE_NS_ASSERTIONS = NO;
-				/* Provisional: Release CompositorTests need `@testable import`. Limit to test builds before shipping. */
+				/* Provisional: Release ENABLE_TESTABILITY=YES so CompositorTests can `@testable import`.
+				   Shipping Release must not ship with testing enabled; prefer a ReleaseTestable config before distribution. */
 				ENABLE_TESTABILITY = YES;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
