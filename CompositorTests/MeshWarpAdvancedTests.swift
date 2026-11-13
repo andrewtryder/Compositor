@@ -272,14 +272,13 @@ struct MeshWarpAdvancedTests {
 
     // MARK: - Subdivide / Merge
 
-    @Test func subdivideMergeMarkedIncomplete() {
+    @Test func subdivideMergeSupportedOnAdaptiveTopology() {
+        #expect(MeshWarpGrid.topologyOpsSupported)
         var mesh = MeshWarpGrid.identity(preset: .points8)
-        #expect(!MeshWarpGrid.topologyOpsSupported)
-        let subdivided = mesh.subdivideSelectedQuads(cellColumns: [0])
-        let merged = mesh.mergeSelectedChildGroup()
-        #expect(!subdivided)
-        #expect(!merged)
-        #expect(!MeshWarpGrid.topologyOpsUnavailableMessage.isEmpty)
+        let face = mesh.topology.rootFaceIDs[mesh.topology.rootFaceIDs.count / 2]
+        let result = mesh.subdivide(faceIDs: [face])
+        #expect(!result.succeeded.isEmpty)
+        #expect(mesh.isAdaptive)
     }
 
     // MARK: - Parity still holds with new propagation

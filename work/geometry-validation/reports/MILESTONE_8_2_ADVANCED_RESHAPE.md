@@ -70,7 +70,7 @@ Still a **regular grid** (`pointColumns` × `pointRows`) with two triangles per 
 
 ### Subdivide / Merge
 
-**Incomplete.** `MeshWarpGrid.topologyOpsSupported == false`. Local adaptive quads (shared midpoints / child groups) are deferred rather than faking a global density change or copying DxO QuadTree structure. Stubs return `false` with an explicit message.
+Completed on branch `camera-raw-reshape-adaptive` (Milestone 8.3). See `MILESTONE_8_3_ADAPTIVE_MESH.md`.
 
 ## Rendering and parity
 
