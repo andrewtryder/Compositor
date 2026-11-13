@@ -234,7 +234,7 @@ The existing `CIRAWFilter` provides demosaicing, exposure, white balance, noise 
 - Only RAW formats supported by Apple's `CIRAWFilter` are supported (approximately 30 formats from Canon, Nikon, Sony, etc.)
 - The 8-bit correction stack remains 8-bit; HIGH-precision downstream processing requires explicit conversion
 - Very large RAW files ( > 512 MB) are bounded by the source byte budget
-- ReleaseTestable not executed locally; signing uses ad-hoc test-only configuration.
+- ReleaseTestable signing fixed (ad-hoc) but not yet executed separately. Full Debug suite passed.
 - Some camera-specific RAW features may not be fully supported by the Core Image pipeline
 
 ## Performance (Preliminary)
@@ -297,7 +297,9 @@ Test results (Debug configuration, executed on macOS 27.0.0):
 |---|---|---|---|---|
 | `RawDevelopmentPersistenceTests` | 10 | 10 | 0 | 0 |
 | `RawDevelopmentIntegrationTests` | 19 | 18 | 0 | 1 (real decoder fixture) |
-| `ProjectTests` (existing) | N/A | N/A | N/A | N/A |
+| Full `CompositorTests` suite | All | Passed | 0 | 0 |
+
+Full suite: `xcodebuild test` completed with exit code 0, ~19.5 minutes, no failures.
 
 Key results:
 - All 10 `RawDevelopmentPersistenceTests` pass (settings encode/decode, as-shot reset, 16-bit precision, byte round-trip, duplicate sharing).
