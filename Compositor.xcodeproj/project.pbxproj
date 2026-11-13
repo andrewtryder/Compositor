@@ -384,6 +384,8 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 3E4X3B9Z9T;
 				ENABLE_NS_ASSERTIONS = NO;
+				/* Provisional: Release CompositorTests need `@testable import`. Limit to test builds before shipping. */
+				ENABLE_TESTABILITY = YES;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;

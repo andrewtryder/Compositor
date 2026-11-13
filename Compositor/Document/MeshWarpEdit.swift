@@ -1,6 +1,7 @@
 import AppKit
 import CoreImage
 import Foundation
+import simd
 
 /// In-progress ReShape mesh edit on one layer. Apply rasterizes into the layer (undoable);
 /// Cancel restores the snapshot taken at begin.
@@ -16,7 +17,11 @@ final class MeshWarpEdit {
     /// Layer transform at begin (placement unchanged by warp).
     let transform: LayerTransform
     var mesh: MeshWarpGrid
+    /// Multi-point selection (stable vertex IDs).
+    var selection = MeshWarpSelection()
+    /// Legacy single-index mirror of the primary / last-hit vertex (overlay highlight).
     var selectedIndex: Int?
+    var transformMode: MeshWarpTransformMode = .move
     /// CPU/CG preview fallback; nil when showing the original or a GPU-resident preview.
     var previewImage: CGImage?
     /// GPU-resident live preview (preferred). Drawn through `place(live:)` without per-drag readback.
@@ -28,6 +33,13 @@ final class MeshWarpEdit {
     var lastPreviewSample = MeshWarpRenderer.Sample()
     /// Generation of the mesh state last submitted to the GPU.
     private(set) var previewGeneration: UInt64 = 0
+
+    /// Tool-local undo/redo (not document history).
+    @ObservationIgnored let history = MeshWarpHistory()
+    /// Positions at the start of the current pointer gesture (absolute displacement base).
+    @ObservationIgnored var gestureBasePositions: [SIMD2<Float>]?
+    @ObservationIgnored var gestureBaseSelection = MeshWarpSelection()
+    @ObservationIgnored private var gestureDidMutate = false
 
     @ObservationIgnored private var gpuSession: MetalMeshWarpSession?
 
@@ -45,13 +57,41 @@ final class MeshWarpEdit {
     var displayedImage: CGImage { previewImage ?? originalImage }
     var usesGPUResidentPreview: Bool { previewCIImage != nil }
 
+    func snapshot() -> MeshWarpHistorySnapshot {
+        MeshWarpHistorySnapshot(positions: mesh.positions, selection: selection)
+    }
+
+    func apply(snapshot: MeshWarpHistorySnapshot) {
+        mesh.positions = snapshot.positions
+        selection = snapshot.selection
+        selection.prune(pointCount: mesh.pointCount)
+        selectedIndex = selection.indices.sorted().first
+    }
+
     func resetMesh() {
+        let before = snapshot()
         mesh.resetToRest()
+        selection.clear()
         selectedIndex = nil
         previewImage = nil
         previewCIImage = nil
         lastWarning = nil
+        history.push(before)
         gpuSession?.invalidate()
+    }
+
+    func toolUndo() -> Bool {
+        guard let previous = history.undo(current: snapshot()) else { return false }
+        apply(snapshot: previous)
+        refreshPreview(waitForGPU: true)
+        return true
+    }
+
+    func toolRedo() -> Bool {
+        guard let next = history.redo(current: snapshot()) else { return false }
+        apply(snapshot: next)
+        refreshPreview(waitForGPU: true)
+        return true
     }
 
     /// Rebuilds the preview from the current mesh. Prefer a GPU-resident texture; fall back to CPU/`CGImage`.
@@ -87,7 +127,6 @@ final class MeshWarpEdit {
     func commitImage(sample: inout MeshWarpRenderer.Sample) -> CGImage? {
         if mesh.isIdentity { return originalImage }
         if let session = gpuSession {
-            // Ensure the destination matches the current mesh (in case the last drag skipped wait).
             var gpuSample = MetalMeshWarpSession.Sample()
             if session.render(mesh: mesh, sample: &gpuSample, wait: true) {
                 var metalSample = MetalMeshWarp.Sample()
@@ -104,6 +143,72 @@ final class MeshWarpEdit {
             }
         }
         return MeshWarpRenderer.apply(source: originalImage, mesh: mesh, sample: &sample)
+    }
+
+    func beginGesture() {
+        gestureBasePositions = mesh.positions
+        gestureBaseSelection = selection
+        gestureDidMutate = false
+    }
+
+    func endGesture() {
+        defer {
+            gestureBasePositions = nil
+            gestureDidMutate = false
+        }
+        guard gestureDidMutate, let base = gestureBasePositions else { return }
+        history.push(MeshWarpHistorySnapshot(positions: base, selection: gestureBaseSelection))
+    }
+
+    @discardableResult
+    func moveSelected(toPrimaryDestination destination: SIMD2<Float>, primary: Int) -> Bool {
+        guard let base = gestureBasePositions else { return false }
+        let ok = mesh.tryMove(index: primary, to: destination,
+                              imageWidth: width, imageHeight: height, base: base)
+        if ok { gestureDidMutate = true }
+        return ok
+    }
+
+    @discardableResult
+    func transformSelection(mode: MeshWarpTransformMode,
+                            translation: SIMD2<Float> = .zero,
+                            rotationRadians: Float = 0,
+                            scale: Float = 1) -> Bool {
+        let selected = selection.indices
+        guard !selected.isEmpty, let base = gestureBasePositions,
+              let pivot = MeshWarpGrid.barycenter(indices: selected, in: base) else { return false }
+        let ok = mesh.applySelectionTransform(selected: selected, imageWidth: width, imageHeight: height, base: base) { point in
+            switch mode {
+            case .move:
+                return point + translation
+            case .rotate:
+                let relative = point - pivot
+                let c = cos(rotationRadians), s = sin(rotationRadians)
+                return pivot + SIMD2(relative.x * c - relative.y * s, relative.x * s + relative.y * c)
+            case .scale:
+                return pivot + (point - pivot) * scale
+            }
+        }
+        if ok { gestureDidMutate = true }
+        return ok
+    }
+
+    @discardableResult
+    func resetSelectedPoints() -> Bool {
+        let selected = selection.indices
+        guard !selected.isEmpty else { return false }
+        let before = snapshot()
+        var trial = mesh.positions
+        for index in selected { trial[index] = mesh.rest[index] }
+        guard MeshWarpGrid.trianglesValid(pointColumns: mesh.pointColumns, pointRows: mesh.pointRows,
+                                          positions: trial) else {
+            lastWarning = "Resetting the selection would fold the mesh."
+            return false
+        }
+        mesh.positions = trial
+        history.push(before)
+        refreshPreview(waitForGPU: true)
+        return true
     }
 }
 
@@ -148,15 +253,18 @@ extension EditorSession {
 
     func setMeshWarpPreset(_ preset: MeshWarpGrid.Preset) {
         guard let edit = meshWarpEdit else { return }
+        let before = edit.snapshot()
         let sticky = edit.mesh.stickyBorders
         let propagation = edit.mesh.propagation
         guard let mesh = MeshWarpGrid.identity(pointColumns: preset.rawValue, pointRows: preset.rawValue,
                                                stickyBorders: sticky, propagation: propagation) else { return }
         edit.mesh = mesh
+        edit.selection.clear()
         edit.selectedIndex = nil
         edit.previewImage = nil
         edit.previewCIImage = nil
         edit.lastWarning = nil
+        edit.history.push(before)
         brushRevision += 1
     }
 
@@ -173,6 +281,16 @@ extension EditorSession {
     func resetMeshWarp() {
         meshWarpEdit?.resetMesh()
         brushRevision += 1
+    }
+
+    func meshWarpToolUndo() {
+        guard let edit = meshWarpEdit else { return }
+        if edit.toolUndo() { brushRevision += 1 }
+    }
+
+    func meshWarpToolRedo() {
+        guard let edit = meshWarpEdit else { return }
+        if edit.toolRedo() { brushRevision += 1 }
     }
 
     /// Commits the warped pixels into the layer as one undo step.
@@ -225,17 +343,24 @@ extension EditorSession {
         return edit.mesh.hitTest(uv: uv, radius: max(radius, 0.01))
     }
 
-    func meshWarpBeginDrag(at documentPoint: CGPoint, viewRadius: CGFloat, viewportScale: CGFloat) -> Bool {
+    func meshWarpBeginDrag(at documentPoint: CGPoint, viewRadius: CGFloat, viewportScale: CGFloat,
+                           shift: Bool = false) -> Bool {
         guard let edit = meshWarpEdit else { return false }
         guard let index = meshWarpHitTest(documentPoint: documentPoint, viewRadius: viewRadius, viewportScale: viewportScale)
         else { return false }
-        if edit.mesh.stickyBorders, edit.mesh.isBorder(index) {
-            edit.lastWarning = "Sticky Borders keeps edge points fixed."
+        if edit.mesh.stickyBorders, edit.mesh.isCorner(index) {
+            edit.lastWarning = "Sticky Borders keeps corner points fixed."
             brushRevision += 1
             return false
         }
+        if shift {
+            edit.selection.toggle(index: index)
+        } else if !edit.selection.contains(index: index) {
+            edit.selection.selectOnly(index: index)
+        }
         edit.selectedIndex = index
         edit.lastWarning = nil
+        edit.beginGesture()
         brushRevision += 1
         return true
     }
@@ -243,7 +368,15 @@ extension EditorSession {
     func meshWarpDrag(to documentPoint: CGPoint) {
         guard let edit = meshWarpEdit, let index = edit.selectedIndex,
               let uv = meshWarpUV(documentPoint: documentPoint) else { return }
-        if !edit.mesh.tryMove(index: index, to: uv) {
+        let ok: Bool
+        if edit.selection.count > 1, edit.selection.contains(index: index),
+           let base = edit.gestureBasePositions {
+            let translation = uv - base[index]
+            ok = edit.transformSelection(mode: .move, translation: translation)
+        } else {
+            ok = edit.moveSelected(toPrimaryDestination: uv, primary: index)
+        }
+        if !ok {
             edit.lastWarning = "That move would fold the mesh."
             brushRevision += 1
             return
@@ -254,7 +387,35 @@ extension EditorSession {
     }
 
     func meshWarpEndDrag() {
-        meshWarpEdit?.refreshPreview(waitForGPU: true)
+        guard let edit = meshWarpEdit else { return }
+        edit.endGesture()
+        edit.refreshPreview(waitForGPU: true)
+        brushRevision += 1
+    }
+
+    func meshWarpSelectAll() {
+        guard let edit = meshWarpEdit else { return }
+        edit.selection.selectAll(pointCount: edit.mesh.pointCount)
+        edit.selectedIndex = edit.selection.indices.sorted().first
+        brushRevision += 1
+    }
+
+    func meshWarpClearSelection() {
+        guard let edit = meshWarpEdit else { return }
+        edit.selection.clear()
+        edit.selectedIndex = nil
+        brushRevision += 1
+    }
+
+    func meshWarpSelectMarquee(documentRect: CGRect, additive: Bool) {
+        guard let edit = meshWarpEdit else { return }
+        let inverse = edit.transform.unitToDocument.inverted()
+        let a = documentRect.origin.applying(inverse)
+        let b = CGPoint(x: documentRect.maxX, y: documentRect.maxY).applying(inverse)
+        let uvRect = CGRect(x: min(a.x, b.x), y: min(a.y, b.y),
+                            width: abs(a.x - b.x), height: abs(a.y - b.y))
+        edit.selection.selectMarquee(uvRect: uvRect, mesh: edit.mesh, additive: additive)
+        edit.selectedIndex = edit.selection.indices.sorted().first
         brushRevision += 1
     }
 }

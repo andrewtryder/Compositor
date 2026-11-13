@@ -113,12 +113,17 @@ struct MeshWarpTests {
                 || before[mid + 2] != after[mid + 2] || before[mid + 3] != after[mid + 3])
     }
 
-    @Test func stickyBordersRejectEdgeMovesAndKeepEdgeSamples() throws {
+    @Test func stickyBordersPinCornersAllowEdgeSlideAndKeepCornerSamples() throws {
         var sticky = MeshWarpGrid.identity(preset: .points8, stickyBorders: true, propagation: 0)
-        let border = sticky.index(column: 0, row: sticky.pointRows / 2)
-        let rejected = sticky.tryMove(index: border, to: SIMD2(0.2, sticky.positions[border].y))
-        #expect(!rejected)
+        let corner = sticky.index(column: 0, row: 0)
+        let cornerRejected = sticky.tryMove(index: corner, to: SIMD2(0.2, 0.2))
+        #expect(!cornerRejected)
         #expect(sticky.isIdentity)
+
+        let border = sticky.index(column: 0, row: sticky.pointRows / 2)
+        let slid = sticky.tryMove(index: border, to: SIMD2(0.2, 0.55))
+        #expect(slid)
+        #expect(abs(sticky.positions[border].x) < 1e-6)
 
         var free = MeshWarpGrid.identity(preset: .points8, stickyBorders: false, propagation: 0)
         let freed = free.tryMove(index: border, to: SIMD2(0.05, free.positions[border].y))
