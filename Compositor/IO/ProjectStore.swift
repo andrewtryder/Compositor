@@ -467,6 +467,7 @@ actor ProjectStore {
                 }
             }
             // Persistent RAW source: read the original immutable bytes back from the package.
+// RAW bytes are stored as-is; they are only decoded when a develop is actually requested.
             if let rawRecord = layer.rawDevelopment {
                 let sourceFile = url.appendingPathComponent("images").appendingPathComponent(rawRecord.sourceFile)
                 try checkFile(sourceFile, inside: url, maximumBytes: RawDevelopmentLimits.maxRawSourceBytes)
@@ -477,29 +478,24 @@ actor ProjectStore {
                       type.conforms(to: .rawImage) else {
                     throw ProjectError.invalid
                 }
-                // Validate the format with the available decoder.
-                guard let cgSource = CGImageSourceCreateWithData(rawData as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-                      let props = CGImageSourceCopyPropertiesAtIndex(cgSource, 0, nil) as? [CFString: Any],
-                      let width = props[kCGImagePropertyPixelWidth] as? Int,
-                      let height = props[kCGImagePropertyPixelHeight] as? Int,
-                      width > 0, height > 0 else {
-                    throw ProjectError.invalid
+                // Preserve the original sourceID from the package filename so identity survives reload
+                // across duplicate layers, saves, and reopens. Format: <sourceID>.raw-source.<ext>
+                let sourceID: UUID
+                let fileBase = rawRecord.sourceFile.components(separatedBy: ".").first ?? ""
+                if let fileID = UUID(uuidString: fileBase) {
+                    sourceID = fileID
+                } else {
+                    sourceID = layer.id
                 }
-                // Build camera metadata where available.
-                var metadata: [String: Any] = [:]
-                if let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] {
-                    metadata["Exif"] = exif
-                }
-                if let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
-                    metadata["TIFF"] = tiff
-                }
-                let sourceAsset = RawSourceAsset(sourceID: layer.id,
+                // Dimensions and metadata come from the persisted record; decoder validation
+                // happens at develop time, not load time (raw bytes may not be decodable yet).
+                let sourceAsset = RawSourceAsset(sourceID: sourceID,
                                                  rawData: rawData,
                                                  fileExtension: ext,
                                                  utType: type.identifier,
-                                                 pixelWidth: width,
-                                                 pixelHeight: height,
-                                                 cameraMetadata: metadata,
+                                                 pixelWidth: rawRecord.developedWidth > 0 ? rawRecord.developedWidth : 0,
+                                                 pixelHeight: rawRecord.developedHeight > 0 ? rawRecord.developedHeight : 0,
+                                                 cameraMetadata: [:],
                                                  asShotSettings: rawRecord.settings.makeSettings())
                 rawSources[layer.id] = sourceAsset
             }
@@ -636,11 +632,14 @@ actor ProjectStore {
             }
             // Persistent RAW source arrived in version 25.
             if let raw = layer.rawDevelopment {
-                guard manifest.version >= 25, layer.imageFile != nil, layer.isGroup != true,
+                guard manifest.version >= 25, layer.isGroup != true,
                       layer.adjustment == nil, layer.gif == nil else { throw ProjectError.invalid }
                 guard raw.settings.isValid() else { throw ProjectError.invalid }
-                let expectedSource = "\(layer.id.uuidString).raw-source.\(raw.sourceFile.components(separatedBy: ".").last ?? "")"
-                guard raw.sourceFile.hasPrefix(layer.id.uuidString) else { throw ProjectError.invalid }
+                // sourceFile format: <sourceID>.raw-source.<ext> where sourceID is a UUID
+                // (which itself contains hyphens), so check from the end.
+                let components = raw.sourceFile.components(separatedBy: ".")
+                guard components.count >= 3,
+                      components[components.count - 2] == "raw-source" else { throw ProjectError.invalid }
             }
             // Layer masks arrived in version 4, folder masks in version 6.
             guard layer.maskFile == nil || (manifest.version >= (layer.isGroup == true ? 6 : 4)

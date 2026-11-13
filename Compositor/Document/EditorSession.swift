@@ -860,8 +860,6 @@ var rawImporting = false
         if let lensCorrection { draft.settings.lensCorrection = lensCorrection }
         if let highlightRecovery { draft.settings.highlightRecovery = highlightRecovery }
         rawDrafts[layerID] = draft
-        // Persist the draft settings to the layer so undo/redo captures the change.
-        document?.layers[index].rawDevelopment = draft
         return true
     }
 
@@ -913,9 +911,24 @@ var rawImporting = false
         do { asset = try DeepLayer.asset(developed, name: source.fileName()) }
         catch { return false }
 
-        // Preserve lens geometry from the source metadata.
-        asset.focalLengthMm = draft.source.cameraMetadata.isEmpty ? 0 : 0
-        asset.sensorWidthMm = 0
+        // Preserve lens geometry from the source metadata (EXIF focal length, inferred sensor width).
+        var focalLengthMm: Double = 0
+        var sensorWidthMm: Double = 0
+        if let exif = draft.source.cameraMetadata["Exif"] as? [String: Any] {
+            if let focal = exif[kCGImagePropertyExifFocalLength as String] as? Double {
+                focalLengthMm = focal
+            } else if let focal = exif[kCGImagePropertyExifFocalLength as String] as? Float {
+                focalLengthMm = Double(focal)
+            } else if let focal = exif[kCGImagePropertyExifFocalLength as String] as? Int {
+                focalLengthMm = Double(focal)
+            }
+            if let focal35 = exif[kCGImagePropertyExifFocalLenIn35mmFilm as String] as? Double,
+               focal35 > 0, focalLengthMm > 0 {
+                sensorWidthMm = 36 * focalLengthMm / focal35
+            }
+        }
+        asset.focalLengthMm = focalLengthMm
+        asset.sensorWidthMm = sensorWidthMm
 
         // Begin undo step, preserving layer identity/masks/transforms.
         beginEdit("Apply RAW Development")
