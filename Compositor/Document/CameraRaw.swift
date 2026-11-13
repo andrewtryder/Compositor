@@ -231,7 +231,13 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
                 source = try Self.applyLensDistort(source, k: distortionK)
                 earlyDistortion = true
             }
-            source = try settings.geometry.apply(source)
+            // Expand to Fit needs FilterEdit to grow the layer and remapping; until that lands, the
+            // Camera Raw filter path keeps the original footprint. Geometry unit tests call apply directly.
+            var geometry = settings.geometry
+            if geometry.framingMode == .expandToFit {
+                geometry.framingMode = .keepOriginalSize
+            }
+            source = try geometry.apply(source)
         }
         func applyTable(_ table: [Float]?, pixels: UnsafeMutablePointer<UInt8>, width: Int, height: Int, stride: Int, clipping: Int32) {
             if usesGPU, clipping == 0, let table,
