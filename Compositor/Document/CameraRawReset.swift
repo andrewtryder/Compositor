@@ -87,7 +87,12 @@ nonisolated extension CameraRawSettings {
         case .grading: target.grading = source.grading
         case .detail: target.detail = source.detail
         case .optics: target.optics = source.optics
-        case .geometry: target.geometry = source.geometry
+        case .geometry:
+            target.geometry = source.geometry
+            target.horizon = source.horizon
+            target.perspectiveTools = source.perspectiveTools
+            target.miniature = source.miniature
+            target.automaticHorizonAngle = source.automaticHorizonAngle
         case .calibration: target.calibration = source.calibration
         }
     }

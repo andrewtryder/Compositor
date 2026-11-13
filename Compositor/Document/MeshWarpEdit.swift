@@ -302,8 +302,8 @@ extension EditorSession {
             brushError = paintRefusal
             return
         }
-        if layer.gifAnimation != nil {
-            brushError = "ReShape cannot edit an animated GIF layer. Rasterize the frame first."
+        if let refusal = reshapeRefusal(for: layer) {
+            brushError = refusal.reason
             return
         }
         let sourceAsset: ImportedImage
@@ -318,14 +318,6 @@ extension EditorSession {
             else { return }
             mesh = identity
         } else {
-            return
-        }
-        if sourceAsset.deep != nil || DeepLayer.isHDR(sourceAsset.image) {
-            brushError = "ReShape currently supports 8-bit layers. Convert the layer to 8-bit first."
-            return
-        }
-        if sourceAsset.image.bitsPerComponent > 8 {
-            brushError = "ReShape currently supports 8-bit layers. Convert the layer to 8-bit first."
             return
         }
         pauseGIFForEditing(for: layer.id)

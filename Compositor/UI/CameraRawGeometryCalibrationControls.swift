@@ -44,6 +44,11 @@ struct CameraRawGeometryControls: View {
                 ForEach(CameraRawProjection.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .help("Perspective allows stronger keystone. Rectilinear keeps the warp gentler.")
+            amountSlider
+            Picker("Framing", selection: binding(\.framingMode)) {
+                ForEach(CameraRawFramingMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .help("Keep Original Size preserves the layer footprint. Expand to Fit grows the layer to the warped bounds without moving sibling layers.")
             let keystoneEnabled = raw.geometry.upright == .off
             geometrySlider("Vertical", \.vertical, help: "Straightens vertical lines toward the center.",
                            enabled: keystoneEnabled)
@@ -60,11 +65,11 @@ struct CameraRawGeometryControls: View {
             geometrySlider("Offset X", \.offsetX, help: "Moves the picture left or right.")
             geometrySlider("Offset Y", \.offsetY, help: "Moves the picture up or down.")
             Toggle("Constrain Crop", isOn: binding(\.constrainCrop))
-                .help("Crops empty edges after the transform and fits the result back into the frame.")
+                .help("Crops empty edges after the transform and fits the result back into the frame. Independent of Framing.")
             Button("Reset Geometry") {
                 session.resetCameraRaw(.geometry)
             }
-            .help("Clears upright, guides, volume, and framing polish. Keeps the photo’s focal length for Volume Auto.")
+            .help("Clears upright, guides, volume, Perspective Amount, and framing polish. Keeps the photo’s focal length for Volume Auto.")
 
             Text("Volume").font(.subheadline).padding(.top, 4)
             Picker("Volume Mode", selection: binding(\.volumeMode)) {
@@ -117,6 +122,30 @@ struct CameraRawGeometryControls: View {
 
     private func binding<T>(_ key: WritableKeyPath<CameraRawGeometrySettings, T>) -> Binding<T> {
         Binding(get: { raw.geometry[keyPath: key] }, set: { value in update { $0.cameraRaw.geometry[keyPath: key] = value } })
+    }
+
+    private var amountSlider: some View {
+        let enabled = raw.geometry.perspectiveAmountApplies
+        let help = "How strongly the upright or keystone correction is applied. 0% leaves perspective unchanged; 100% is full strength. Aspect, Scale, Offset, Volume, and Lens stay independent."
+        let range = CameraRawGeometrySettings.amountRange
+        let value = raw.geometry.perspectiveAmount
+        return HStack(spacing: 10) {
+            Text("Perspective Amount").frame(minWidth: CameraRawControls.labelWidth, alignment: .leading).help(help)
+                .scrubbable(sensitivity: 1,
+                            value: Binding(get: { raw.geometry.perspectiveAmount },
+                                           set: { newValue in update { $0.cameraRaw.geometry.perspectiveAmount = newValue } }),
+                            range: range)
+            CameraRawSlider(value: value, range: range, track: .plain, help: help,
+                            onChange: { rawValue in update { $0.cameraRaw.geometry.perspectiveAmount = rawValue.rounded() } },
+                            onReset: { update { $0.cameraRaw.geometry.perspectiveAmount = 100 } })
+            TextField("Perspective Amount",
+                      value: Binding(get: { raw.geometry.perspectiveAmount },
+                                     set: { newValue in update { $0.cameraRaw.geometry.perspectiveAmount = newValue } }),
+                      format: .number.precision(.fractionLength(0)))
+                .frame(width: 56).textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).help(help)
+        }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
     }
 
     private func geometrySlider(_ title: String, _ key: WritableKeyPath<CameraRawGeometrySettings, Double>,
