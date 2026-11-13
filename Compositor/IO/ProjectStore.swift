@@ -17,7 +17,7 @@ extension UTType {
 
 nonisolated struct ProjectManifest: Codable, Sendable {
     /// The format version new saves write.
-    static let current = 22
+    static let current = 23
     /// Every version `load` accepts: each one a release has written (1 through `current`), and 27 from the
     /// GIF branch's own builds. Leaving out 15 and 16 once locked out projects saved by 1.5.4 and 1.5.5.
     /// The package-header and manifest checks both read this, so they can't drift apart when `current` is bumped.
@@ -63,6 +63,8 @@ nonisolated struct ProjectLayerRecord: Codable, Sendable {
     var gif: ProjectGIFRecord? = nil
     /// Editable ReShape mesh + immutable source asset. Missing before version 22.
     var reshape: ProjectReshapeRecord? = nil
+    /// Ordered non-destructive geometry correction stack. Missing before version 23.
+    var correctionStack: ProjectCorrectionStackRecord? = nil
 }
 
 nonisolated struct ProjectReshapeRecord: Codable, Sendable {
@@ -70,6 +72,13 @@ nonisolated struct ProjectReshapeRecord: Codable, Sendable {
     let sourceFile: String
     /// `<layer UUID>.reshape.json` under `images/`.
     let meshFile: String
+}
+
+nonisolated struct ProjectCorrectionStackRecord: Codable, Sendable {
+    /// Immutable source PNG under `images/` (`<layer UUID>.corrections-source.png`, or shared reshape source).
+    let sourceFile: String
+    /// `<layer UUID>.corrections.json` under `images/`.
+    let stackFile: String
 }
 
 nonisolated struct ProjectGIFRecord: Codable, Sendable {
@@ -151,6 +160,10 @@ nonisolated struct ProjectSnapshot: @unchecked Sendable {
     var reshapeSources: [UUID: ImportedImage] = [:]
     /// Validated mesh payloads keyed by layer id.
     var reshapeMeshes: [UUID: MeshWarpPersistentState] = [:]
+    /// Immutable correction-stack sources keyed by layer id.
+    var correctionSources: [UUID: ImportedImage] = [:]
+    /// Validated correction-stack payloads keyed by layer id.
+    var correctionStacks: [UUID: LayerCorrectionStackPersistentState] = [:]
 }
 
 nonisolated enum ProjectError: LocalizedError {
@@ -180,6 +193,9 @@ actor ProjectStore {
         let reshapeIDs = Set(snapshot.manifest.layers.filter { $0.reshape != nil }.map(\.id))
         guard Set(snapshot.reshapeSources.keys) == reshapeIDs,
               Set(snapshot.reshapeMeshes.keys) == reshapeIDs else { throw ProjectError.invalid }
+        let correctionIDs = Set(snapshot.manifest.layers.filter { $0.correctionStack != nil }.map(\.id))
+        guard Set(snapshot.correctionSources.keys) == correctionIDs,
+              Set(snapshot.correctionStacks.keys) == correctionIDs else { throw ProjectError.invalid }
         var images: [String: FileWrapper] = [:]
         var pixels = 0, maskPixels = 0
         var gifBytes = 0, thumbnailPixels = 0
@@ -205,16 +221,37 @@ actor ProjectStore {
             }
             guard data.count <= 512 * 1024 * 1024 else { throw ProjectError.tooLarge }
             if layer.gif != nil, !isMask, asset.deep != nil { throw ProjectError.invalid }
-            if layer.reshape != nil, !isMask, asset.deep != nil { throw ProjectError.invalid }
+            if layer.reshape != nil || layer.correctionStack != nil, !isMask, asset.deep != nil {
+                throw ProjectError.invalid
+            }
             images[filename] = FileWrapper(regularFileWithContents: data)
           }
+            if let correction = layer.correctionStack {
+                guard let source = snapshot.correctionSources[layer.id],
+                      let stack = snapshot.correctionStacks[layer.id],
+                      let display = snapshot.images[layer.id]?.image else { throw ProjectError.missingImage }
+                try validateCorrectionStack(stack: stack, source: source, display: display,
+                                            record: correction, layerID: layer.id,
+                                            reshape: layer.reshape,
+                                            reshapeMesh: snapshot.reshapeMeshes[layer.id])
+                try checkSize(width: source.image.width, height: source.image.height, used: &pixels)
+                if images[correction.sourceFile] == nil {
+                    images[correction.sourceFile] = FileWrapper(regularFileWithContents: try pngData(source.image))
+                }
+                images[correction.stackFile] = FileWrapper(regularFileWithContents: try stack.encodedJSON())
+            }
             if let reshape = layer.reshape {
                 guard let source = snapshot.reshapeSources[layer.id],
                       let mesh = snapshot.reshapeMeshes[layer.id],
                       let display = snapshot.images[layer.id]?.image else { throw ProjectError.missingImage }
-                try validateReshape(mesh: mesh, source: source, display: display, record: reshape, layerID: layer.id)
-                try checkSize(width: source.image.width, height: source.image.height, used: &pixels)
-                images[reshape.sourceFile] = FileWrapper(regularFileWithContents: try pngData(source.image))
+                try validateReshape(mesh: mesh, source: source, display: display, record: reshape, layerID: layer.id,
+                                    allowDisplaySizeMismatch: layer.correctionStack != nil)
+                if layer.correctionStack == nil {
+                    try checkSize(width: source.image.width, height: source.image.height, used: &pixels)
+                }
+                if images[reshape.sourceFile] == nil {
+                    images[reshape.sourceFile] = FileWrapper(regularFileWithContents: try pngData(source.image))
+                }
                 let meshData = try mesh.encodedJSON()
                 images[reshape.meshFile] = FileWrapper(regularFileWithContents: meshData)
             }
@@ -288,6 +325,8 @@ actor ProjectStore {
         var animations: [UUID: GIFAnimation] = [:]
         var reshapeSources: [UUID: ImportedImage] = [:]
         var reshapeMeshes: [UUID: MeshWarpPersistentState] = [:]
+        var correctionSources: [UUID: ImportedImage] = [:]
+        var correctionStacks: [UUID: LayerCorrectionStackPersistentState] = [:]
         var pixels = 0, maskPixels = 0
         var gifBytes = 0, thumbnailPixels = 0
         for layer in manifest.layers {
@@ -332,13 +371,38 @@ actor ProjectStore {
                 return ImportedImage(image: standard, thumbnail: thumbnail, name: layer.name)
             }
             if layer.gif != nil, !isMask, asset.deep != nil { throw ProjectError.invalid }
-            if layer.reshape != nil, !isMask, asset.deep != nil { throw ProjectError.invalid }
+            if layer.reshape != nil || layer.correctionStack != nil, !isMask, asset.deep != nil {
+                throw ProjectError.invalid
+            }
             if isMask { masks[layer.id] = asset } else { images[layer.id] = asset }
           }
+            if let correction = layer.correctionStack {
+                let sourceFile = url.appendingPathComponent("images").appendingPathComponent(correction.sourceFile)
+                try checkFile(sourceFile, inside: url, maximumBytes: 512 * 1024 * 1024)
+                let source = try readPNG(sourceFile, name: layer.name, isMask: false, used: &pixels)
+                let stackFile = url.appendingPathComponent("images").appendingPathComponent(correction.stackFile)
+                try checkFile(stackFile, inside: url, maximumBytes: LayerCorrectionStack.maximumEncodedBytes)
+                let stackData = try Data(contentsOf: stackFile)
+                let stack: LayerCorrectionStackPersistentState
+                do { stack = try LayerCorrectionStackPersistentState.decode(from: stackData) }
+                catch { throw ProjectError.invalid }
+                guard let display = images[layer.id]?.image else { throw ProjectError.missingImage }
+                try validateCorrectionStack(stack: stack, source: source, display: display,
+                                            record: correction, layerID: layer.id,
+                                            reshape: layer.reshape, reshapeMesh: nil)
+                _ = try stack.makeStack(source: source)
+                correctionSources[layer.id] = source
+                correctionStacks[layer.id] = stack
+            }
             if let reshape = layer.reshape {
                 let sourceFile = url.appendingPathComponent("images").appendingPathComponent(reshape.sourceFile)
                 try checkFile(sourceFile, inside: url, maximumBytes: 512 * 1024 * 1024)
-                let source = try readPNG(sourceFile, name: layer.name, isMask: false, used: &pixels)
+                let source: ImportedImage
+                if let shared = correctionSources[layer.id], reshape.sourceFile == layer.correctionStack?.sourceFile {
+                    source = shared
+                } else {
+                    source = try readPNG(sourceFile, name: layer.name, isMask: false, used: &pixels)
+                }
                 let meshFile = url.appendingPathComponent("images").appendingPathComponent(reshape.meshFile)
                 try checkFile(meshFile, inside: url, maximumBytes: MeshWarpPersistentState.maximumEncodedBytes)
                 let meshData = try Data(contentsOf: meshFile)
@@ -346,11 +410,18 @@ actor ProjectStore {
                 do { mesh = try MeshWarpPersistentState.decode(from: meshData) }
                 catch { throw ProjectError.invalid }
                 guard let display = images[layer.id]?.image else { throw ProjectError.missingImage }
-                try validateReshape(mesh: mesh, source: source, display: display, record: reshape, layerID: layer.id)
+                try validateReshape(mesh: mesh, source: source, display: display, record: reshape, layerID: layer.id,
+                                    allowDisplaySizeMismatch: layer.correctionStack != nil)
                 // Rebuild triangulation; reject if the payload cannot become a live mesh.
                 _ = try mesh.makeGrid()
                 reshapeSources[layer.id] = source
                 reshapeMeshes[layer.id] = mesh
+                if let stack = correctionStacks[layer.id],
+                   let node = stack.nodes.first(where: { $0.kind == .reshape }),
+                   let embedded = node.mesh,
+                   embedded != mesh {
+                    throw ProjectError.invalid
+                }
             }
             guard let gif = layer.gif else { continue }
             let file = url.appendingPathComponent("images").appendingPathComponent(gif.sourceFile)
@@ -376,7 +447,8 @@ actor ProjectStore {
             animations[layer.id] = animation
         }
         return ProjectSnapshot(manifest: manifest, images: images, masks: masks, animations: animations,
-                               reshapeSources: reshapeSources, reshapeMeshes: reshapeMeshes)
+                               reshapeSources: reshapeSources, reshapeMeshes: reshapeMeshes,
+                               correctionSources: correctionSources, correctionStacks: correctionStacks)
     }
 
     private func validate(_ manifest: ProjectManifest) throws {
@@ -392,6 +464,15 @@ actor ProjectStore {
             if layer.shape?.smoothing == true {
                 guard manifest.version >= 14 else { throw ProjectError.invalid }
             }
+            if let correction = layer.correctionStack {
+                let sourceOK = correction.sourceFile == "\(layer.id.uuidString).corrections-source.png"
+                    || correction.sourceFile == "\(layer.id.uuidString).reshape-source.png"
+                guard manifest.version >= 23, layer.imageFile != nil, layer.isGroup != true,
+                      layer.adjustment == nil, layer.gif == nil, sourceOK,
+                      correction.stackFile == "\(layer.id.uuidString).corrections.json" else {
+                    throw ProjectError.invalid
+                }
+            }
             if let reshape = layer.reshape {
                 guard manifest.version >= 22, layer.imageFile != nil, layer.isGroup != true,
                       layer.adjustment == nil, layer.gif == nil,
@@ -403,7 +484,8 @@ actor ProjectStore {
             if let gif = layer.gif {
                 let identityLimit = manifest.version >= 17 ? GIFTimelineLimits.frameIdentityLimit : GIFTimelineLimits.maxFrames
                 guard manifest.version >= 17, layer.imageFile != nil, layer.isGroup != true,
-                      layer.adjustment == nil, layer.text == nil, layer.shape == nil, layer.reshape == nil,
+                      layer.adjustment == nil, layer.text == nil, layer.shape == nil,
+                      layer.reshape == nil, layer.correctionStack == nil,
                       gif.sourceFile == "\(layer.id.uuidString).gif",
                       (0..<identityLimit).contains(gif.selectedFrameIndex),
                       gif.geometry.map(\.isValid) ?? true else { throw ProjectError.invalid }
@@ -523,17 +605,57 @@ actor ProjectStore {
     }
 
     private func validateReshape(mesh: MeshWarpPersistentState, source: ImportedImage, display: CGImage,
-                                 record: ProjectReshapeRecord, layerID: UUID) throws {
+                                 record: ProjectReshapeRecord, layerID: UUID,
+                                 allowDisplaySizeMismatch: Bool = false) throws {
+        let displayOK = allowDisplaySizeMismatch
+            || (display.width == mesh.imageWidth && display.height == mesh.imageHeight)
         guard record.sourceFile == "\(layerID.uuidString).reshape-source.png",
               record.meshFile == "\(layerID.uuidString).reshape.json",
               source.deep == nil, source.image.bitsPerComponent <= 8, !DeepLayer.isHDR(source.image),
               source.image.width == mesh.imageWidth, source.image.height == mesh.imageHeight,
-              display.width == mesh.imageWidth, display.height == mesh.imageHeight,
+              displayOK,
               mesh.schemaVersion == MeshWarpPersistentState.schemaVersion else {
             throw ProjectError.invalid
         }
         // Ensure the payload reconstructs; triangulation is derived, not trusted from disk.
         do { _ = try mesh.makeGrid() } catch { throw ProjectError.invalid }
+    }
+
+    private func validateCorrectionStack(stack: LayerCorrectionStackPersistentState,
+                                         source: ImportedImage, display: CGImage,
+                                         record: ProjectCorrectionStackRecord, layerID: UUID,
+                                         reshape: ProjectReshapeRecord?,
+                                         reshapeMesh: MeshWarpPersistentState?) throws {
+        let sourceOK = record.sourceFile == "\(layerID.uuidString).corrections-source.png"
+            || record.sourceFile == "\(layerID.uuidString).reshape-source.png"
+        guard record.stackFile == "\(layerID.uuidString).corrections.json", sourceOK,
+              source.deep == nil, source.image.bitsPerComponent <= 8, !DeepLayer.isHDR(source.image),
+              source.image.width == stack.sourceWidth, source.image.height == stack.sourceHeight,
+              stack.schemaVersion == LayerCorrectionStackPersistentState.schemaVersion,
+              !stack.nodes.isEmpty, stack.nodes.count <= LayerCorrectionStack.maximumNodes else {
+            throw ProjectError.invalid
+        }
+        do {
+            let live = try stack.makeStack(source: source)
+            // Display size must match a fresh render for dimension-preserving stacks.
+            let rendered = try LayerCorrectionRenderer.renderCopy(live)
+            guard rendered.image.width == display.width, rendered.image.height == display.height else {
+                throw ProjectError.invalid
+            }
+            if let reshape, let reshapeMesh {
+                guard let node = stack.nodes.first(where: { $0.kind == .reshape }),
+                      let embedded = node.mesh,
+                      embedded == reshapeMesh,
+                      reshape.sourceFile == "\(layerID.uuidString).reshape-source.png" else {
+                    throw ProjectError.invalid
+                }
+            } else if stack.nodes.contains(where: { $0.kind == .reshape }) {
+                // Reshape dual-write is required when a reshape node is present.
+                guard reshape != nil else { throw ProjectError.invalid }
+            }
+        } catch {
+            throw ProjectError.invalid
+        }
     }
 
     private func validateAnimation(_ animation: GIFAnimation, record: ProjectGIFRecord, image: CGImage) throws {

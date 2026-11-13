@@ -271,7 +271,8 @@ extension EditorSession {
                 mask: original.mask, maskSourceID: original.maskSourceID.map { mapping[$0] ?? $0 },
                 adjustment: original.adjustment, shape: original.shape, effects: original.effects, text: original.text,
                 gifAnimation: currentGIFAnimation(for: original),
-                reshape: original.reshape)
+                reshape: original.reshape,
+                correctionStack: original.correctionStack)
         }
         document?.layers.insert(contentsOf: copies, at: index + 1)
         for original in originals where collapsedGroupIDs.contains(original.id) {

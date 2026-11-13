@@ -328,8 +328,9 @@ struct UnifiedGeometryBackendTests {
 
     // 18
     @Test func projectV22Serialization() throws {
-        #expect(ProjectManifest.current == 22)
+        #expect(ProjectManifest.current >= 22)
         #expect(ProjectManifest.supported.contains(22))
+        #expect(ProjectManifest.supported.contains(23))
         #expect(ProjectManifest.supported.contains(21))
         #expect(ProjectManifest.supported.contains(27))
     }

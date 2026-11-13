@@ -292,6 +292,9 @@ extension EditorSession {
 
     /// Message when a destructive pixel edit would discard editable ReShape state.
     func reshapeDestructiveRefusal(for layer: ImageLayer) -> String? {
+        if layer.correctionStack != nil {
+            return "“\(layer.name)” has an editable geometry correction stack. Bake corrections before painting or applying filters."
+        }
         guard layer.reshape != nil else { return nil }
         return "“\(layer.name)” has an editable ReShape mesh. Bake ReShape before painting or applying filters."
     }
@@ -308,7 +311,33 @@ extension EditorSession {
         }
         let sourceAsset: ImportedImage
         let mesh: MeshWarpGrid
-        if let reshape = layer.reshape {
+        if let stack = layer.correctionStack {
+            // Open on the reshape node's input stage (upstream corrections rendered from immutable source).
+            if let reshapeNode = stack.nodes.first(where: { $0.kind == .reshape }), let existing = reshapeNode.mesh {
+                do {
+                    var upstream = stack
+                    if let idx = stack.nodes.firstIndex(where: { $0.id == reshapeNode.id }) {
+                        upstream.nodes = Array(stack.nodes.prefix(idx))
+                    }
+                    let stage = try LayerCorrectionRenderer.renderCopy(upstream)
+                    let thumb = try PixelAdjust.thumbnail(of: stage.image)
+                    sourceAsset = ImportedImage(image: stage.image, thumbnail: thumb, name: layer.name)
+                    mesh = existing
+                } catch {
+                    brushError = error.localizedDescription
+                    return
+                }
+            } else if let asset = layer.asset {
+                // Stack without reshape yet: start identity mesh on current display stage.
+                sourceAsset = ImportedImage(image: asset.image, thumbnail: asset.thumbnail, name: layer.name)
+                guard let identity = MeshWarpGrid.identity(pointColumns: preset.rawValue, pointRows: preset.rawValue,
+                                                           stickyBorders: true, propagation: 0.25)
+                else { return }
+                mesh = identity
+            } else {
+                return
+            }
+        } else if let reshape = layer.reshape {
             sourceAsset = reshape.source
             mesh = reshape.mesh
         } else if let asset = layer.asset {
@@ -339,12 +368,28 @@ extension EditorSession {
 
     /// Clears editable mesh state, keeping the current rendered layer pixels as the new source.
     /// One document-history entry. Required before painting or filters on a ReShape layer.
+    /// Multi-node correction stacks bake every node (`Bake Corrections`); reshape-only keeps the
+    /// historical `Bake ReShape` undo name.
     func bakeReshape(layerID: UUID? = nil) {
         let id = layerID ?? activeLayerID
         guard canEditLayers, let id,
               let index = document?.layers.firstIndex(where: { $0.id == id }),
-              var layer = document?.layers[index],
-              layer.reshape != nil else { return }
+              var layer = document?.layers[index] else { return }
+        if let stack = layer.correctionStack {
+            if stack.nodes.count > 1 || stack.hasCameraRawGeometry {
+                try? bakeAllCorrections(layerID: id)
+                return
+            }
+            if meshWarpEdit?.layerID == id { cancelMeshWarp() }
+            beginEdit("Bake ReShape")
+            layer.correctionStack = nil
+            layer.reshape = nil
+            document?.layers[index] = layer
+            endEdit()
+            brushRevision += 1
+            return
+        }
+        guard layer.reshape != nil else { return }
         if meshWarpEdit?.layerID == id { cancelMeshWarp() }
         beginEdit("Bake ReShape")
         layer.reshape = nil
@@ -405,20 +450,24 @@ extension EditorSession {
             return
         }
         if edit.mesh.isIdentity {
-            // Identity with prior persistent mesh: restore source as display and clear reshape.
-            if layer.reshape != nil {
-                let source = ImportedImage(image: edit.originalImage, thumbnail: edit.originalThumbnail,
-                                           name: layer.name)
-                do {
+            // Identity mesh: remove reshape node / legacy reshape; keep other stack nodes.
+            do {
+                if let stack = layer.correctionStack,
+                   let reshapeID = stack.nodes.first(where: { $0.kind == .reshape })?.id {
+                    try removeCorrection(nodeID: reshapeID, layerID: layer.id)
+                } else if layer.reshape != nil {
+                    let source = ImportedImage(image: edit.originalImage, thumbnail: edit.originalThumbnail,
+                                               name: layer.name)
                     var edited = try layerByEditingPixels(layer, asset: source, transform: layer.transform, mask: layer.mask)
                     edited.reshape = nil
+                    edited.correctionStack = nil
                     beginEdit("ReShape")
                     document?.layers[index] = edited
                     endEdit()
-                } catch {
-                    brushError = error.localizedDescription
-                    return
                 }
+            } catch {
+                brushError = error.localizedDescription
+                return
             }
             edit.gpuSessionInvalidate()
             meshWarpEdit = nil
@@ -433,13 +482,22 @@ extension EditorSession {
             return
         }
         let display = ImportedImage(image: warped, thumbnail: thumbnail, name: layer.name)
-        let source = ImportedImage(image: edit.originalImage, thumbnail: edit.originalThumbnail, name: layer.name)
+        let editSource = ImportedImage(image: edit.originalImage, thumbnail: edit.originalThumbnail, name: layer.name)
+        // Immutable stack source (preferred) or legacy reshape / edit image.
+        let source = layer.correctionStack?.source
+            ?? layer.reshape?.source
+            ?? editSource
         // Retain both display and source against the document budget.
         let used = (document?.layers ?? []).reduce(0) { total, candidate in
             let assetPixels = candidate.id == layer.id ? 0
                 : (candidate.asset.map { $0.image.width * $0.image.height } ?? 0)
-            let reshapePixels = candidate.id == layer.id ? 0
-                : (candidate.reshape.map { $0.source.image.width * $0.source.image.height } ?? 0)
+            let reshapePixels: Int = {
+                if candidate.id == layer.id { return 0 }
+                if let stack = candidate.correctionStack {
+                    return stack.source.image.width * stack.source.image.height
+                }
+                return candidate.reshape.map { $0.source.image.width * $0.source.image.height } ?? 0
+            }()
             let frames = candidate.gifAnimation?.framePixels.values
                 .reduce(0) { $0 + $1.image.width * $1.image.height } ?? 0
             return total + assetPixels + reshapePixels + frames
@@ -450,16 +508,16 @@ extension EditorSession {
             brushError = "ReShape source and result exceed this project’s \(DocumentLimits.documentBudgetMegapixels)-megapixel limit."
             return
         }
+        beginEdit("ReShape")
         do {
-            var edited = try layerByEditingPixels(layer, asset: display, transform: layer.transform, mask: layer.mask)
-            edited.reshape = LayerReshape(mesh: edit.mesh, source: source)
-            beginEdit("ReShape")
-            document?.layers[index] = edited
+            try applyMeshWarpIntoCorrectionStack(edit: edit, mesh: edit.mesh, display: display,
+                                                 source: source, layer: layer, index: index)
             endEdit()
             edit.gpuSessionInvalidate()
             meshWarpEdit = nil
             brushRevision += 1
         } catch {
+            endEdit()
             brushError = error.localizedDescription
         }
     }

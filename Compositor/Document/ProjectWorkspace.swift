@@ -261,21 +261,31 @@ final class ProjectWorkspace {
             var copy = layer
             copy.asset = snapshot.images[layer.id]
             copy.gifAnimation = snapshot.animations[layer.id]
-            if let mesh = snapshot.reshapeMeshes[layer.id], let source = snapshot.reshapeSources[layer.id] {
+            if let persistent = snapshot.correctionStacks[layer.id],
+               let source = snapshot.correctionSources[layer.id],
+               let stack = try? persistent.makeStack(source: source) {
+                copy.correctionStack = stack
+                copy.reshape = stack.projectedReshape
+            } else if let mesh = snapshot.reshapeMeshes[layer.id], let source = snapshot.reshapeSources[layer.id] {
                 copy.reshape = LayerReshape(persistent: mesh, source: source)
+                copy.correctionStack = LayerCorrectionStack.fromReshape(copy.reshape!)
             } else {
                 copy.reshape = nil
+                copy.correctionStack = nil
             }
             return copy
         }
-        let used = target.session.document?.layers.reduce(0) {
-            $0 + ($1.asset.map { $0.image.width * $0.image.height } ?? 0)
-                + ($1.reshape.map { $0.source.image.width * $0.source.image.height } ?? 0)
-        } ?? 0
-        let added = copied.reduce(0) {
-            $0 + ($1.asset.map { $0.image.width * $0.image.height } ?? 0)
-                + ($1.reshape.map { $0.source.image.width * $0.source.image.height } ?? 0)
+        func sourcePixels(_ layer: ImageLayer) -> Int {
+            let source = layer.correctionStack?.source ?? layer.reshape?.source
+            guard let source else { return 0 }
+            return source.image.width * source.image.height
         }
+        func assetPixels(_ layer: ImageLayer) -> Int {
+            guard let asset = layer.asset else { return 0 }
+            return asset.image.width * asset.image.height
+        }
+        let used = target.session.document?.layers.reduce(0) { $0 + assetPixels($1) + sourcePixels($1) } ?? 0
+        let added = copied.reduce(0) { $0 + assetPixels($1) + sourcePixels($1) }
         guard used + added <= DocumentLimits.documentPixelBudget else { target.session.importError = "The copied layers exceed this project’s \(DocumentLimits.documentBudgetMegapixels)-megapixel limit."; return }
         guard target.session.canRetainGIFSources(in: (target.session.document?.layers ?? []) + copied) else {
             target.session.importError = "The copied GIFs exceed this project’s animation memory limit."

@@ -63,16 +63,15 @@ nonisolated enum UnifiedGeometryBackend {
     /// Composition order for Camera Raw full-resolution apply (unchanged from geometry backend).
     static var cameraRawCompositionOrder: [String] { CameraRawGeometryBackend.compositionOrder }
 
-    /// Future non-destructive stack (not implemented): per-layer ordered correction nodes that
-    /// reference an immutable source, regenerate display caches, and serialize without baking.
-    /// Would need: Smart-Filter-like nodes, dependency invalidation, deep/HDR ReShape, and a
-    /// shared preview scheduler. Until then, Camera Raw on an editable mesh requires Bake.
+    /// Non-destructive stack (M8.7): `LayerCorrectionStack` on the layer stores ordered geometry
+    /// nodes (Camera Raw geometry family + ReShape), always renders from an immutable source,
+    /// invalidates downstream stage caches on edits, and round-trips in project format v23.
+    /// Full Camera Raw color-grade Smart Filters, deep/HDR ReShape, and Expand+ReShape remapping
+    /// remain out of scope; Expand to Fit with ReShape is refused explicitly.
     static let futureNonDestructiveStackNotes = """
-    A future stack would store ordered correction nodes on the layer (Camera Raw settings, \
-    ReShape mesh, Miniature, …), always render from an immutable source, invalidate display \
-    caches on node edits, and round-trip nodes in the project package. Deep/HDR mesh sampling \
-    and a shared GPU preview scheduler are prerequisites. This milestone keeps domains separate \
-    and requires an explicit Bake before destructive Camera Raw on a persistent ReShape layer.
+    LayerCorrectionStack supports Camera Raw geometry ↔ ReShape coexistence with dimension-preserving \
+    framing. Destructive Filters/painting still require Bake. Deep/HDR stacks and Expand+ReShape \
+    remapping are not implemented.
     """
 }
 
@@ -96,8 +95,14 @@ extension EditorSession {
         return .eightBit
     }
 
-    /// Camera Raw (including Expand / Horizon / tools / Miniature) on an editable ReShape layer.
+    /// Destructive Camera Raw filter path on an editable correction stack / ReShape layer.
+    /// Non-destructive stack edits use `editCorrection` / `addCorrection` instead.
     func cameraRawRefusal(for layer: ImageLayer) -> UnifiedGeometryBackend.Refusal? {
+        if layer.correctionStack != nil {
+            return UnifiedGeometryBackend.Refusal(
+                reason: "“\(layer.name)” has an editable geometry correction stack. Edit the Camera Raw geometry node, or Bake corrections before applying the Camera Raw filter.",
+                requiresBake: true)
+        }
         if let message = reshapeDestructiveRefusal(for: layer) {
             return UnifiedGeometryBackend.Refusal(reason: message, requiresBake: true)
         }
