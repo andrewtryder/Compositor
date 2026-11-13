@@ -48,10 +48,7 @@ struct CameraRawGeometryControls: View {
             Picker("Framing", selection: binding(\.framingMode)) {
                 ForEach(CameraRawFramingMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
-            .help("Keep Original Size preserves the layer footprint. Expand to Fit grows to the warped bounds once layer integration is ready.")
-            .disabled(true)
-            Text("Expand to Fit is reserved until the filter can grow the layer safely. Keep Original Size is always used.")
-                .font(.caption).foregroundStyle(.secondary)
+            .help("Keep Original Size preserves the layer footprint. Expand to Fit grows the layer to the warped bounds without moving sibling layers.")
             let keystoneEnabled = raw.geometry.upright == .off
             geometrySlider("Vertical", \.vertical, help: "Straightens vertical lines toward the center.",
                            enabled: keystoneEnabled)
