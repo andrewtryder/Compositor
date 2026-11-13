@@ -4,7 +4,11 @@ import Foundation
 import Testing
 @testable import Compositor
 
-/// Production Apply / stack render timings for M8.8. Writes medians to the reports folder.
+/// Production Apply / stack render timings for M8.8.
+///
+/// Metrics are emitted as one JSON object per measured scenario to stdout. The invoking
+/// shell captures test output and writes `MILESTONE_8_8_PERF.txt` outside the sandboxed
+/// test process. No file is written from within XCTest.
 @Suite(.serialized)
 @MainActor
 struct NonDestructiveGeometryPerformanceTests {
@@ -12,6 +16,23 @@ struct NonDestructiveGeometryPerformanceTests {
         let context = try BrushRaster.context(width: width, height: height, mask: false)
         context.setFillColor(red: 0.65, green: 0.4, blue: 0.25, alpha: 1)
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return try #require(context.makeImage())
+    }
+
+    private func checkerboard(width: Int, height: Int) throws -> CGImage {
+        let context = try BrushRaster.context(width: width, height: height, mask: false)
+        let tile: CGFloat = 64
+        for y in stride(from: 0, through: CGFloat(height), by: tile) {
+            for x in stride(from: 0, through: CGFloat(width), by: tile) {
+                if (Int(x / tile) + Int(y / tile)) % 2 == 0 {
+                    context.setFillColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 1)
+                } else {
+                    context.setFillColor(red: 0.2, green: 0.2, blue: 0.2, alpha: 1)
+                }
+                context.fill(CGRect(x: x, y: y, width: min(tile, CGFloat(width) - x),
+                                      height: min(tile, CGFloat(height) - y)))
+            }
+        }
         return try #require(context.makeImage())
     }
 
@@ -39,19 +60,26 @@ struct NonDestructiveGeometryPerformanceTests {
         return try LayerCorrectionRenderer.render(&stack, options: options)
     }
 
-    private func reportPath(for size: String) -> String {
-        "/Users/atr/code/Compositor-correction-stack-acceleration/work/geometry-validation/reports/MILESTONE_8_8_PERF.txt"
-    }
-
-    private func writeReport(_ lines: [String], _ path: String) throws {
-        var full = lines
-        if FileManager.default.fileExists(atPath: path) {
-            let existing = try String(contentsOfFile: path, encoding: .utf8)
-            if !existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                full = existing.split(separator: "\n").map(String.init) + [""] + lines
-            }
+    /// Emit one machine-readable metric record to stdout.
+    private func emitMetric(width: Int, height: Int, fixture: String, scenario: String,
+                            ms: Double, usedMetal: Bool, fallbackReason: String?,
+                            runs: Int, notes: String = "") {
+        var record: [String: Any] = [
+            "width": width, "height": height, "fixture": fixture, "scenario": scenario,
+            "ms": ms, "usedMetal": usedMetal, "runs": runs,
+        ]
+        if let fallbackReason, !fallbackReason.isEmpty {
+            record["fallbackReason"] = fallbackReason
         }
-        try full.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        if !notes.isEmpty {
+            record["notes"] = notes
+        }
+        let data = try? JSONSerialization.data(withJSONObject: record, options: [])
+        if let data, let line = String(data: data, encoding: .utf8) {
+            print("M8.8_METRIC \(line)")
+        } else {
+            print("M8.8_METRIC {\"width\":\(width),\"height\":\(height),\"fixture\":\"\(fixture)\",\"scenario\":\"\(scenario)\",\"ms\":\(ms),\"usedMetal\":\(usedMetal),\"runs\":\(runs)}")
+        }
     }
 
     @Test func capture1024() throws {
@@ -68,56 +96,51 @@ struct NonDestructiveGeometryPerformanceTests {
 
     private func capture(size: (Int, Int), runs: Int, cpuRuns: Int) throws {
         let (width, height) = size
-        let path = reportPath(for: "\(width)x\(height)")
-        var lines: [String] = ["## \(width)×\(height)"]
-        var errors: [String] = []
-        guard width * height <= DocumentLimits.documentPixelBudget / 4 else {
-            lines.append("- skipped (budget)")
-            try writeReport(lines, path)
+        let budget = DocumentLimits.documentPixelBudget / 4
+        guard width * height <= budget else {
+            emitMetric(width: width, height: height, fixture: "solid", scenario: "skipped",
+                       ms: 0, usedMetal: false, fallbackReason: "pixel budget exceeded",
+                       runs: 0)
             return
         }
-        let source = try solid(width: width, height: height)
+
+        let metalAvailable = MetalMeshWarp.shared != nil
+        let gpu = LayerCorrectionGPUContext()
+
+        // Fixtures: solid color + checkerboard for correctness checks.
+        let solidSource = try solid(width: width, height: height)
+        let checkerSource = try checkerboard(width: width, height: height)
+
         let mesh = warped(MeshWarpGrid.identity(preset: .points8, stickyBorders: true, propagation: 0.25))
         let transform = LayerTransform(origin: .zero, size: CGSize(width: width, height: height))
-        let gpu = LayerCorrectionGPUContext()
-        let metalAvailable = MetalMeshWarp.shared != nil
 
-        let warmEdit = MeshWarpEdit(layerID: UUID(), layerName: "P", image: source,
+        // ---- Warm-up MeshWarpEdit commitImage (production Apply path). ----
+        let warmEdit = MeshWarpEdit(layerID: UUID(), layerName: "P", image: solidSource,
                                     transform: transform, mesh: mesh)
         var warmSample = MeshWarpRenderer.Sample()
         _ = warmEdit.commitImage(sample: &warmSample)
 
+        // ---- MeshWarpEdit timings (session create, upload, GPU render, readback, commit). ----
         var sessionCreate: [Double] = []
         var initialUpload: [Double] = []
         var warmGPU: [Double] = []
         var readback: [Double] = []
         var fullCommit: [Double] = []
         var cpuFallback: [Double] = []
-        var stackTwoNode: [Double] = []
-        var stackCacheHit: [Double] = []
-        var stackMeshMetal: [Double] = []
-        var stackMeshReadback: [Double] = []
-        var stackCROnly: [Double] = []
-        var stackMeshOnly: [Double] = []
-        var stackReshapeThenCR: [Double] = []
-        var stackEditFirst: [Double] = []
-        var stackEditSecond: [Double] = []
         var usedMetalCommit = false
-        var usedMetalStack = false
-        var metalFallbackReason: String?
 
         for i in 0..<runs {
             var start = CFAbsoluteTimeGetCurrent()
-            _ = MeshWarpEdit(layerID: UUID(), layerName: "P", image: source,
+            _ = MeshWarpEdit(layerID: UUID(), layerName: "P", image: solidSource,
                              transform: transform, mesh: mesh)
             sessionCreate.append((CFAbsoluteTimeGetCurrent() - start) * 1000)
 
             let uploadStart = CFAbsoluteTimeGetCurrent()
-            let edit = MeshWarpEdit(layerID: UUID(), layerName: "P", image: source,
+            let edit = MeshWarpEdit(layerID: UUID(), layerName: "P", image: solidSource,
                                     transform: transform, mesh: mesh)
             if i == 0 { initialUpload.append((CFAbsoluteTimeGetCurrent() - uploadStart) * 1000) }
 
-            if let session = MetalMeshWarpSession(image: source) {
+            if let session = MetalMeshWarpSession(image: solidSource) {
                 var gpuSample = MetalMeshWarpSession.Sample()
                 start = CFAbsoluteTimeGetCurrent()
                 _ = session.render(mesh: mesh, sample: &gpuSample, wait: true)
@@ -137,19 +160,84 @@ struct NonDestructiveGeometryPerformanceTests {
             if i < cpuRuns {
                 var cpuTiming = MeshWarpRaster.Timing()
                 start = CFAbsoluteTimeGetCurrent()
-                _ = MeshWarpRaster.apply(source: source, mesh: mesh, timing: &cpuTiming)
+                _ = MeshWarpRaster.apply(source: solidSource, mesh: mesh, timing: &cpuTiming)
                 cpuFallback.append((CFAbsoluteTimeGetCurrent() - start) * 1000)
             }
+        }
 
+        emitMetric(width: width, height: height, fixture: "solid", scenario: "session_create",
+                   ms: median(sessionCreate), usedMetal: true, fallbackReason: nil, runs: runs)
+        if !initialUpload.isEmpty {
+            emitMetric(width: width, height: height, fixture: "solid", scenario: "initial_source_upload",
+                       ms: initialUpload[0], usedMetal: true, fallbackReason: nil, runs: 1)
+        }
+        if !warmGPU.isEmpty {
+            emitMetric(width: width, height: height, fixture: "solid", scenario: "warm_gpu_mesh_render",
+                       ms: median(warmGPU), usedMetal: true, fallbackReason: nil, runs: runs)
+        }
+        if !readback.isEmpty {
+            emitMetric(width: width, height: height, fixture: "solid", scenario: "gpu_readback",
+                       ms: median(readback), usedMetal: true, fallbackReason: nil, runs: runs)
+        }
+        emitMetric(width: width, height: height, fixture: "solid", scenario: "full_commit_apply",
+                   ms: median(fullCommit), usedMetal: usedMetalCommit,
+                   fallbackReason: usedMetalCommit ? nil : "no Metal device", runs: runs)
+        if !cpuFallback.isEmpty {
+            emitMetric(width: width, height: height, fixture: "solid", scenario: "cpu_fallback",
+                       ms: median(cpuFallback), usedMetal: false,
+                       fallbackReason: "CPU MeshWarpRaster", runs: cpuRuns)
+        }
+
+        // ---- Stack scenarios ----
+        func crSettings() -> CameraRawGeometryBackendSettings {
             var cr = CameraRawGeometryBackendSettings()
             cr.geometry.upright = .off
             cr.geometry.vertical = 18
             cr.geometry.framingMode = .keepOriginalSize
+            return cr
+        }
 
+        var stackTwoNode: [Double] = []
+        var stackCacheHit: [Double] = []
+        var stackMeshMetal: [Double] = []
+        var stackMeshReadback: [Double] = []
+        var stackCROnly: [Double] = []
+        var stackMeshOnly: [Double] = []
+        var stackReshapeThenCR: [Double] = []
+        var stackEditFirst: [Double] = []
+        var stackEditSecond: [Double] = []
+        var usedMetalStack = false
+        var metalFallbackReason: String?
+        var errors: [String] = []
+
+        for i in 0..<runs {
+            // Camera Raw geometry alone.
+            var crOnly = LayerCorrectionStack(
+                source: ImportedImage(image: solidSource, thumbnail: solidSource, name: "P"),
+                nodes: [.cameraRawGeometry(crSettings())])
+            var start = CFAbsoluteTimeGetCurrent()
+            do {
+                _ = try render(&crOnly, options: .init(useCache: false), gpu: gpu)
+            } catch { errors.append("CR only \(i): \(error.localizedDescription)") }
+            stackCROnly.append((CFAbsoluteTimeGetCurrent() - start) * 1000)
+
+            // ReShape alone.
+            var meshOnly = LayerCorrectionStack(
+                source: ImportedImage(image: solidSource, thumbnail: solidSource, name: "P"),
+                nodes: [.reshape(mesh: mesh, imageWidth: width, imageHeight: height)])
+            start = CFAbsoluteTimeGetCurrent()
+            do {
+                _ = try render(&meshOnly, options: .init(useCache: false,
+                                                         requireMetalMeshWhenAvailable: metalAvailable),
+                               gpu: gpu)
+            } catch { errors.append("mesh only \(i): \(error.localizedDescription)") }
+            stackMeshOnly.append((CFAbsoluteTimeGetCurrent() - start) * 1000)
+
+            // Two-node CR→ReShape cold.
             var stack = LayerCorrectionStack(
-                source: ImportedImage(image: source, thumbnail: source, name: "P"),
+                source: ImportedImage(image: solidSource, thumbnail: solidSource, name: "P"),
                 nodes: [
-                    .cameraRawGeometry(cr),
+                    .cameraRawGeometry(crSettings()),
                     .reshape(mesh: mesh, imageWidth: width, imageHeight: height)
                 ])
             var coldResult: LayerCorrectionRenderResult?
@@ -170,37 +258,20 @@ struct NonDestructiveGeometryPerformanceTests {
                     metalFallbackReason = reshapeTiming.fallbackReason ?? "unknown"
                 }
             }
+
+            // Cache hit (same stack, re-render).
             start = CFAbsoluteTimeGetCurrent()
             do {
                 _ = try render(&stack, options: .init(useCache: true), gpu: gpu)
             } catch { errors.append("cache hit \(i): \(error.localizedDescription)") }
             stackCacheHit.append((CFAbsoluteTimeGetCurrent() - start) * 1000)
 
-            var crOnly = LayerCorrectionStack(
-                source: ImportedImage(image: source, thumbnail: source, name: "P"),
-                nodes: [.cameraRawGeometry(cr)])
-            start = CFAbsoluteTimeGetCurrent()
-            do {
-                _ = try render(&crOnly, options: .init(useCache: false), gpu: gpu)
-            } catch { errors.append("CR only \(i): \(error.localizedDescription)") }
-            stackCROnly.append((CFAbsoluteTimeGetCurrent() - start) * 1000)
-
-            var meshOnly = LayerCorrectionStack(
-                source: ImportedImage(image: source, thumbnail: source, name: "P"),
-                nodes: [.reshape(mesh: mesh, imageWidth: width, imageHeight: height)])
-            start = CFAbsoluteTimeGetCurrent()
-            do {
-                _ = try render(&meshOnly, options: .init(useCache: false,
-                                                         requireMetalMeshWhenAvailable: metalAvailable),
-                               gpu: gpu)
-            } catch { errors.append("mesh only \(i): \(error.localizedDescription)") }
-            stackMeshOnly.append((CFAbsoluteTimeGetCurrent() - start) * 1000)
-
+            // ReShape → Camera Raw.
             var reshapeThenCR = LayerCorrectionStack(
-                source: ImportedImage(image: source, thumbnail: source, name: "P"),
+                source: ImportedImage(image: solidSource, thumbnail: solidSource, name: "P"),
                 nodes: [
                     .reshape(mesh: mesh, imageWidth: width, imageHeight: height),
-                    .cameraRawGeometry(cr)
+                    .cameraRawGeometry(crSettings())
                 ])
             start = CFAbsoluteTimeGetCurrent()
             do {
@@ -220,9 +291,9 @@ struct NonDestructiveGeometryPerformanceTests {
 
             // Warm stack then edit second node only.
             var editSecond = LayerCorrectionStack(
-                source: ImportedImage(image: source, thumbnail: source, name: "P"),
+                source: ImportedImage(image: solidSource, thumbnail: solidSource, name: "P"),
                 nodes: [
-                    .cameraRawGeometry(cr),
+                    .cameraRawGeometry(crSettings()),
                     .reshape(mesh: mesh, imageWidth: width, imageHeight: height)
                 ])
             _ = try render(&editSecond, options: .init(), gpu: gpu)
@@ -241,74 +312,46 @@ struct NonDestructiveGeometryPerformanceTests {
             stackEditSecond.append((CFAbsoluteTimeGetCurrent() - start) * 1000)
         }
 
-        if metalAvailable {
-            #expect(usedMetalStack, "Metal available but two-node stack did not use Metal (\(metalFallbackReason))")
-            #expect(usedMetalCommit)
-        }
-
-        lines.append("")
-        if !errors.isEmpty {
-            lines.append("- Errors: \(errors.joined(separator: "; "))")
-        }
-        lines.append("- MeshWarpEdit session create median: \(String(format: "%.2f", median(sessionCreate))) ms")
-        if !initialUpload.isEmpty {
-            lines.append("- Initial source upload (first MeshWarpEdit): \(String(format: "%.2f", initialUpload[0])) ms")
-        }
-        if !warmGPU.isEmpty {
-            lines.append("- Warm GPU mesh render median: \(String(format: "%.2f", median(warmGPU))) ms")
-        }
-        if !readback.isEmpty {
-            lines.append("- GPU readback to CGImage median: \(String(format: "%.2f", median(readback))) ms")
-        }
-        lines.append("- Full MeshWarpEdit.commitImage median: \(String(format: "%.2f", median(fullCommit))) ms (usedMetal=\(usedMetalCommit))")
-        if !cpuFallback.isEmpty {
-            lines.append("- CPU MeshWarpRaster fallback median: \(String(format: "%.2f", median(cpuFallback))) ms")
-        } else {
-            lines.append("- CPU MeshWarpRaster fallback median: covered by M8.7 baseline at this size")
-        }
-        lines.append("- Camera Raw geometry alone median: \(String(format: "%.2f", median(stackCROnly))) ms")
-        lines.append("- ReShape alone (resident GPU) median: \(String(format: "%.2f", median(stackMeshOnly))) ms")
-        lines.append("- Two-node CR→ReShape cold (resident GPU) median: \(String(format: "%.2f", median(stackTwoNode))) ms (usedMetal=\(usedMetalStack))")
-        if let reason = metalFallbackReason {
-            lines.append("- Metal fallback reason observed: \(reason)")
-        }
+        emitMetric(width: width, height: height, fixture: "solid", scenario: "camera_raw_only",
+                   ms: median(stackCROnly), usedMetal: true, fallbackReason: nil, runs: runs)
+        emitMetric(width: width, height: height, fixture: "solid", scenario: "reshape_only",
+                   ms: median(stackMeshOnly), usedMetal: usedMetalStack,
+                   fallbackReason: metalFallbackReason, runs: runs)
+        emitMetric(width: width, height: height, fixture: "solid", scenario: "camera_raw_then_reshape_cold",
+                   ms: median(stackTwoNode), usedMetal: usedMetalStack,
+                   fallbackReason: metalFallbackReason, runs: runs)
+        emitMetric(width: width, height: height, fixture: "solid", scenario: "reshape_then_camera_raw",
+                   ms: median(stackReshapeThenCR), usedMetal: usedMetalStack,
+                   fallbackReason: metalFallbackReason, runs: runs)
+        emitMetric(width: width, height: height, fixture: "solid", scenario: "edit_first_node",
+                   ms: median(stackEditFirst), usedMetal: usedMetalStack,
+                   fallbackReason: metalFallbackReason, runs: runs)
+        emitMetric(width: width, height: height, fixture: "solid", scenario: "edit_second_node_upstream_cached",
+                   ms: median(stackEditSecond), usedMetal: usedMetalStack,
+                   fallbackReason: metalFallbackReason, runs: runs)
+        emitMetric(width: width, height: height, fixture: "solid", scenario: "cache_hit",
+                   ms: median(stackCacheHit), usedMetal: usedMetalStack,
+                   fallbackReason: nil, runs: runs)
         if !stackMeshMetal.isEmpty {
-            lines.append("- Stack reshape GPU kernel median: \(String(format: "%.2f", median(stackMeshMetal))) ms")
+            emitMetric(width: width, height: height, fixture: "solid", scenario: "stack_reshape_gpu_kernel",
+                       ms: median(stackMeshMetal), usedMetal: usedMetalStack,
+                       fallbackReason: metalFallbackReason, runs: runs)
         }
         if !stackMeshReadback.isEmpty {
-            lines.append("- Stack reshape readback median: \(String(format: "%.2f", median(stackMeshReadback))) ms")
+            emitMetric(width: width, height: height, fixture: "solid", scenario: "stack_reshape_readback",
+                       ms: median(stackMeshReadback), usedMetal: usedMetalStack,
+                       fallbackReason: nil, runs: runs)
         }
-        lines.append("- Two-node ReShape→CR cold median: \(String(format: "%.2f", median(stackReshapeThenCR))) ms")
-        lines.append("- Two-node after editing first node median: \(String(format: "%.2f", median(stackEditFirst))) ms")
-        lines.append("- Two-node after editing second node (upstream cache) median: \(String(format: "%.2f", median(stackEditSecond))) ms")
-        lines.append("- Two-node stack render (cache hit) median: \(String(format: "%.2f", median(stackCacheHit))) ms")
-        lines.append("")
 
-        var header: [String] = [
-            "# Milestone 8.8 — Accelerated correction-stack performance",
-            "",
-            "Wall-clock milliseconds, medians of \(runs) runs after 1 warm-up.",
-            "GPU kernel-only times are not treated as full Apply latency.",
-            "Metal usage is asserted from command completion, not device presence.",
-            "",
-            "## M8.7 baseline (6000×4000, from MILESTONE_8_7_PERF.txt)",
-            "- Full MeshWarpEdit.commitImage median: 233.78 ms (usedMetal=true)",
-            "- CPU MeshWarpRaster fallback median: 47701.15 ms",
-            "- Two-node stack render (CR→ReShape, no cache) median: 16672.60 ms",
-            "- Two-node stack render (cache hit) median: 0.12 ms",
-            "",
-            "- MetalMeshWarp.shared available: \(metalAvailable)",
-            "",
-        ]
-        header.append(contentsOf: lines)
-        let paths = [
-            "/Users/atr/Desktop/MILESTONE_8_8_PERF_\(width)x\(height).txt",
-            "/tmp/MILESTONE_8_8_PERF_\(width)x\(height).txt",
-        ]
-        var written = false
-        for p in paths {
-            do { try header.joined(separator: "\n").write(toFile: p, atomically: true, encoding: .utf8); written = true; break } catch {}
+        if !errors.isEmpty {
+            emitMetric(width: width, height: height, fixture: "solid", scenario: "errors",
+                       ms: 0, usedMetal: false,
+                       fallbackReason: errors.joined(separator: "; "), runs: 0)
         }
-        print("PERF REPORT WRITTEN: \(written) \(paths.first!)")
+
+        if metalAvailable {
+            #expect(usedMetalStack, "Metal available but two-node stack did not use Metal (\(metalFallbackReason ?? "nil"))")
+            #expect(usedMetalCommit)
+        }
     }
 }

@@ -1,7 +1,8 @@
 # Milestone 8.8 — Accelerated correction stacks and full Camera Raw
 
 Branch: `camera-raw-accelerated-correction-stack`  
-Base: `camera-raw-nondestructive-geometry` (PR #12 head `8455d41`)
+Base head: `b6ef2fe20ebf4f0c044d12711486b3ebef74c4ff`  
+Existing draft PR: https://github.com/andrewtryder/Compositor/pull/13
 
 ## Root cause of the original slow two-node stack
 
@@ -19,7 +20,7 @@ Metal usage must not be inferred from `MTLCreateSystemDefaultDevice()` alone. St
 
 `LayerCorrectionGPUContext` (session-owned on `EditorSession.correctionGPUContext`):
 
-- Reuses source/destination textures per resolution key (bounded slot count).
+- Reuses source/destination textures per resolution key (bounded slot count, `maximumSlots = 2`).
 - Uploads upstream source only when `ObjectIdentifier(CGImage)` changes.
 - Rewrites triangle buffers on every mesh change.
 - Waits for the prior command buffer before rewriting a destination texture.
@@ -33,6 +34,16 @@ Render modes:
 | Interactive GPU preview | `MetalMeshWarpSession` inside `MeshWarpEdit` |
 | Full-resolution stack evaluation | `LayerCorrectionRenderer` + optional `gpuContext` |
 | Final CPU-readable commit/export | CGImage readback after command completion |
+
+### Synchronization policy (M8.8.1 hardening)
+
+All slot metadata and dictionary mutation happen while holding an `NSLock`. `withLeasedSlot(key:body:)` obtains exclusive access to a slot (creating it if needed), runs `body` while the lock is released, and merges the returned `SlotResult` back under the lock. Callers must not nest or interleave leases on the same key, and must not call `invalidate`/`invalidateAll` concurrently with a lease.
+
+- **Source identity safety**: the source `CGImage` is strongly retained (`Slot.sourceImage`) for as long as its uploaded texture is treated as current, so `ObjectIdentifier` cannot be reused by a different CGImage to cause false source-reuse hits.
+- **Destination texture safety**: the slot's last command buffer is `waitUntilCompleted()` before the destination is rewritten.
+- **Eviction safety**: victim slots are waited on before removal from the dictionary.
+- **Failure paths**: failed Metal allocation or command execution fall back to CPU `MeshWarpRaster` without leaving stale pixels in resident slots.
+- **Readback**: performed while holding the slot lease, then the `CGImage` is handed out.
 
 ## Memory / cache ownership
 
@@ -69,14 +80,31 @@ Coverage: light, color/WB, mixer, grading, curve, effects, detail/NR, optics, ge
 - CPU/GPU mesh parity target retained: ≤1 channel delta on checkerboard identity/nontrivial meshes.
 - Cached vs uncached pixel equality asserted.
 
-## Cold / warm performance
+## Measured performance
 
-See `MILESTONE_8_8_PERF.txt` for measured medians. Expected shape:
+See `MILESTONE_8_8_PERF.txt` for actual M8.7 vs M8.8 medians side by side (measured in Debug on Apple M3 Pro, macOS 27.0.1).
 
-- Mesh-only cold approaches resident GPU + readback (not CPU tens of seconds).
-- Two-node cold still includes CPU Camera Raw geometry/full grade time; mesh stage is no longer the multi-second Metal one-shot tax.
-- Editing the second node reuses the upstream stage cache.
-- Cache hits remain sub-millisecond.
+Key results (Debug vs Release baseline):
+
+| Size | Scenario | M8.7 (Release) | M8.8 (Debug) |
+|---|---|---:|---:|
+| 6000×4000 | Full MeshWarpEdit.commitImage | 233.78 ms | 268.73 ms |
+| 6000×4000 | CR→ReShape cold (two-node) | 16672.60 ms | 16347.26 ms |
+| 6000×4000 | ReShape only (resident GPU) | NOT MEASURED | 553.81 ms |
+| 6000×4000 | Edit second node (upstream cached) | NOT MEASURED | 247.16 ms |
+| 6000×4000 | Cache hit (stack re-render) | 0.12 ms | 0.08 ms |
+| 6000×4000 | CPU MeshWarpRaster fallback | 47701.15 ms | 47106.64 ms |
+
+M8.8 was measured in Debug; M8.7 in Release, so percentage speedup is indicative only. The two-node cold path is dominated by CPU Camera Raw geometry time, not the mesh stage; the mesh stage itself dropped from multi-second one-shot Metal (M8.7) to resident-GPU render (~554 ms for ReShape-only at 6000×4000 in Debug).
+
+## ReleaseTestable test-host crash diagnosis
+
+Both focused suites (`NonDestructiveCameraRawTests`, `NonDestructiveGeometryStackTests`) crash with `SIGABRT` under `ReleaseTestable` **before the test-host process establishes a connection**. Root cause: dyld library-load failure for Sparkle.framework — an ad-hoc code-signing Team ID mismatch in the test harness environment (`CODE_SIGN_IDENTITY=-`), not an application logic failure.
+
+- Crash: `Library not loaded: @rpath/Sparkle.framework/Versions/B/Sparkle ... code signature ... not valid for use in process: mapping process and mapped file (non-platform) have different Team IDs`.
+- Crash reports: `Compositor-2026-11-13-102606.ips` and `Compositor-2026-11-13-102742.ips` in `~/Library/Logs/DiagnosticReports/`.
+- This is environmental; the same suites pass fully in Debug configuration.
+- Production Release builds cleanly with `ENABLE_TESTABILITY=NO`.
 
 ## Export behavior
 
@@ -89,3 +117,17 @@ Export flattens the rendered layer `asset` (display). Baking commits stack outpu
 - Full Camera Raw grade remains CPU Filter path (GPU lookup exists inside Filter for some tables; stack does not yet keep CR textures resident).
 - 8-bit layers only for ND stacks.
 - At most one geometry and one full Camera Raw node per stack.
+- ReleaseTestable test-host crash is environmental (ad-hoc signing Team ID mismatch); not an application bug.
+
+## Tests added (M8.8.1)
+
+`NonDestructiveCameraRawTests`:
+- `gpuContextSameSizeDifferentSource` — same-size slot must not collide across different sources.
+- `gpuContextRepeatedSourceReplacement` — replacing then restoring a source must not serve stale pixels.
+- `gpuContextCacheInvalidation` — invalidate then re-render must still use Metal.
+- `gpuContextInvalidateAll` — invalidateAll then re-render must still use Metal.
+- `gpuContextFallsBackWithoutStalePixels` — CPU fallback must produce correct warped output.
+
+## Pending work
+
+- ReleaseTestable test execution remains blocked by the ad-hoc signing Team ID mismatch; requires a properly signed test host to run optimized suites. Documented above; not categorized as an application logic failure.

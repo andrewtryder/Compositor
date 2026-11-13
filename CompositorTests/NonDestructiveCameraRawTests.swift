@@ -393,4 +393,107 @@ struct NonDestructiveCameraRawTests {
         #expect(persistent.schemaVersion == 1)
         #expect(!persistent.nodes.contains { $0.kind == .cameraRawFull })
     }
+
+    // MARK: - LayerCorrectionGPUContext ownership and safety
+
+    @Test func gpuContextSameSizeDifferentSource() throws {
+        guard MetalMeshWarp.shared != nil else { return }
+        let imageA = try gradient(width: 64, height: 64)
+        let imageB = try checkerboard(width: 64, height: 64)
+        let mesh = warpedMesh(preset: .points4)
+        var stackA = LayerCorrectionStack(
+            source: ImportedImage(image: imageA, thumbnail: imageA, name: "L"),
+            nodes: [.reshape(mesh: mesh, imageWidth: 64, imageHeight: 64)])
+        var stackB = LayerCorrectionStack(
+            source: ImportedImage(image: imageB, thumbnail: imageB, name: "L"),
+            nodes: [.reshape(mesh: mesh, imageWidth: 64, imageHeight: 64)])
+        let gpu = LayerCorrectionGPUContext()
+        let resultA = try LayerCorrectionRenderer.render(
+            &stackA, options: .init(preferMetalMesh: true, useCache: false, gpuContext: gpu,
+                                    requireMetalMeshWhenAvailable: true))
+        let resultB = try LayerCorrectionRenderer.render(
+            &stackB, options: .init(preferMetalMesh: true, useCache: false, gpuContext: gpu,
+                                    requireMetalMeshWhenAvailable: true))
+        #expect(resultA.usedMetal)
+        #expect(resultB.usedMetal)
+        #expect(try rgba8(resultA.image) != rgba8(resultB.image))
+    }
+
+    @Test func gpuContextRepeatedSourceReplacement() throws {
+        guard MetalMeshWarp.shared != nil else { return }
+        let imageA = try gradient(width: 64, height: 64)
+        let imageB = try checkerboard(width: 64, height: 64)
+        let mesh = warpedMesh(preset: .points4)
+        var stack = LayerCorrectionStack(
+            source: ImportedImage(image: imageA, thumbnail: imageA, name: "L"),
+            nodes: [.reshape(mesh: mesh, imageWidth: 64, imageHeight: 64)])
+        let gpu = LayerCorrectionGPUContext()
+        _ = try LayerCorrectionRenderer.render(
+            &stack, options: .init(preferMetalMesh: true, useCache: false, gpuContext: gpu,
+                                   requireMetalMeshWhenAvailable: true))
+        let beforeA = try rgba8(try #require(stack.stageCache.values.first?.image))
+        stack.source = ImportedImage(image: imageB, thumbnail: imageB, name: "L")
+        let resultB = try LayerCorrectionRenderer.render(
+            &stack, options: .init(preferMetalMesh: true, useCache: false, gpuContext: gpu,
+                                   requireMetalMeshWhenAvailable: true))
+        #expect(resultB.usedMetal)
+        stack.source = ImportedImage(image: imageA, thumbnail: imageA, name: "L")
+        let resultA2 = try LayerCorrectionRenderer.render(
+            &stack, options: .init(preferMetalMesh: true, useCache: false, gpuContext: gpu,
+                                   requireMetalMeshWhenAvailable: true))
+        #expect(resultA2.usedMetal)
+        #expect(try rgba8(resultA2.image) == beforeA)
+    }
+
+    @Test func gpuContextCacheInvalidation() throws {
+        guard MetalMeshWarp.shared != nil else { return }
+        let image = try gradient(width: 64, height: 64)
+        let mesh = warpedMesh(preset: .points4)
+        var stack = LayerCorrectionStack(
+            source: ImportedImage(image: image, thumbnail: image, name: "L"),
+            nodes: [.reshape(mesh: mesh, imageWidth: 64, imageHeight: 64)])
+        let gpu = LayerCorrectionGPUContext()
+        _ = try LayerCorrectionRenderer.render(
+            &stack, options: .init(preferMetalMesh: true, useCache: false, gpuContext: gpu,
+                                   requireMetalMeshWhenAvailable: true))
+        gpu.invalidate(width: 64, height: 64)
+        let result = try LayerCorrectionRenderer.render(
+            &stack, options: .init(preferMetalMesh: true, useCache: false, gpuContext: gpu,
+                                   requireMetalMeshWhenAvailable: true))
+        #expect(result.usedMetal)
+    }
+
+    @Test func gpuContextInvalidateAll() throws {
+        guard MetalMeshWarp.shared != nil else { return }
+        let image = try gradient(width: 64, height: 64)
+        let mesh = warpedMesh(preset: .points4)
+        var stack = LayerCorrectionStack(
+            source: ImportedImage(image: image, thumbnail: image, name: "L"),
+            nodes: [.reshape(mesh: mesh, imageWidth: 64, imageHeight: 64)])
+        let gpu = LayerCorrectionGPUContext()
+        _ = try LayerCorrectionRenderer.render(
+            &stack, options: .init(preferMetalMesh: true, useCache: false, gpuContext: gpu,
+                                   requireMetalMeshWhenAvailable: true))
+        gpu.invalidateAll()
+        let result = try LayerCorrectionRenderer.render(
+            &stack, options: .init(preferMetalMesh: true, useCache: false, gpuContext: gpu,
+                                   requireMetalMeshWhenAvailable: true))
+        #expect(result.usedMetal)
+    }
+
+    @Test func gpuContextFallsBackWithoutStalePixels() throws {
+        let image = try gradient(width: 64, height: 64)
+        let mesh = warpedMesh(preset: .points4)
+        var stack = LayerCorrectionStack(
+            source: ImportedImage(image: image, thumbnail: image, name: "L"),
+            nodes: [.reshape(mesh: mesh, imageWidth: 64, imageHeight: 64)])
+        let gpu = LayerCorrectionGPUContext()
+        var timing = MeshWarpRaster.Timing()
+        let cpuImage = MeshWarpRaster.apply(source: image, mesh: mesh, timing: &timing)
+        let result = try LayerCorrectionRenderer.render(
+            &stack, options: .init(preferMetalMesh: false, useCache: false, gpuContext: gpu))
+        #expect(!result.usedMetal)
+        #expect(result.timings.first?.fallbackReason?.contains("CPU") == true)
+        #expect(try rgba8(result.image) == rgba8(cpuImage!))
+    }
 }
