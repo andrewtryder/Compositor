@@ -31,25 +31,29 @@ nonisolated struct MeshWarpVertexID: Hashable, Sendable, Codable {
     init(_ rawValue: Int) { self.rawValue = rawValue }
 }
 
-/// Regular rectangular mesh for the ReShape tool. Dimensions are **control-point counts**
-/// (an 8×8 mesh has 64 points and 7×7 cells). Rest and current positions are in
-/// **normalized layer-image UV** space: (0,0) top-left, (1,1) bottom-right.
+/// ReShape mesh: starts as a regular lattice and may gain adaptive leaf quads via Subdivide.
+/// `pointColumns` / `pointRows` are the **original** control-point counts. After subdivision,
+/// `positions.count` / `topology.order` grow; stable `MeshWarpVertexID` values never retarget.
+/// Coordinates are normalized layer UV: (0,0) top-left → (1,1) bottom-right.
 nonisolated struct MeshWarpGrid: Equatable, Sendable {
-    /// Control points across (X). Must be ≥ 2.
+    /// Original lattice control points across (X). Must be ≥ 2.
     var pointColumns: Int
-    /// Control points down (Y). Must be ≥ 2.
+    /// Original lattice control points down (Y). Must be ≥ 2.
     var pointRows: Int
-    /// Current destination positions in UV.
+    /// Current destination positions in UV (dense order matching `topology.order`).
     var positions: [SIMD2<Float>]
-    /// Bind / rest pose in UV (usually the uniform lattice).
+    /// Bind / rest pose in UV (same order).
     var rest: [SIMD2<Float>]
     var stickyBorders: Bool
     /// 0…1. ViewPoint-style linear propagation strength (not a UV radius).
     var propagation: Float
+    /// Authoritative adaptive topology (shared edges, leaf quads). Always present.
+    var topology: MeshWarpTopology
 
-    var pointCount: Int { pointColumns * pointRows }
+    var pointCount: Int { positions.count }
     var cellColumns: Int { pointColumns - 1 }
     var cellRows: Int { pointRows - 1 }
+    var isAdaptive: Bool { topology.leafFaceIDs.count != cellColumns * cellRows }
 
     static let presets = [4, 8, 16]
     static let maxPoints = 10_000
@@ -66,21 +70,14 @@ nonisolated struct MeshWarpGrid: Equatable, Sendable {
     /// Uniform rest lattice. Fails when the point count is out of range.
     static func identity(pointColumns: Int, pointRows: Int,
                          stickyBorders: Bool = true, propagation: Float = 0) -> MeshWarpGrid? {
-        guard pointColumns >= 2, pointRows >= 2,
-              pointColumns * pointRows <= maxPoints else { return nil }
-        var rest: [SIMD2<Float>] = []
-        rest.reserveCapacity(pointColumns * pointRows)
-        for row in 0..<pointRows {
-            let v = Float(row) / Float(pointRows - 1)
-            for column in 0..<pointColumns {
-                let u = Float(column) / Float(pointColumns - 1)
-                rest.append(SIMD2(u, v))
-            }
-        }
+        guard let topology = MeshWarpTopology.regular(pointColumns: pointColumns, pointRows: pointRows)
+        else { return nil }
+        let arrays = topology.syncArrays()
         return MeshWarpGrid(pointColumns: pointColumns, pointRows: pointRows,
-                            positions: rest, rest: rest,
+                            positions: arrays.positions, rest: arrays.rest,
                             stickyBorders: stickyBorders,
-                            propagation: max(0, min(1, propagation)))
+                            propagation: max(0, min(1, propagation)),
+                            topology: topology)
     }
 
     static func identity(preset: Preset, stickyBorders: Bool = true, propagation: Float = 0) -> MeshWarpGrid {
@@ -91,21 +88,14 @@ nonisolated struct MeshWarpGrid: Equatable, Sendable {
     func index(column: Int, row: Int) -> Int { row * pointColumns + column }
     func column(of index: Int) -> Int { index % pointColumns }
     func row(of index: Int) -> Int { index / pointColumns }
-    func vertexID(_ index: Int) -> MeshWarpVertexID { MeshWarpVertexID(index) }
-    func index(of id: MeshWarpVertexID) -> Int? {
-        positions.indices.contains(id.rawValue) ? id.rawValue : nil
+    func vertexID(_ index: Int) -> MeshWarpVertexID {
+        topology.id(at: index) ?? MeshWarpVertexID(index)
     }
+    func index(of id: MeshWarpVertexID) -> Int? { topology.index(of: id) }
 
     func borderKind(_ index: Int) -> MeshWarpBorderKind {
-        let c = column(of: index), r = row(of: index)
-        let left = c == 0, right = c == pointColumns - 1
-        let top = r == 0, bottom = r == pointRows - 1
-        if (left || right) && (top || bottom) { return .corner }
-        if left { return .leftEdge }
-        if right { return .rightEdge }
-        if top { return .topEdge }
-        if bottom { return .bottomEdge }
-        return .interior
+        guard rest.indices.contains(index) else { return .interior }
+        return MeshWarpTopology.borderKind(rest: rest[index])
     }
 
     func isBorder(_ index: Int) -> Bool { borderKind(index) != .interior }
@@ -115,7 +105,16 @@ nonisolated struct MeshWarpGrid: Equatable, Sendable {
         zip(positions, rest).allSatisfy { abs($0.x - $1.x) < 1e-7 && abs($0.y - $1.y) < 1e-7 }
     }
 
-    mutating func resetToRest() { positions = rest }
+    mutating func resetToRest() {
+        positions = rest
+        topology.writeBack(positions: positions)
+    }
+
+    mutating func syncFromTopology() {
+        let arrays = topology.syncArrays()
+        positions = arrays.positions
+        rest = arrays.rest
+    }
 
     /// UV → layer pixel centers space uses width/height of the bitmap.
     static func pixel(fromUV uv: SIMD2<Float>, width: Int, height: Int) -> SIMD2<Float> {
@@ -300,28 +299,33 @@ nonisolated struct MeshWarpGrid: Equatable, Sendable {
     }
 
     private mutating func install(_ trial: [SIMD2<Float>]) -> Bool {
-        guard Self.trianglesValid(pointColumns: pointColumns, pointRows: pointRows, positions: trial) else {
-            return false
-        }
+        guard trial.count == positions.count else { return false }
+        var trialTopology = topology
+        trialTopology.writeBack(positions: trial)
+        guard Self.leafTrianglesValid(trialTopology) else { return false }
         positions = trial
+        topology = trialTopology
+        return true
+    }
+
+    /// Validates leaf-face triangles (works for regular and adaptive meshes).
+    static func leafTrianglesValid(_ topology: MeshWarpTopology) -> Bool {
+        for triangle in topology.triangles() {
+            let area = signedArea(triangle.destination.0, triangle.destination.1, triangle.destination.2)
+            if abs(area) < minimumTriangleArea { return false }
+            let restArea = signedArea(triangle.source.0, triangle.source.1, triangle.source.2)
+            if restArea * area < 0 { return false }
+        }
         return true
     }
 
     /// Every cell is split along the diagonal (0,0)-(1,1) in cell space into two triangles.
     static func trianglesValid(pointColumns: Int, pointRows: Int, positions: [SIMD2<Float>]) -> Bool {
-        for row in 0..<(pointRows - 1) {
-            for column in 0..<(pointColumns - 1) {
-                let i00 = row * pointColumns + column
-                let i10 = i00 + 1
-                let i01 = i00 + pointColumns
-                let i11 = i01 + 1
-                let a = positions[i00], b = positions[i10], c = positions[i11], d = positions[i01]
-                if abs(signedArea(a, b, c)) < minimumTriangleArea { return false }
-                if abs(signedArea(a, c, d)) < minimumTriangleArea { return false }
-                if signedArea(a, b, c) * signedArea(a, c, d) < 0 { return false }
-            }
-        }
-        return true
+        guard let topology = MeshWarpTopology.regular(pointColumns: pointColumns, pointRows: pointRows)
+        else { return false }
+        var trial = topology
+        trial.writeBack(positions: positions)
+        return leafTrianglesValid(trial)
     }
 
     static func signedArea(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>) -> Float {
@@ -336,37 +340,47 @@ nonisolated struct MeshWarpTriangle: Sendable {
 }
 
 extension MeshWarpGrid {
-    /// Destination triangles in UV, paired with rest UV for source lookup.
+    /// Destination triangles in UV, paired with rest UV for source lookup (leaf faces only).
     nonisolated func triangles() -> [MeshWarpTriangle] {
-        var list: [MeshWarpTriangle] = []
-        list.reserveCapacity(cellColumns * cellRows * 2)
-        for row in 0..<cellRows {
-            for column in 0..<cellColumns {
-                let i00 = index(column: column, row: row)
-                let i10 = index(column: column + 1, row: row)
-                let i01 = index(column: column, row: row + 1)
-                let i11 = index(column: column + 1, row: row + 1)
-                list.append(MeshWarpTriangle(destination: (positions[i00], positions[i10], positions[i11]),
-                                             source: (rest[i00], rest[i10], rest[i11])))
-                list.append(MeshWarpTriangle(destination: (positions[i00], positions[i11], positions[i01]),
-                                             source: (rest[i00], rest[i11], rest[i01])))
-            }
-        }
-        return list
+        var topo = topology
+        topo.writeBack(positions: positions)
+        return topo.triangles()
     }
 
-    /// Local Subdivide / Merge are not implemented on the regular lattice in Milestone 8.2.
-    /// Adaptive shared-vertex quad topology is deferred; do not fake this with a global density change.
-    static let topologyOpsSupported = false
-    static let topologyOpsUnavailableMessage =
-        "Local Subdivide/Merge requires adaptive quad topology; deferred past Milestone 8.2."
+    static let topologyOpsSupported = true
+    static let topologyOpsUnavailableMessage = ""
 
+    /// Subdivide leaf faces that contain any of the selected vertex indices (conforming).
     @discardableResult
-    mutating func subdivideSelectedQuads(cellColumns selected: Set<Int>) -> Bool {
-        _ = selected
-        return false
+    mutating func subdivideSelectedQuads(containingVertexIndices selected: Set<Int>) -> MeshWarpTopologyResult {
+        topology.writeBack(positions: positions)
+        let ids = Set(selected.compactMap { topology.id(at: $0) })
+        let faces = topology.leafFacesTouching(vertexIDs: ids)
+        return subdivide(faceIDs: faces)
     }
 
     @discardableResult
-    mutating func mergeSelectedChildGroup() -> Bool { false }
+    mutating func subdivide(faceIDs: Set<MeshWarpFaceID>) -> MeshWarpTopologyResult {
+        topology.writeBack(positions: positions)
+        let result = topology.subdivide(faceIDs: faceIDs)
+        syncFromTopology()
+        return result
+    }
+
+    /// Merge complete four-child groups whose children are all selected (by face or by covering verts).
+    @discardableResult
+    mutating func mergeSelectedChildGroup(containingVertexIndices selected: Set<Int>) -> MeshWarpTopologyResult {
+        topology.writeBack(positions: positions)
+        let ids = Set(selected.compactMap { topology.id(at: $0) })
+        let faces = topology.leafFacesTouching(vertexIDs: ids)
+        return merge(faceIDs: faces)
+    }
+
+    @discardableResult
+    mutating func merge(faceIDs: Set<MeshWarpFaceID>) -> MeshWarpTopologyResult {
+        topology.writeBack(positions: positions)
+        let result = topology.merge(faceIDs: faceIDs)
+        syncFromTopology()
+        return result
+    }
 }

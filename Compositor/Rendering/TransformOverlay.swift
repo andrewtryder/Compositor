@@ -242,27 +242,16 @@ final class TransformOverlay: NSView {
         context.setLineWidth(hairline)
         context.setStrokeColor(NSColor.systemCyan.withAlphaComponent(0.85).cgColor)
         let path = CGMutablePath()
-        for row in 0..<mesh.pointRows {
-            for column in 0..<mesh.pointColumns {
-                let index = mesh.index(column: column, row: row)
-                let uv = mesh.positions[index]
-                let documentPoint = transform.point(CGPoint(x: CGFloat(uv.x), y: CGFloat(uv.y)))
-                let view = session.viewport.viewPoint(from: documentPoint, documentSize: document.size)
-                if column + 1 < mesh.pointColumns {
-                    let next = mesh.positions[mesh.index(column: column + 1, row: row)]
-                    let nextDoc = transform.point(CGPoint(x: CGFloat(next.x), y: CGFloat(next.y)))
-                    let nextView = session.viewport.viewPoint(from: nextDoc, documentSize: document.size)
-                    path.move(to: view)
-                    path.addLine(to: nextView)
-                }
-                if row + 1 < mesh.pointRows {
-                    let next = mesh.positions[mesh.index(column: column, row: row + 1)]
-                    let nextDoc = transform.point(CGPoint(x: CGFloat(next.x), y: CGFloat(next.y)))
-                    let nextView = session.viewport.viewPoint(from: nextDoc, documentSize: document.size)
-                    path.move(to: view)
-                    path.addLine(to: nextView)
-                }
-            }
+        for (a, b) in mesh.topology.leafEdges() {
+            guard let ia = mesh.index(of: a), let ib = mesh.index(of: b),
+                  mesh.positions.indices.contains(ia), mesh.positions.indices.contains(ib) else { continue }
+            let ua = mesh.positions[ia], ub = mesh.positions[ib]
+            let da = transform.point(CGPoint(x: CGFloat(ua.x), y: CGFloat(ua.y)))
+            let db = transform.point(CGPoint(x: CGFloat(ub.x), y: CGFloat(ub.y)))
+            let va = session.viewport.viewPoint(from: da, documentSize: document.size)
+            let vb = session.viewport.viewPoint(from: db, documentSize: document.size)
+            path.move(to: va)
+            path.addLine(to: vb)
         }
         context.addPath(path)
         context.strokePath()
@@ -270,7 +259,7 @@ final class TransformOverlay: NSView {
         for (index, uv) in mesh.positions.enumerated() {
             let documentPoint = transform.point(CGPoint(x: CGFloat(uv.x), y: CGFloat(uv.y)))
             let view = session.viewport.viewPoint(from: documentPoint, documentSize: document.size)
-            let selected = edit.selection.contains(index: index) || index == edit.selectedIndex
+            let selected = edit.selection.contains(index: index, in: mesh) || index == edit.selectedIndex
             let radius: CGFloat = selected ? 5.5 : 4
             let rect = CGRect(x: view.x - radius, y: view.y - radius, width: radius * 2, height: radius * 2)
             if selected {

@@ -3,8 +3,10 @@ import simd
 
 /// One logical ReShape tool operation (not one document history entry).
 nonisolated struct MeshWarpHistorySnapshot: Equatable, Sendable {
-    var positions: [SIMD2<Float>]
+    var mesh: MeshWarpGrid
     var selection: MeshWarpSelection
+
+    var positions: [SIMD2<Float>] { mesh.positions }
 }
 
 /// Bounded undo/redo stack for an open ReShape session.
@@ -27,8 +29,7 @@ nonisolated final class MeshWarpHistory: @unchecked Sendable {
     }
 
     /// Records `before` as the state to restore on Undo. Call before mutating the mesh for a
-    /// completed logical operation (end of drag, transform commit, reset, selection clear that
-    /// also resets points, etc.).
+    /// completed logical operation (end of drag, transform commit, subdivide, merge, reset, …).
     func push(_ before: MeshWarpHistorySnapshot) {
         undoStack.append(before)
         if undoStack.count > limit { undoStack.removeFirst(undoStack.count - limit) }

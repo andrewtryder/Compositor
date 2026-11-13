@@ -58,19 +58,26 @@ final class MeshWarpEdit {
     var usesGPUResidentPreview: Bool { previewCIImage != nil }
 
     func snapshot() -> MeshWarpHistorySnapshot {
-        MeshWarpHistorySnapshot(positions: mesh.positions, selection: selection)
+        MeshWarpHistorySnapshot(mesh: mesh, selection: selection)
     }
 
     func apply(snapshot: MeshWarpHistorySnapshot) {
-        mesh.positions = snapshot.positions
+        mesh = snapshot.mesh
         selection = snapshot.selection
-        selection.prune(pointCount: mesh.pointCount)
-        selectedIndex = selection.indices.sorted().first
+        selection.prune(to: mesh)
+        selectedIndex = selection.indices(in: mesh).sorted().first
     }
 
     func resetMesh() {
         let before = snapshot()
-        mesh.resetToRest()
+        let sticky = mesh.stickyBorders
+        let propagation = mesh.propagation
+        if let identity = MeshWarpGrid.identity(pointColumns: mesh.pointColumns, pointRows: mesh.pointRows,
+                                                stickyBorders: sticky, propagation: propagation) {
+            mesh = identity
+        } else {
+            mesh.resetToRest()
+        }
         selection.clear()
         selectedIndex = nil
         previewImage = nil
@@ -78,6 +85,34 @@ final class MeshWarpEdit {
         lastWarning = nil
         history.push(before)
         gpuSession?.invalidate()
+    }
+
+    @discardableResult
+    func subdivideSelection() -> MeshWarpTopologyResult {
+        let before = snapshot()
+        let result = mesh.subdivideSelectedQuads(containingVertexIndices: selection.indices(in: mesh))
+        if !result.succeeded.isEmpty {
+            selection.prune(to: mesh)
+            history.push(before)
+            refreshPreview(waitForGPU: true)
+        } else {
+            lastWarning = result.message
+        }
+        return result
+    }
+
+    @discardableResult
+    func mergeSelection() -> MeshWarpTopologyResult {
+        let before = snapshot()
+        let result = mesh.mergeSelectedChildGroup(containingVertexIndices: selection.indices(in: mesh))
+        if !result.succeeded.isEmpty {
+            selection.prune(to: mesh)
+            history.push(before)
+            refreshPreview(waitForGPU: true)
+        } else {
+            lastWarning = result.message
+        }
+        return result
     }
 
     func toolUndo() -> Bool {
@@ -157,7 +192,10 @@ final class MeshWarpEdit {
             gestureDidMutate = false
         }
         guard gestureDidMutate, let base = gestureBasePositions else { return }
-        history.push(MeshWarpHistorySnapshot(positions: base, selection: gestureBaseSelection))
+        var beforeMesh = mesh
+        beforeMesh.positions = base
+        beforeMesh.topology.writeBack(positions: base)
+        history.push(MeshWarpHistorySnapshot(mesh: beforeMesh, selection: gestureBaseSelection))
     }
 
     @discardableResult
@@ -174,7 +212,7 @@ final class MeshWarpEdit {
                             translation: SIMD2<Float> = .zero,
                             rotationRadians: Float = 0,
                             scale: Float = 1) -> Bool {
-        let selected = selection.indices
+        let selected = selection.indices(in: mesh)
         guard !selected.isEmpty, let base = gestureBasePositions,
               let pivot = MeshWarpGrid.barycenter(indices: selected, in: base) else { return false }
         let ok = mesh.applySelectionTransform(selected: selected, imageWidth: width, imageHeight: height, base: base) { point in
@@ -195,7 +233,7 @@ final class MeshWarpEdit {
 
     @discardableResult
     func resetSelectedPoints() -> Bool {
-        let selected = selection.indices
+        let selected = selection.indices(in: mesh)
         guard !selected.isEmpty else { return false }
         let before = snapshot()
         var trial = mesh.positions
@@ -354,9 +392,9 @@ extension EditorSession {
             return false
         }
         if shift {
-            edit.selection.toggle(index: index)
-        } else if !edit.selection.contains(index: index) {
-            edit.selection.selectOnly(index: index)
+            edit.selection.toggle(index: index, in: edit.mesh)
+        } else if !edit.selection.contains(index: index, in: edit.mesh) {
+            edit.selection.selectOnly(index: index, in: edit.mesh)
         }
         edit.selectedIndex = index
         edit.lastWarning = nil
@@ -369,7 +407,7 @@ extension EditorSession {
         guard let edit = meshWarpEdit, let index = edit.selectedIndex,
               let uv = meshWarpUV(documentPoint: documentPoint) else { return }
         let ok: Bool
-        if edit.selection.count > 1, edit.selection.contains(index: index),
+        if edit.selection.count > 1, edit.selection.contains(index: index, in: edit.mesh),
            let base = edit.gestureBasePositions {
             let translation = uv - base[index]
             ok = edit.transformSelection(mode: .move, translation: translation)
@@ -395,8 +433,8 @@ extension EditorSession {
 
     func meshWarpSelectAll() {
         guard let edit = meshWarpEdit else { return }
-        edit.selection.selectAll(pointCount: edit.mesh.pointCount)
-        edit.selectedIndex = edit.selection.indices.sorted().first
+        edit.selection.selectAll(in: edit.mesh)
+        edit.selectedIndex = edit.selection.indices(in: edit.mesh).sorted().first
         brushRevision += 1
     }
 
@@ -415,7 +453,19 @@ extension EditorSession {
         let uvRect = CGRect(x: min(a.x, b.x), y: min(a.y, b.y),
                             width: abs(a.x - b.x), height: abs(a.y - b.y))
         edit.selection.selectMarquee(uvRect: uvRect, mesh: edit.mesh, additive: additive)
-        edit.selectedIndex = edit.selection.indices.sorted().first
+        edit.selectedIndex = edit.selection.indices(in: edit.mesh).sorted().first
+        brushRevision += 1
+    }
+
+    func meshWarpSubdivideSelection() {
+        guard let edit = meshWarpEdit else { return }
+        _ = edit.subdivideSelection()
+        brushRevision += 1
+    }
+
+    func meshWarpMergeSelection() {
+        guard let edit = meshWarpEdit else { return }
+        _ = edit.mergeSelection()
         brushRevision += 1
     }
 }
