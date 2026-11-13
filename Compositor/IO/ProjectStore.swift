@@ -17,7 +17,7 @@ extension UTType {
 
 nonisolated struct ProjectManifest: Codable, Sendable {
     /// The format version new saves write.
-    static let current = 23
+    static let current = 24
     /// Every version `load` accepts: each one a release has written (1 through `current`), and 27 from the
     /// GIF branch's own builds. Leaving out 15 and 16 once locked out projects saved by 1.5.4 and 1.5.5.
     /// The package-header and manifest checks both read this, so they can't drift apart when `current` is bumped.
@@ -63,7 +63,8 @@ nonisolated struct ProjectLayerRecord: Codable, Sendable {
     var gif: ProjectGIFRecord? = nil
     /// Editable ReShape mesh + immutable source asset. Missing before version 22.
     var reshape: ProjectReshapeRecord? = nil
-    /// Ordered non-destructive geometry correction stack. Missing before version 23.
+    /// Ordered non-destructive correction stack. Missing before version 23.
+    /// Full Camera Raw (`cameraRawFull`) nodes require version 24.
     var correctionStack: ProjectCorrectionStackRecord? = nil
 }
 
@@ -386,6 +387,9 @@ actor ProjectStore {
                 let stack: LayerCorrectionStackPersistentState
                 do { stack = try LayerCorrectionStackPersistentState.decode(from: stackData) }
                 catch { throw ProjectError.invalid }
+                if stack.nodes.contains(where: { $0.kind == .cameraRawFull }), manifest.version < 24 {
+                    throw ProjectError.invalid
+                }
                 guard let display = images[layer.id]?.image else { throw ProjectError.missingImage }
                 try validateCorrectionStack(stack: stack, source: source, display: display,
                                             record: correction, layerID: layer.id,
@@ -631,10 +635,13 @@ actor ProjectStore {
         guard record.stackFile == "\(layerID.uuidString).corrections.json", sourceOK,
               source.deep == nil, source.image.bitsPerComponent <= 8, !DeepLayer.isHDR(source.image),
               source.image.width == stack.sourceWidth, source.image.height == stack.sourceHeight,
-              stack.schemaVersion == LayerCorrectionStackPersistentState.schemaVersion,
+              stack.schemaVersion == 1 || stack.schemaVersion == LayerCorrectionStackPersistentState.schemaVersion,
               !stack.nodes.isEmpty, stack.nodes.count <= LayerCorrectionStack.maximumNodes else {
             throw ProjectError.invalid
         }
+        let hasFull = stack.nodes.contains { $0.kind == .cameraRawFull }
+        // Schema 1 stacks and geometry-only v23 packages cannot carry full Camera Raw.
+        if hasFull, stack.schemaVersion < 2 { throw ProjectError.invalid }
         do {
             let live = try stack.makeStack(source: source)
             // Display size must match a fresh render for dimension-preserving stacks.

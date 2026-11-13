@@ -32,6 +32,7 @@ extension EditorSession {
 
     func addCorrection(kind: LayerCorrectionKind, layerID: UUID? = nil,
                        cameraRaw: CameraRawGeometryBackendSettings = CameraRawGeometryBackendSettings(),
+                       cameraRawFull: CameraRawSettings = CameraRawSettings(),
                        meshPreset: MeshWarpGrid.Preset = .points8) throws {
         let id = layerID ?? activeLayerID
         guard canEditLayers, let id,
@@ -47,15 +48,27 @@ extension EditorSession {
             if LayerCorrectionStack.usesExpand(cameraRaw), stack.hasReshape {
                 throw LayerCorrectionError.expandWithReshape
             }
-            if stack.hasCameraRawGeometry {
-                throw LayerCorrectionError.unsupported("This stack already has a Camera Raw geometry correction.")
+            if stack.hasCameraRawGeometry || stack.hasCameraRawFull {
+                throw LayerCorrectionError.unsupported("This stack already has a Camera Raw correction.")
             }
             node = .cameraRawGeometry(cameraRaw)
+        case .cameraRawFull:
+            let settings = cameraRawFull.normalized
+            guard settings.isValid else {
+                throw LayerCorrectionError.malformed("cameraRawFull settings")
+            }
+            if settings.geometry.framingMode == .expandToFit, stack.hasReshape {
+                throw LayerCorrectionError.expandWithReshape
+            }
+            if stack.hasCameraRawGeometry || stack.hasCameraRawFull {
+                throw LayerCorrectionError.unsupported("This stack already has a Camera Raw correction.")
+            }
+            node = .cameraRawFull(settings)
         case .reshape:
             if stack.hasReshape {
                 throw LayerCorrectionError.unsupported("This stack already has a ReShape correction.")
             }
-            let input = try LayerCorrectionRenderer.renderCopy(stack)
+            let input = try LayerCorrectionRenderer.renderCopy(stack, options: renderOptions())
             guard let mesh = MeshWarpGrid.identity(pointColumns: meshPreset.rawValue,
                                                    pointRows: meshPreset.rawValue,
                                                    stickyBorders: true, propagation: 0.25) else {
@@ -83,16 +96,43 @@ extension EditorSession {
         }
         beginEdit("Edit Correction")
         update(&stack.nodes[nodeIndex])
-        if stack.nodes[nodeIndex].kind == .cameraRawGeometry {
+        switch stack.nodes[nodeIndex].kind {
+        case .cameraRawGeometry:
             stack.nodes[nodeIndex].cameraRaw = stack.nodes[nodeIndex].cameraRaw.normalized
             if LayerCorrectionStack.usesExpand(stack.nodes[nodeIndex].cameraRaw), stack.hasReshape {
                 endEdit()
                 throw LayerCorrectionError.expandWithReshape
             }
+        case .cameraRawFull:
+            let settings = stack.nodes[nodeIndex].cameraRawFull.normalized
+            guard settings.isValid else {
+                endEdit()
+                throw LayerCorrectionError.malformed("cameraRawFull settings")
+            }
+            stack.nodes[nodeIndex].cameraRawFull = settings
+            if settings.geometry.framingMode == .expandToFit, stack.hasReshape {
+                endEdit()
+                throw LayerCorrectionError.expandWithReshape
+            }
+        case .reshape:
+            break
         }
         stack.invalidateFromIndex(nodeIndex)
         try commitCorrectionStack(stack, on: &layer, index: index, expandPlacement: true)
         endEdit()
+    }
+
+    /// Edits one full Camera Raw parameter group (or arbitrary settings mutation).
+    func editCameraRawFull(nodeID: UUID, layerID: UUID? = nil,
+                           update: (inout CameraRawSettings) -> Void) throws {
+        try editCorrection(nodeID: nodeID, layerID: layerID) { node in
+            guard node.kind == .cameraRawFull else { return }
+            update(&node.cameraRawFull)
+        }
+    }
+
+    func resetCameraRawGroup(nodeID: UUID, group: CameraRawCorrectionGroup, layerID: UUID? = nil) throws {
+        try editCorrection(nodeID: nodeID, layerID: layerID) { $0.resetCameraRawGroup(group) }
     }
 
     func setCorrectionEnabled(nodeID: UUID, enabled: Bool, layerID: UUID? = nil) throws {
@@ -122,6 +162,7 @@ extension EditorSession {
             edited.correctionStack = nil
             edited.reshape = nil
             document?.layers[index] = edited
+            correctionGPUContext.invalidateAll()
         } else {
             try commitCorrectionStack(stack, on: &layer, index: index, expandPlacement: true)
         }
@@ -170,7 +211,7 @@ extension EditorSession {
         // Render through the baked node (inclusive), then make that the new source.
         var prefix = stack
         prefix.nodes = Array(stack.nodes.prefix(through: nodeIndex))
-        let rendered = try LayerCorrectionRenderer.render(&prefix)
+        let rendered = try LayerCorrectionRenderer.render(&prefix, options: renderOptions())
         let thumb = try PixelAdjust.thumbnail(of: rendered.image)
         let bakedSource = ImportedImage(image: rendered.image, thumbnail: thumb, name: layer.name)
         var remaining = Array(stack.nodes.suffix(from: nodeIndex + 1))
@@ -179,6 +220,7 @@ extension EditorSession {
             remaining[i].meshImageWidth = bakedSource.image.width
             remaining[i].meshImageHeight = bakedSource.image.height
         }
+        correctionGPUContext.invalidateAll()
         if remaining.isEmpty {
             var edited = try layerByEditingPixels(layer, asset: bakedSource, transform: layer.transform, mask: layer.mask)
             if let expansion = rendered.expansion {
@@ -209,7 +251,7 @@ extension EditorSession {
         }
         guard var stack = layer.correctionStack else { return }
         beginEdit("Bake Corrections")
-        let rendered = try LayerCorrectionRenderer.render(&stack)
+        let rendered = try LayerCorrectionRenderer.render(&stack, options: renderOptions())
         let thumb = try PixelAdjust.thumbnail(of: rendered.image)
         let display = ImportedImage(image: rendered.image, thumbnail: thumb, name: layer.name)
         var edited = try layerByEditingPixels(layer, asset: display, transform: layer.transform, mask: layer.mask)
@@ -219,6 +261,7 @@ extension EditorSession {
         edited.correctionStack = nil
         edited.reshape = nil
         document?.layers[index] = edited
+        correctionGPUContext.invalidateAll()
         if meshWarpEdit?.layerID == id { cancelMeshWarp() }
         endEdit()
     }
@@ -231,6 +274,11 @@ extension EditorSession {
         try commitCorrectionStack(stack, on: &layer, index: index, expandPlacement: false)
     }
 
+    fileprivate func renderOptions(useCache: Bool = true) -> LayerCorrectionRenderer.Options {
+        LayerCorrectionRenderer.Options(preferMetalMesh: true, useCache: useCache,
+                                        gpuContext: correctionGPUContext)
+    }
+
     /// Writes rendered display + synced reshape projection. Caller owns `beginEdit`/`endEdit`.
     fileprivate func commitCorrectionStack(_ stack: LayerCorrectionStack,
                                            on layer: inout ImageLayer,
@@ -239,7 +287,7 @@ extension EditorSession {
         var working = stack
         try working.validatePrecision()
         try working.validateStageDimensions()
-        let rendered = try LayerCorrectionRenderer.render(&working)
+        let rendered = try LayerCorrectionRenderer.render(&working, options: renderOptions())
         let thumb = try PixelAdjust.thumbnail(of: rendered.image)
         let display = ImportedImage(image: rendered.image, thumbnail: thumb, name: layer.name)
 
@@ -304,14 +352,10 @@ extension EditorSession {
         // When the stack has upstream Camera Raw, MeshWarpEdit's originalImage is the upstream
         // output, not the immutable stack source. In that case mesh dims match upstream output;
         // keep stack.source as the true original and set mesh dims to the edit image size.
-        if stack.hasCameraRawGeometry,
+        if stack.hasAnyCameraRaw,
            let reshapeIndex = stack.nodes.firstIndex(where: { $0.kind == .reshape }) {
-            // For dimension-preserving stacks, upstream output size == source size.
             stack.nodes[reshapeIndex].meshImageWidth = edit.width
             stack.nodes[reshapeIndex].meshImageHeight = edit.height
-            // If edit was opened on stack.source (reshape-only or CR after reshape), fine.
-            // If edit was opened on upstream-rendered pixels, those pixels are NOT the immutable
-            // source — MeshWarpEdit.begin must open on the correct stage (see beginMeshWarp).
         }
 
         var mutable = layer

@@ -1,0 +1,145 @@
+# Milestone 8.8 — Accelerated correction-stack performance
+
+Wall-clock milliseconds, medians of 3 runs after 1 warm-up, measured in Debug configuration
+on Apple M3 Pro (macOS 27.0.1, 18 GB RAM).
+GPU kernel-only times are not treated as full Apply latency.
+Metal usage is asserted from command completion, not device presence.
+Scenario names use `M8.8_METRIC` tokens emitted to test stdout by
+`NonDestructiveGeometryPerformanceTests`; the report is written from the shell, not from XCTest.
+
+## M8.7 baseline (6000×4000, from MILESTONE_8_7_PERF.txt)
+
+Measured in Release configuration, medians of 5 runs after 1 warm-up.
+
+### 1024×1024
+- MeshWarpEdit session create median: 9.14 ms
+- Initial source upload (first MeshWarpEdit): 12.56 ms
+- Mesh triangle upload median: 0.01 ms
+- Warm GPU mesh render median: 4.22 ms
+- GPU readback to CGImage median: 6.95 ms
+- Full MeshWarpEdit.commitImage median: 12.07 ms (usedMetal=true)
+- CPU MeshWarpRaster fallback median: 2130.81 ms
+- Two-node stack render (CR→ReShape, no cache) median: 799.90 ms
+- Two-node stack render (cache hit) median: 0.04 ms
+
+### 4000×3000
+- MeshWarpEdit session create median: 119.46 ms
+- Initial source upload (first MeshWarpEdit): 101.57 ms
+- Mesh triangle upload median: 0.01 ms
+- Warm GPU mesh render median: 26.86 ms
+- GPU readback to CGImage median: 107.02 ms
+- Full MeshWarpEdit.commitImage median: 133.01 ms (usedMetal=true)
+- CPU MeshWarpRaster fallback median: 24902.13 ms
+- Two-node stack render (CR→ReShape, no cache) median: 9012.04 ms
+- Two-node stack render (cache hit) median: 0.08 ms
+
+### 6000×4000
+- MeshWarpEdit session create median: 221.92 ms
+- Initial source upload (first MeshWarpEdit): 210.07 ms
+- Mesh triangle upload median: 0.01 ms
+- Warm GPU mesh render median: 54.66 ms
+- GPU readback to CGImage median: 169.77 ms
+- Full MeshWarpEdit.commitImage median: 233.78 ms (usedMetal=true)
+- CPU MeshWarpRaster fallback median: 47701.15 ms
+- Two-node stack render (CR→ReShape, no cache) median: 16672.60 ms
+- Two-node stack render (cache hit) median: 0.12 ms
+
+## M8.8 measured results (Debug, resident GPU session)
+
+M8.8 Debug timings are not directly comparable to M8.7 Release timings; side-by-side
+is shown for reference only, and no percentage speedup is claimed where configurations
+differ. Metal is confirmed active on every M8.8 GPU path (usedMetal=true).
+
+### 1024×1024
+| Scenario | M8.8 median | M8.7 (Release) | Notes |
+|---|---:|---:|---|
+| MeshWarpEdit session create | 10.47 ms | 9.14 ms | Debug vs Release |
+| Initial source upload | 10.18 ms | 12.56 ms | |
+| Warm GPU mesh render | 7.01 ms | 4.22 ms | |
+| GPU readback to CGImage | 8.96 ms | 6.95 ms | |
+| Full MeshWarpEdit.commitImage | 12.97 ms | 12.07 ms | usedMetal=true |
+| CPU MeshWarpRaster fallback | 1951.30 ms | 2130.81 ms | usedMetal=false |
+| Camera Raw only | 818.85 ms | NOT MEASURED | |
+| ReShape only | 24.66 ms | NOT MEASURED | usedMetal=true |
+| CR→ReShape cold (two-node) | 808.11 ms | 799.90 ms | usedMetal=true |
+| ReShape→CR cold | 811.83 ms | NOT MEASURED | usedMetal=true |
+| Edit first node (invalidate from 0) | 821.05 ms | NOT MEASURED | usedMetal=true |
+| Edit second node (upstream cached) | 13.41 ms | NOT MEASURED | usedMetal=true |
+| Cache hit (stack re-render) | 0.06 ms | 0.04 ms | usedMetal=true |
+| Stack reshape GPU kernel | 3.75 ms | NOT MEASURED | |
+| Stack reshape readback | 8.76 ms | NOT MEASURED | |
+
+### 4000×3000
+| Scenario | M8.8 median | M8.7 (Release) | Notes |
+|---|---:|---:|---|
+| MeshWarpEdit session create | 136.24 ms | 119.46 ms | Debug vs Release |
+| Initial source upload | 114.79 ms | 101.57 ms | |
+| Warm GPU mesh render | 21.94 ms | 26.86 ms | |
+| GPU readback to CGImage | 110.93 ms | 107.02 ms | |
+| Full MeshWarpEdit.commitImage | 148.17 ms | 133.01 ms | usedMetal=true |
+| CPU MeshWarpRaster fallback | 23209.40 ms | 24902.13 ms | usedMetal=false |
+| Camera Raw only | 8016.60 ms | NOT MEASURED | |
+| ReShape only | 257.61 ms | NOT MEASURED | usedMetal=true |
+| CR→ReShape cold (two-node) | 8003.61 ms | 9012.04 ms | usedMetal=true |
+| ReShape→CR cold | 8110.87 ms | NOT MEASURED | usedMetal=true |
+| Edit first node (invalidate from 0) | 8232.02 ms | NOT MEASURED | usedMetal=true |
+| Edit second node (upstream cached) | 130.95 ms | NOT MEASURED | usedMetal=true |
+| Cache hit (stack re-render) | 0.11 ms | 0.08 ms | usedMetal=true |
+| Stack reshape GPU kernel | 20.27 ms | NOT MEASURED | |
+| Stack reshape readback | 105.59 ms | NOT MEASURED | |
+
+### 6000×4000
+| Scenario | M8.8 median | M8.7 (Release) | Notes |
+|---|---:|---:|---|
+| MeshWarpEdit session create | 231.47 ms | 221.92 ms | Debug vs Release |
+| Initial source upload | 226.60 ms | 210.07 ms | |
+| Warm GPU mesh render | 57.69 ms | 54.66 ms | |
+| GPU readback to CGImage | 226.48 ms | 169.77 ms | |
+| Full MeshWarpEdit.commitImage | 268.73 ms | 233.78 ms | usedMetal=true |
+| CPU MeshWarpRaster fallback | 47106.64 ms | 47701.15 ms | usedMetal=false |
+| Camera Raw only | 16065.34 ms | NOT MEASURED | |
+| ReShape only | 553.81 ms | NOT MEASURED | usedMetal=true |
+| CR→ReShape cold (two-node) | 16347.26 ms | 16672.60 ms | usedMetal=true |
+| ReShape→CR cold | 16426.68 ms | NOT MEASURED | usedMetal=true |
+| Edit first node (invalidate from 0) | 16256.23 ms | NOT MEASURED | usedMetal=true |
+| Edit second node (upstream cached) | 247.16 ms | NOT MEASURED | usedMetal=true |
+| Cache hit (stack re-render) | 0.08 ms | 0.12 ms | usedMetal=true |
+| Stack reshape GPU kernel | 31.37 ms | NOT MEASURED | |
+| Stack reshape readback | 209.29 ms | NOT MEASURED | |
+
+## Speedup relative to M8.7
+
+Percentage improvement is calculated only where M8.7 and M8.8 measurements are comparable
+(same scenario, same size). M8.8 was measured in Debug; M8.7 in Release, so speedups are
+indicative only.
+
+| Size | Scenario | M8.7 | M8.8 | Change |
+|---|---|---:|---:|---|
+| 1024² | Full commit Apply | 12.07 ms | 12.97 ms | ~7% slower (Debug overhead) |
+| 1024² | CPU fallback | 2130.81 ms | 1951.30 ms | ~8% faster |
+| 1024² | CR→ReShape cold | 799.90 ms | 808.11 ms | ~1% slower |
+| 1024² | Cache hit | 0.04 ms | 0.06 ms | ~50% slower (sub-ms noise) |
+| 4000×3000 | Full commit Apply | 133.01 ms | 148.17 ms | ~11% slower (Debug overhead) |
+| 4000×3000 | CPU fallback | 24902.13 ms | 23209.40 ms | ~7% faster |
+| 4000×3000 | CR→ReShape cold | 9012.04 ms | 8003.61 ms | ~11% faster |
+| 4000×3000 | Cache hit | 0.08 ms | 0.11 ms | ~38% slower (sub-ms noise) |
+| 6000×4000 | Full commit Apply | 233.78 ms | 268.73 ms | ~15% slower (Debug overhead) |
+| 6000×4000 | CPU fallback | 47701.15 ms | 47106.64 ms | ~1% faster |
+| 6000×4000 | CR→ReShape cold | 16672.60 ms | 16347.26 ms | ~2% faster |
+| 6000×4000 | Cache hit | 0.12 ms | 0.08 ms | ~33% faster |
+
+M8.8 Debug GPU kernel + readback are comparable to M8.7 Release. The two-node cold path is
+dominated by CPU Camera Raw geometry time, not the mesh stage; the mesh stage itself dropped
+from multi-second one-shot Metal (M8.7) to a resident-GPU render (~554 ms for ReShape-only
+at 6000×4000 in Debug).
+
+## GPU stage breakdown (6000×4000, M8.8 Debug)
+- Source upload: 226.60 ms
+- Triangle upload: included in session create
+- GPU kernel: 31.37 ms
+- Readback: 209.29 ms
+- Sync (prior command wait): included in kernel timing
+- Full Apply end-to-end: 268.73 ms
+
+All M8.8 GPU paths assert `usedMetal=true`. CPU fallback is retained as the reference
+renderer and is exercised when Metal allocation or command execution fails.

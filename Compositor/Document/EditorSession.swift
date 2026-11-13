@@ -536,6 +536,8 @@ final class EditorSession {
     @ObservationIgnored var warpStroke: WarpStroke? { didSet { resumeFileRequests() } }
     /// ReShape mesh edit in progress.
     var meshWarpEdit: MeshWarpEdit?
+    /// Session-only resident Metal textures for correction-stack mesh stages. Never persisted.
+    @ObservationIgnored let correctionGPUContext = LayerCorrectionGPUContext()
 
     var canTransform: Bool {
         guard canEditLayers else { return false }
