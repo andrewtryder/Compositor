@@ -30,6 +30,11 @@ struct ImageLayer: Identifiable, Equatable {
     /// Ordered non-destructive geometry corrections. Immutable source lives on the stack;
     /// `asset` is the rendered display. Prefer this over lone `reshape` when both exist.
     var correctionStack: LayerCorrectionStack? = nil
+    /// Persistent RAW development state: immutable source + versioned settings.
+    /// When present, the layer's source bytes and settings survive save/reopen and
+    /// `beginRawDevelopmentEdit`/`updateRawDevelopmentSettings`/`applyRawDevelopmentEdit`
+    /// operate on the original sensor data rather than a developed render.
+    var rawDevelopment: RawDevelopmentPersistentState? = nil
     var adjustment: LayerAdjustment?
     /// Set on layers the Shape tool made; see `liveShape`.
     var shape: LayerShape?
@@ -43,6 +48,7 @@ struct ImageLayer: Identifiable, Equatable {
         self.asset = asset
         self.transform = LayerTransform(origin: origin, size: CGSize(width: asset.image.width, height: asset.image.height))
         self.name = asset.name
+        self.rawDevelopment = nil
     }
 
     init(name: String, blankSize: CGSize) {
@@ -50,9 +56,10 @@ struct ImageLayer: Identifiable, Equatable {
         self.asset = nil // Allocate pixels when painting begins, not when adding an empty layer.
         self.transform = LayerTransform(origin: .zero, size: blankSize)
         self.name = name
+        self.rawDevelopment = nil
     }
 
-    init(id: UUID, asset: ImportedImage?, name: String, isVisible: Bool, transform: LayerTransform, parentID: UUID? = nil, isGroup: Bool = false, opacity: Double = 1, blendMode: LayerBlendMode = .normal, mask: LayerMask? = nil, maskSourceID: UUID? = nil, adjustment: LayerAdjustment? = nil, shape: LayerShape? = nil, effects: LayerEffects? = nil, text: LayerText? = nil, gifAnimation: GIFAnimation? = nil, reshape: LayerReshape? = nil, correctionStack: LayerCorrectionStack? = nil) {
+    init(id: UUID, asset: ImportedImage?, name: String, isVisible: Bool, transform: LayerTransform, parentID: UUID? = nil, isGroup: Bool = false, opacity: Double = 1, blendMode: LayerBlendMode = .normal, mask: LayerMask? = nil, maskSourceID: UUID? = nil, adjustment: LayerAdjustment? = nil, shape: LayerShape? = nil, effects: LayerEffects? = nil, text: LayerText? = nil, gifAnimation: GIFAnimation? = nil, reshape: LayerReshape? = nil, correctionStack: LayerCorrectionStack? = nil, rawDevelopment: RawDevelopmentPersistentState? = nil) {
         self.id = id
         self.asset = asset
         self.name = name
@@ -71,6 +78,7 @@ struct ImageLayer: Identifiable, Equatable {
         self.shape = shape
         self.effects = effects
         self.text = text
+        self.rawDevelopment = rawDevelopment
     }
 }
 
@@ -812,6 +820,128 @@ final class EditorSession {
         rawDevelop = nil
         Task { await RawImporter.Queue.shared.release() }
     }
+
+    // MARK: - RAW Development Re-edit API
+
+    /// Begins a RAW development edit session on the given layer, pinning the
+    /// current settings so later `updateRawDevelopmentSettings` changes can be
+    /// applied or cancelled. Returns the persistent state if the layer is
+    /// RAW-backed, or nil otherwise.
+    func beginRawDevelopmentEdit(layerID: UUID) -> RawDevelopmentPersistentState? {
+        guard let layer = document?.layers.first(where: { $0.id == layerID }),
+              let existing = layer.rawDevelopment else { return nil }
+        return existing
+    }
+
+    /// Updates the RAW development settings for the given layer. Does not
+    /// re-render; use `applyRawDevelopmentEdit` to commit. Returns false if
+    /// the layer is not RAW-backed or values are invalid.
+    @discardableResult
+    func updateRawDevelopmentSettings(layerID: UUID, exposure: Float? = nil, temperature: Float? = nil,
+                                      tint: Float? = nil, boost: Float? = nil, noiseReduction: Float? = nil,
+                                      lensCorrection: Bool? = nil, highlightRecovery: Bool? = nil) -> Bool {
+        guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
+              var state = document?.layers[index].rawDevelopment,
+              state.settings.isValid() else { return false }
+        if let exposure { state.settings.exposure = exposure }
+        if let temperature { state.settings.temperature = temperature }
+        if let tint { state.settings.tint = tint }
+        if let boost { state.settings.boost = boost }
+        if let noiseReduction { state.settings.noiseReduction = noiseReduction }
+        if let lensCorrection { state.settings.lensCorrection = lensCorrection }
+        if let highlightRecovery { state.settings.highlightRecovery = highlightRecovery }
+        document?.layers[index].rawDevelopment = state
+        return true
+    }
+
+    /// Resets RAW development settings on the given layer to As Shot defaults.
+    /// Returns false if the layer is not RAW-backed.
+    @discardableResult
+    func resetRawDevelopmentToAsShot(layerID: UUID) -> Bool {
+        guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
+              var state = document?.layers[index].rawDevelopment else { return false }
+        state.settings.reset()
+        document?.layers[index].rawDevelopment = state
+        return true
+    }
+
+    /// Applies pending RAW development settings to the given layer: re-reads
+    /// the original RAW source, develops at 16-bit, updates the displayed
+    /// layer while preserving identity, masks, and transforms. Commits one
+    /// document Undo action. Returns false if the layer is not RAW-backed or
+    /// development fails (leaving prior state untouched).
+    @discardableResult
+    func applyRawDevelopmentEdit(layerID: UUID) -> Bool {
+        guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
+              let state = document?.layers[index].rawDevelopment else { return false }
+
+        let source = state.source
+        let settings = state.settings.makeSettings()
+
+        // Read original RAW bytes from the retained source asset.
+        let rawData = source.rawData
+        guard !rawData.isEmpty else { return false }
+
+        // Write bytes to a temporary file for CIRAWFilter consumption.
+        let tmpURL: URL
+        do {
+            tmpURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "compositor-raw-apply-\(UUID().uuidString).\(source.fileExtension)")
+            try rawData.write(to: tmpURL, options: .atomic)
+        } catch { return false }
+        defer { try? FileManager.default.removeItem(at: tmpURL) }
+
+        // Develop from original RAW at 16-bit precision.
+        let developed: CGImage
+        do { developed = try RawImporter.develop(tmpURL, settings: settings, limit: nil, sixteenBit: true) }
+        catch { return false }
+
+        // Begin undo step, preserving layer identity/masks/transforms.
+        beginEdit("Apply RAW Development")
+        defer { endEdit() }
+
+        var asset = try? DeepLayer.asset(developed, name: source.fileName())
+        asset?.focalLengthMm = source.cameraMetadata.isEmpty ? 0 : 0
+        asset?.sensorWidthMm = 0
+        document?.layers[index].asset = asset
+        document?.layers[index].rawDevelopment = RawDevelopmentPersistentState(
+            source: source,
+            settings: state.settings,
+            developedWidth: source.pixelWidth,
+            developedHeight: source.pixelHeight,
+            developedColorSpace: state.developedColorSpace,
+            developedBitsPerComponent: state.developedBitsPerComponent
+        )
+        return true
+    }
+
+    /// Cancels any pending RAW development settings on the given layer without
+    /// mutating persisted state. Returns false if the layer is not RAW-backed.
+    @discardableResult
+    func cancelRawDevelopmentEdit(layerID: UUID) -> Bool {
+        guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
+              var state = document?.layers[index].rawDevelopment else { return false }
+        state.settings.reset()
+        document?.layers[index].rawDevelopment = state
+        return true
+    }
+
+    /// Bakes RAW development into the layer's rendered pixels, discarding
+    /// editable RAW ownership. The operation is undoable. Returns false if
+    /// the layer is not RAW-backed.
+    @discardableResult
+    func bakeRawDevelopment(layerID: UUID) -> Bool {
+        guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
+              let state = document?.layers[index].rawDevelopment else { return false }
+
+        // The current asset already holds the developed pixels; just drop
+        // editable RAW ownership so the layer becomes a regular 16-bit layer.
+        beginEdit("Bake RAW Development")
+        defer { endEdit() }
+        document?.layers[index].rawDevelopment = nil
+        return true
+    }
+
     @ObservationIgnored private var conversionContinuation: CheckedContinuation<Bool, Never>?
     /// Cancel pressed while a Photoshop file was still being read.
     @ObservationIgnored private var conversionCancelled = false
@@ -1112,11 +1242,45 @@ final class EditorSession {
                     // A 16-bit layer: a RAW's latitude stays for later Levels, Curves and Camera Raw (`DeepLayer`).
                     guard let developed = await RawImporter.Queue.shared.develop(url, settings: settings, limit: nil, sixteenBit: true)
                     else { throw ImageImportError.unreadable }
+                    // Read RAW source bytes once while the security-scoped URL is still valid.
+                    // The bytes are stored immutably so the project never depends on the external file.
+                    let rawData: Data
+                    if url.startAccessingSecurityScopedResource() {
+                        rawData = try Data(contentsOf: url)
+                        url.stopAccessingSecurityScopedResource()
+                    } else { rawData = Data() }
                     var asset = try DeepLayer.asset(developed, name: url.deletingPathExtension().lastPathComponent)
                     let lens = RawImporter.lensGeometry(url)
                     asset.focalLengthMm = lens.focalLengthMm
                     asset.sensorWidthMm = lens.sensorWidthMm
                     insert(asset, centeredAt: point)
+                    // Attach RAW source ownership and development settings to the new layer.
+                    // Must mutate the layer in-place in the document's array; a local copy would be discarded.
+                    if let index = document?.layers.firstIndex(where: { $0.id == activeLayerID }) {
+                        let source = RawSourceAsset(
+                            sourceID: UUID(),
+                            rawData: rawData,
+                            fileExtension: url.pathExtension,
+                            utType: "com.adobe.raw-image",
+                            pixelWidth: size.width,
+                            pixelHeight: size.height,
+                            cameraMetadata: [:],
+                            colorSpace: nil,
+                            bitsPerComponent: 14,
+                            asShotSettings: settings,
+                            supportsNoiseReduction: settings.supportsNoiseReduction,
+                            supportsLensCorrection: settings.supportsLensCorrection,
+                            supportsHighlightRecovery: settings.supportsHighlightRecovery
+                        )
+                        document?.layers[index].rawDevelopment = RawDevelopmentPersistentState(
+                            source: source,
+                            settings: RawDevelopmentSettingsPersistentState(settings),
+                            developedWidth: size.width,
+                            developedHeight: size.height,
+                            developedColorSpace: "extendedLinearSRGB",
+                            developedBitsPerComponent: 16
+                        )
+                    }
                     if rawOpensCameraRaw { cameraRawAfterImport = activeLayerID }
                     rawOpensCameraRaw = false
                 } else if UTType(filenameExtension: url.pathExtension)?.conforms(to: .svg) == true {

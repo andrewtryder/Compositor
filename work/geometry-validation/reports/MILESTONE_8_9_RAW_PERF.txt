@@ -1,0 +1,47 @@
+M8.9 RAW Performance Metrics
+============================
+
+NOTE: All performance values below are NOT MEASURED. No actual timing
+harness was run, no real RAW/DNG fixture was captured, and no logs were
+collected. The approximate values from a previous report are estimates only
+and are not presented as actual benchmarks.
+
+Measured on: NOT MEASURED
+Build configuration: NOT MEASURED
+Fixture dimensions: NOT MEASURED (no real RAW/DNG fixture available)
+Sample counts: NOT MEASURED
+
+Initial RAW Decode (full resolution): NOT MEASURED
+Warm decoder reuse: NOT MEASURED
+Exposure Parameter Change: NOT MEASURED
+White-Balance Change: NOT MEASURED
+Tint Adjustment: NOT MEASURED
+Boost Change: NOT MEASURED
+Noise Reduction: NOT MEASURED
+Lens Correction: NOT MEASURED
+Highlight Recovery: NOT MEASURED
+Full-Resolution 16-Bit Development: NOT MEASURED
+8-Bit Dithered Conversion: NOT MEASURED
+Project Save (with RAW source): NOT MEASURED
+Project Reload (with RAW source): NOT MEASURED
+First Display After Reopening: NOT MEASURED
+Peak Memory (RAW + developed): NOT MEASURED
+RAW Demosaicing Time: NOT MEASURED
+Core Image Rendering: NOT MEASURED
+GPU Work: NOT MEASURED
+CPU Conversion: NOT MEASURED
+Downstream Corrections: NOT MEASURED
+Disk I/O: NOT MEASURED
+
+No Silent 8-Bit Conversion: NOT MEASURED (verified by code inspection only)
+RAW + Camera Raw → ReShape: NOT MEASURED
+RAW → ReShape → Camera Raw: NOT MEASURED
+No Cumulative Resampling: NOT MEASURED
+Undo/Redo: NOT MEASURED (code paths exist, not executed in tests)
+Explicit RAW Bake: NOT MEASURED
+Duplicate Layer Source Sharing: NOT MEASURED
+Mask and Transform Preservation: NOT MEASURED
+Export Matches Current Developed State: NOT MEASURED
+Legacy v22/v23/v24 Compatibility: NOT MEASURED
+Color-Space Consistency: NOT MEASURED
+16-Bit Development Precision: NOT MEASURED (verified by code inspection only)

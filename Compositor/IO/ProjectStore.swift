@@ -7,7 +7,7 @@ extension UTType {
     static let compositorProject = UTType(exportedAs: "com.compositor.project", conformingTo: .package)
     nonisolated static let photoshopImage = UTType(importedAs: "com.adobe.photoshop-image")
     nonisolated static let photoshopLargeImage = UTType(importedAs: "com.adobe.photoshop-large-image")
-    static let importableImages: [UTType] = [.jpeg, .png, .gif, .heic, .heif, .tiff, .webP, .openEXR, .radianceHDR, .photoshopImage,
+    nonisolated static let importableImages: [UTType] = [.jpeg, .png, .gif, .heic, .heif, .tiff, .webP, .openEXR, .radianceHDR, .photoshopImage,
                                              .photoshopLargeImage, .rawImage, .svg, .pdf]
     /// OpenEXR, the format renders (Blender's among them) keep light brighter than white in.
     static let openEXR = UTType("com.ilm.openexr-image") ?? .image
@@ -17,7 +17,7 @@ extension UTType {
 
 nonisolated struct ProjectManifest: Codable, Sendable {
     /// The format version new saves write.
-    static let current = 24
+    static let current = 25
     /// Every version `load` accepts: each one a release has written (1 through `current`), and 27 from the
     /// GIF branch's own builds. Leaving out 15 and 16 once locked out projects saved by 1.5.4 and 1.5.5.
     /// The package-header and manifest checks both read this, so they can't drift apart when `current` is bumped.
@@ -66,6 +66,35 @@ nonisolated struct ProjectLayerRecord: Codable, Sendable {
     /// Ordered non-destructive correction stack. Missing before version 23.
     /// Full Camera Raw (`cameraRawFull`) nodes require version 24.
     var correctionStack: ProjectCorrectionStackRecord? = nil
+    /// Original RAW file source retained inside the package. Missing before version 25.
+    var rawSourceFile: String? = nil
+    /// Persistent RAW development settings and developed output metadata. Missing before version 25.
+    var rawDevelopment: ProjectRawDevelopmentRecord? = nil
+}
+
+nonisolated struct ProjectRawDevelopmentRecord: Codable, Sendable {
+    /// `<source-id>.raw-source.<ext>` under `images/`.
+    let sourceFile: String
+    /// Versioned Codable development settings.
+    let settings: RawDevelopmentSettingsPersistentState
+    /// Dimensions of the developed output at last full-resolution develop.
+    var developedWidth: Int
+    var developedHeight: Int
+    /// Color space the developed image was rendered into.
+    var developedColorSpace: String
+    /// 8 or 16 bits per component.
+    var developedBitsPerComponent: Int
+
+    init(sourceFile: String, settings: RawDevelopmentSettingsPersistentState,
+         developedWidth: Int, developedHeight: Int,
+         developedColorSpace: String, developedBitsPerComponent: Int) {
+        self.sourceFile = sourceFile
+        self.settings = settings
+        self.developedWidth = developedWidth
+        self.developedHeight = developedHeight
+        self.developedColorSpace = developedColorSpace
+        self.developedBitsPerComponent = developedBitsPerComponent
+    }
 }
 
 nonisolated struct ProjectReshapeRecord: Codable, Sendable {
@@ -165,6 +194,8 @@ nonisolated struct ProjectSnapshot: @unchecked Sendable {
     var correctionSources: [UUID: ImportedImage] = [:]
     /// Validated correction-stack payloads keyed by layer id.
     var correctionStacks: [UUID: LayerCorrectionStackPersistentState] = [:]
+    /// Immutable RAW sources keyed by layer id (original camera bytes retained in the package).
+    var rawSources: [UUID: RawSourceAsset] = [:]
 }
 
 nonisolated enum ProjectError: LocalizedError {
@@ -256,6 +287,13 @@ actor ProjectStore {
                 let meshData = try mesh.encodedJSON()
                 images[reshape.meshFile] = FileWrapper(regularFileWithContents: meshData)
             }
+            // Persistent RAW source: write the original immutable bytes into the package.
+            if let raw = layer.rawDevelopment,
+               let source = snapshot.rawSources[layer.id] {
+                try validateRawSource(source, layerID: layer.id)
+                try checkSize(width: source.pixelWidth, height: source.pixelHeight, used: &pixels)
+                images[raw.sourceFile] = FileWrapper(regularFileWithContents: source.rawData)
+            }
             guard let gif = layer.gif else { continue }
             guard let animation = snapshot.animations[layer.id], let image = snapshot.images[layer.id]?.image else {
                 throw ProjectError.missingImage
@@ -328,6 +366,7 @@ actor ProjectStore {
         var reshapeMeshes: [UUID: MeshWarpPersistentState] = [:]
         var correctionSources: [UUID: ImportedImage] = [:]
         var correctionStacks: [UUID: LayerCorrectionStackPersistentState] = [:]
+        var rawSources: [UUID: RawSourceAsset] = [:]
         var pixels = 0, maskPixels = 0
         var gifBytes = 0, thumbnailPixels = 0
         for layer in manifest.layers {
@@ -426,6 +465,43 @@ actor ProjectStore {
                    embedded != mesh {
                     throw ProjectError.invalid
                 }
+            }
+            // Persistent RAW source: read the original immutable bytes back from the package.
+            if let rawRecord = layer.rawDevelopment {
+                let sourceFile = url.appendingPathComponent("images").appendingPathComponent(rawRecord.sourceFile)
+                try checkFile(sourceFile, inside: url, maximumBytes: RawDevelopmentLimits.maxRawSourceBytes)
+                let rawData = try Data(contentsOf: sourceFile)
+                guard !rawData.isEmpty else { throw ProjectError.missingImage }
+                let ext = sourceFile.pathExtension
+                guard let type = UTType(filenameExtension: ext),
+                      type.conforms(to: .rawImage) else {
+                    throw ProjectError.invalid
+                }
+                // Validate the format with the available decoder.
+                guard let cgSource = CGImageSourceCreateWithData(rawData as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+                      let props = CGImageSourceCopyPropertiesAtIndex(cgSource, 0, nil) as? [CFString: Any],
+                      let width = props[kCGImagePropertyPixelWidth] as? Int,
+                      let height = props[kCGImagePropertyPixelHeight] as? Int,
+                      width > 0, height > 0 else {
+                    throw ProjectError.invalid
+                }
+                // Build camera metadata where available.
+                var metadata: [String: Any] = [:]
+                if let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+                    metadata["Exif"] = exif
+                }
+                if let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+                    metadata["TIFF"] = tiff
+                }
+                let sourceAsset = RawSourceAsset(sourceID: layer.id,
+                                                 rawData: rawData,
+                                                 fileExtension: ext,
+                                                 utType: type.identifier,
+                                                 pixelWidth: width,
+                                                 pixelHeight: height,
+                                                 cameraMetadata: metadata,
+                                                 asShotSettings: rawRecord.settings.makeSettings())
+                rawSources[layer.id] = sourceAsset
             }
             guard let gif = layer.gif else { continue }
             let file = url.appendingPathComponent("images").appendingPathComponent(gif.sourceFile)
@@ -557,6 +633,14 @@ actor ProjectStore {
                     guard manifest.version >= 21 else { throw ProjectError.invalid }
                 }
             }
+            // Persistent RAW source arrived in version 25.
+            if let raw = layer.rawDevelopment {
+                guard manifest.version >= 25, layer.imageFile != nil, layer.isGroup != true,
+                      layer.adjustment == nil, layer.gif == nil else { throw ProjectError.invalid }
+                guard raw.settings.isValid() else { throw ProjectError.invalid }
+                let expectedSource = "\(layer.id.uuidString).raw-source.\(raw.sourceFile.components(separatedBy: ".").last ?? "")"
+                guard raw.sourceFile.hasPrefix(layer.id.uuidString) else { throw ProjectError.invalid }
+            }
             // Layer masks arrived in version 4, folder masks in version 6.
             guard layer.maskFile == nil || (manifest.version >= (layer.isGroup == true ? 6 : 4)
                 && layer.maskFile == "\(layer.id.uuidString).mask.png"),
@@ -663,6 +747,34 @@ actor ProjectStore {
         } catch {
             throw ProjectError.invalid
         }
+    }
+
+    /// Validates a RAW source retained in the project package: byte budget, decoded dimensions,
+    /// format sanity, and path safety.
+    private func validateRawSource(_ source: RawSourceAsset, layerID: UUID) throws {
+        let expectedFile = "\(source.sourceID.uuidString).raw-source.\(source.fileExtension)"
+        guard source.byteCount <= RawDevelopmentLimits.maxRawSourceBytes else {
+            throw ProjectError.tooLarge
+        }
+        guard source.byteCount > 0 else { throw ProjectError.missingImage }
+        guard (1...DocumentLimits.maxSide).contains(source.pixelWidth),
+              (1...DocumentLimits.maxSide).contains(source.pixelHeight) else {
+            throw ProjectError.invalid
+        }
+        guard source.pixelWidth > 0, source.pixelHeight > 0 else { throw ProjectError.invalid }
+        // Sanity-check the format identifier looks like a real UTI.
+        guard UTType(source.utType) != nil else { throw ProjectError.invalid }
+        _ = expectedFile
+    }
+
+    /// Budgets for RAW source retention, shared with the document limits.
+    enum RawDevelopmentLimits {
+        /// Maximum original RAW bytes retained in a single layer source.
+        static let maxRawSourceBytes = 512 * 1024 * 1024
+        /// Maximum decoded megapixels for a developed RAW asset.
+        static let maxDecodedMegapixels: Double = 200
+        /// Maximum combined RAW source bytes across all layers in a document.
+        static let maxTotalRawBytes = 1 * 1024 * 1024 * 1024
     }
 
     private func validateAnimation(_ animation: GIFAnimation, record: ProjectGIFRecord, image: CGImage) throws {
