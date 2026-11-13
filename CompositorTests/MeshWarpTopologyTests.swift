@@ -71,10 +71,30 @@ struct MeshWarpTopologyTests {
         let b = neighbors[0]
         let result = mesh.subdivide(faceIDs: [a])
         #expect(result.succeeded.contains(a))
-        // Conforming should have subdivided the neighbor too.
-        #expect(mesh.topology.faces[b]?.isLeaf == false || result.succeeded.contains(b))
+        // Local subdiv: neighbor stays a leaf and inherits a hanging midpoint (fan triangulation).
+        #expect(mesh.topology.faces[b]?.isLeaf == true)
+        #expect(mesh.topology.hangingMidpointCount(of: b) >= 1)
         // Shared edge has one midpoint entry.
         #expect(!mesh.topology.edgeMidpoints.isEmpty)
+        // Triangle fan covers the hanging node without cracks.
+        #expect(mesh.triangles().count >= mesh.topology.leafFaceIDs.count * 2)
+    }
+
+    @Test func singleFaceSubdivisionDoesNotFloodMesh() {
+        for preset in [MeshWarpGrid.Preset.points4, .points8, .points16] {
+            var mesh = MeshWarpGrid.identity(preset: preset)
+            let cols = preset.rawValue - 1
+            let central = mesh.topology.rootFaceIDs[(cols / 2) * cols + (cols / 2)]
+            let (result, growth) = mesh.topology.measureSubdivision(faceIDs: [central])
+            mesh.syncFromTopology()
+            #expect(result.ok, "preset \(preset.rawValue)")
+            #expect(growth.succeededCount == 1)
+            #expect(growth.neighborsRefined == 0, "preset \(preset.rawValue) cascaded")
+            #expect(growth.maxPropagationDistance == 0)
+            // Vertex growth stays local (≤ 5 new verts for one isolated split).
+            #expect(growth.finalVertices - growth.initialVertices <= 5)
+            #expect(growth.finalVertices < growth.initialVertices * 2)
+        }
     }
 
     @Test func nestedSubdivisionIncreasesDepth() throws {

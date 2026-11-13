@@ -159,6 +159,79 @@ struct MeshWarpPerformanceTests {
         }
         #expect(report.count == 4, Comment(rawValue: payload))
     }
+
+    @Test func localCorrectionAndAdaptiveWarmMedians() throws {
+        let sizes = [(1024, 1024), (4000, 3000), (6000, 4000)]
+        var lines: [String] = ["build=Debug; local+adaptive ReShape"]
+        for (width, height) in sizes {
+            let source = try solid(width: width, height: height)
+            var regular = MeshWarpGrid.identity(preset: .points8, stickyBorders: false, propagation: 0.2)
+            var ids: Set<MeshWarpVertexID> = []
+            for r in 2...5 {
+                for c in 2...5 { ids.insert(regular.vertexID(regular.index(column: c, row: r))) }
+            }
+            let region = MeshWarpCorrectionRegion(vertexIDs: ids)
+            let volume = MeshWarpLocalVolume(mode: .horizontal, strength: 0.1)
+
+            var transformSamples: [Double] = []
+            var validitySamples: [Double] = []
+            for _ in 0..<8 {
+                var trial = regular
+                let t0 = CFAbsoluteTimeGetCurrent()
+                _ = trial.applyLocalCorrection(.volume(volume), region: region,
+                                               imageWidth: width, imageHeight: height)
+                transformSamples.append((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+                let t1 = CFAbsoluteTimeGetCurrent()
+                _ = MeshWarpGrid.leafTrianglesValid(trial.topology)
+                validitySamples.append((CFAbsoluteTimeGetCurrent() - t1) * 1000)
+            }
+
+            var adaptive = regular
+            let face = adaptive.topology.rootFaceIDs[24]
+            _ = adaptive.subdivide(faceIDs: [face])
+            var rebuildSamples: [Double] = []
+            for _ in 0..<8 {
+                let t0 = CFAbsoluteTimeGetCurrent()
+                _ = adaptive.triangles()
+                rebuildSamples.append((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+            }
+
+            var gpuRegular: [Double] = []
+            var gpuAdaptive: [Double] = []
+            if MetalMeshWarp.shared != nil {
+                let session = try #require(MetalMeshWarpSession(image: source))
+                for i in 0..<5 {
+                    var sample = MetalMeshWarpSession.Sample()
+                    #expect(session.render(mesh: regular, sample: &sample, wait: true))
+                    if i >= 1 { gpuRegular.append(sample.kernelMilliseconds) }
+                }
+                // Apply local correction then re-render; source stays resident.
+                _ = regular.applyLocalCorrection(.volume(volume), region: region,
+                                                 imageWidth: width, imageHeight: height)
+                for i in 0..<5 {
+                    var sample = MetalMeshWarpSession.Sample()
+                    #expect(session.render(mesh: regular, sample: &sample, wait: true))
+                    if i >= 1 { gpuRegular.append(sample.kernelMilliseconds) }
+                }
+                for i in 0..<5 {
+                    var sample = MetalMeshWarpSession.Sample()
+                    #expect(session.render(mesh: adaptive, sample: &sample, wait: true))
+                    if i >= 1 { gpuAdaptive.append(sample.kernelMilliseconds) }
+                }
+                session.invalidate()
+            }
+
+            lines.append(
+                "\(width)x\(height) localXform=\(fmt(transformSamples))ms validity=\(fmt(validitySamples))ms " +
+                "triRebuild=\(fmt(rebuildSamples))ms gpuKernelRegular=\(fmt(gpuRegular))ms " +
+                "gpuKernelAdaptive=\(fmt(gpuAdaptive))ms"
+            )
+        }
+        let text = lines.joined(separator: "\n")
+        try? text.write(toFile: "/tmp/MILESTONE_8_4_LOCAL_PERF.txt", atomically: true, encoding: .utf8)
+        FileHandle.standardError.write(Data("LOCAL_PERF_BEGIN\n\(text)\nLOCAL_PERF_END\n".utf8))
+        #expect(lines.count == 4)
+    }
 }
 
 private extension ProcessInfo {
