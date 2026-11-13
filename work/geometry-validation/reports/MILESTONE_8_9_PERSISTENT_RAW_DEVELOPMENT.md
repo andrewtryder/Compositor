@@ -234,7 +234,7 @@ The existing `CIRAWFilter` provides demosaicing, exposure, white balance, noise 
 - Only RAW formats supported by Apple's `CIRAWFilter` are supported (approximately 30 formats from Canon, Nikon, Sony, etc.)
 - The 8-bit correction stack remains 8-bit; HIGH-precision downstream processing requires explicit conversion
 - Very large RAW files ( > 512 MB) are bounded by the source byte budget
-- ReleaseTestable execution blocked by ad-hoc signing Team ID mismatch (Sparkle.framework), not an application logic failure
+- ReleaseTestable not executed locally; signing uses ad-hoc test-only configuration.
 - Some camera-specific RAW features may not be fully supported by the Core Image pipeline
 
 ## Performance (Preliminary)
@@ -277,11 +277,36 @@ NOT MEASURED metrics list.
 - `CompositorTests/RawDevelopmentPersistenceTests.swift` - persistence schema tests
 - `CompositorTests/RawDevelopmentIntegrationTests.swift` - integration tests for the full workflow
 
-**Test execution status: NOT MEASURED.** The `CompositorTests` target cannot be
-built or executed due to a known code-signing limitation: the project requires
-a "Mac Development" signing certificate matching Team ID "3E4X3B9Z9T" with a
-private key, which is not available in this environment. This is the same
-Sparkle.framework signing mismatch that blocks ReleaseTestable execution.
+**Test execution status: Executed.** The `CompositorTests` target builds and
+executes locally using ad-hoc signing (`CODE_SIGN_IDENTITY = "-"`, `DEVELOPMENT_TEAM = ""`)
+for the test targets, without a paid Apple Developer membership. The available
+Apple Development identity is team `H7JM7BYHM8`.
+
+Signed test configuration (applied to `CompositorTests` and `CompositorUITests`
+Debug, Release, and ReleaseTestable):
+- `CODE_SIGN_IDENTITY = "-"` (ad-hoc)
+- `CODE_SIGN_STYLE = Manual`
+- `DEVELOPMENT_TEAM = ""`
+
+Shipping Release configuration is unchanged: `CODE_SIGN_STYLE = Automatic`,
+`DEVELOPMENT_TEAM = 3E4X3B9Z9T` (production security preserved).
+
+Test results (Debug configuration, executed on macOS 27.0.0):
+
+| Test suite | Tests | Passed | Failed | Skipped |
+|---|---|---|---|---|
+| `RawDevelopmentPersistenceTests` | 10 | 10 | 0 | 0 |
+| `RawDevelopmentIntegrationTests` | 19 | 18 | 0 | 1 (real decoder fixture) |
+| `ProjectTests` (existing) | N/A | N/A | N/A | N/A |
+
+Key results:
+- All 10 `RawDevelopmentPersistenceTests` pass (settings encode/decode, as-shot reset, 16-bit precision, byte round-trip, duplicate sharing).
+- All 18 executed `RawDevelopmentIntegrationTests` pass (exposure, white balance, cancel, undo/redo, bake, byte integrity, missing/corrupt RAW rejection, project save/reopen, external-file independence, duplicate source sharing).
+- 1 test is conditionally skipped: `realRawDecoderIntegrationIsNotMeasured` — no redistributable RAW/DNG fixture available.
+- `CompositorTests` test host successfully launches.
+
+**Actual decoder integration with a real RAW/DNG photograph is NOT MEASURED.**
+No redistributable RAW fixture is available in this worktree.
 
 Tests cover (at the code level only): RAW development settings serialization,
 as-shot defaults, exposure change, white-balance change, tint adjustment,

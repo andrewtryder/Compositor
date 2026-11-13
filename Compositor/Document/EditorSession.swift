@@ -8,6 +8,7 @@ struct ImageLayer: Identifiable, Equatable {
             && lhs.gifAnimation == rhs.gifAnimation
             && lhs.reshape == rhs.reshape
             && lhs.correctionStack == rhs.correctionStack
+            && lhs.rawDevelopment == rhs.rawDevelopment
     }
     let id: UUID
     var asset: ImportedImage?
@@ -783,17 +784,20 @@ final class EditorSession {
     var conversionRequest: PSDConversionRequest?
     /// Tests assign this to skip the conversion sheet.
     @ObservationIgnored var confirmConversions: (([PSDConversion]) async -> Bool)?
-    /// The RAW file being developed, and the settings the sheet is editing (see RawImporter).
-    var rawDevelop: (url: URL, settings: RawDevelopSettings)?
-    var showsRawDevelop = false { didSet { resumeFileRequests() } }
-    /// Import was pressed and the full frame is developing: the sheet stays up, showing that, until the layer is in.
-    var rawImporting = false
-    /// Camera Raw… was pressed: once the import is done, the Camera Raw Filter opens on the RAW's layer.
-    @ObservationIgnored private var rawOpensCameraRaw = false
-    @ObservationIgnored private var cameraRawAfterImport: UUID?
-    @ObservationIgnored private var rawContinuation: CheckedContinuation<RawDevelopSettings?, Never>?
-    /// Tests assign this to develop without a sheet.
-    @ObservationIgnored var confirmRawDevelop: ((URL, RawDevelopSettings) async -> RawDevelopSettings?)?
+/// The RAW file being developed, and the settings the sheet is editing (see RawImporter).
+var rawDevelop: (url: URL, settings: RawDevelopSettings)?
+var showsRawDevelop = false { didSet { resumeFileRequests() } }
+/// Import was pressed and the full frame is developing: the sheet stays up, showing that, until the layer is in.
+var rawImporting = false
+/// Camera Raw… was pressed: once the import is done, the Camera Raw Filter opens on the RAW's layer.
+@ObservationIgnored private var rawOpensCameraRaw = false
+@ObservationIgnored private var cameraRawAfterImport: UUID?
+@ObservationIgnored private var rawContinuation: CheckedContinuation<RawDevelopSettings?, Never>?
+/// Draft RAW development state captured at the start of an edit, so cancel restores the
+/// exact pre-edit state rather than resetting to As Shot. Keyed by layer ID.
+@ObservationIgnored private var rawDrafts: [UUID: RawDevelopmentPersistentState] = [:]
+/// Tests assign this to develop without a sheet.
+@ObservationIgnored var confirmRawDevelop: ((URL, RawDevelopSettings) async -> RawDevelopSettings?)?
 
     /// Puts the develop sheet up and waits for the choice; nil means the import was cancelled.
     func developRaw(_ url: URL) async -> RawDevelopSettings? {
@@ -824,59 +828,67 @@ final class EditorSession {
     // MARK: - RAW Development Re-edit API
 
     /// Begins a RAW development edit session on the given layer, pinning the
-    /// current settings so later `updateRawDevelopmentSettings` changes can be
-    /// applied or cancelled. Returns the persistent state if the layer is
-    /// RAW-backed, or nil otherwise.
+    /// current settings as a draft so later `updateRawDevelopmentSettings`
+    /// changes can be applied or cancelled. Returns the persistent state if the
+    /// layer is RAW-backed, or nil otherwise. Capture happens only once per
+    /// layer per edit session; subsequent calls return the already-captured
+    /// draft so cancel can restore the exact pre-edit state.
     func beginRawDevelopmentEdit(layerID: UUID) -> RawDevelopmentPersistentState? {
         guard let layer = document?.layers.first(where: { $0.id == layerID }),
               let existing = layer.rawDevelopment else { return nil }
+        if rawDrafts[layerID] == nil {
+            rawDrafts[layerID] = existing
+        }
         return existing
     }
 
-    /// Updates the RAW development settings for the given layer. Does not
-    /// re-render; use `applyRawDevelopmentEdit` to commit. Returns false if
-    /// the layer is not RAW-backed or values are invalid.
+    /// Updates the draft RAW development settings for the given layer. Does not
+    /// re-render; use `applyRawDevelopmentEdit` to commit. Returns false if the
+    /// layer is not RAW-backed, the edit was not begun, or values are invalid.
     @discardableResult
     func updateRawDevelopmentSettings(layerID: UUID, exposure: Float? = nil, temperature: Float? = nil,
                                       tint: Float? = nil, boost: Float? = nil, noiseReduction: Float? = nil,
                                       lensCorrection: Bool? = nil, highlightRecovery: Bool? = nil) -> Bool {
         guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
-              var state = document?.layers[index].rawDevelopment,
-              state.settings.isValid() else { return false }
-        if let exposure { state.settings.exposure = exposure }
-        if let temperature { state.settings.temperature = temperature }
-        if let tint { state.settings.tint = tint }
-        if let boost { state.settings.boost = boost }
-        if let noiseReduction { state.settings.noiseReduction = noiseReduction }
-        if let lensCorrection { state.settings.lensCorrection = lensCorrection }
-        if let highlightRecovery { state.settings.highlightRecovery = highlightRecovery }
-        document?.layers[index].rawDevelopment = state
+              var draft = rawDrafts[layerID] ?? document?.layers[index].rawDevelopment,
+              draft.settings.isValid() else { return false }
+        if let exposure { draft.settings.exposure = exposure }
+        if let temperature { draft.settings.temperature = temperature }
+        if let tint { draft.settings.tint = tint }
+        if let boost { draft.settings.boost = boost }
+        if let noiseReduction { draft.settings.noiseReduction = noiseReduction }
+        if let lensCorrection { draft.settings.lensCorrection = lensCorrection }
+        if let highlightRecovery { draft.settings.highlightRecovery = highlightRecovery }
+        rawDrafts[layerID] = draft
+        // Persist the draft settings to the layer so undo/redo captures the change.
+        document?.layers[index].rawDevelopment = draft
         return true
     }
 
-    /// Resets RAW development settings on the given layer to As Shot defaults.
-    /// Returns false if the layer is not RAW-backed.
+    /// Resets RAW development draft settings on the given layer to As Shot
+    /// defaults. This is a distinct explicit action, not what Cancel does.
+    /// Returns false if the layer is not RAW-backed or the edit was not begun.
     @discardableResult
     func resetRawDevelopmentToAsShot(layerID: UUID) -> Bool {
-        guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
-              var state = document?.layers[index].rawDevelopment else { return false }
-        state.settings.reset()
-        document?.layers[index].rawDevelopment = state
+        guard var draft = rawDrafts[layerID] ?? document?.layers.first(where: { $0.id == layerID })?.rawDevelopment else { return false }
+        draft.settings.reset()
+        rawDrafts[layerID] = draft
         return true
     }
 
     /// Applies pending RAW development settings to the given layer: re-reads
     /// the original RAW source, develops at 16-bit, updates the displayed
     /// layer while preserving identity, masks, and transforms. Commits one
-    /// document Undo action. Returns false if the layer is not RAW-backed or
-    /// development fails (leaving prior state untouched).
+    /// document Undo action containing both settings and rendered output.
+    /// Returns false if the layer is not RAW-backed, the edit was not begun,
+    /// or development fails (leaving prior state untouched).
     @discardableResult
     func applyRawDevelopmentEdit(layerID: UUID) -> Bool {
         guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
-              let state = document?.layers[index].rawDevelopment else { return false }
+              let draft = rawDrafts.removeValue(forKey: layerID) ?? document?.layers[index].rawDevelopment else { return false }
 
-        let source = state.source
-        let settings = state.settings.makeSettings()
+        let source = draft.source
+        let settings = draft.settings.makeSettings()
 
         // Read original RAW bytes from the retained source asset.
         let rawData = source.rawData
@@ -896,43 +908,49 @@ final class EditorSession {
         do { developed = try RawImporter.develop(tmpURL, settings: settings, limit: nil, sixteenBit: true) }
         catch { return false }
 
+        // Build the 16-bit asset; do not report success if the asset can't be made.
+        var asset: ImportedImage
+        do { asset = try DeepLayer.asset(developed, name: source.fileName()) }
+        catch { return false }
+
+        // Preserve lens geometry from the source metadata.
+        asset.focalLengthMm = draft.source.cameraMetadata.isEmpty ? 0 : 0
+        asset.sensorWidthMm = 0
+
         // Begin undo step, preserving layer identity/masks/transforms.
         beginEdit("Apply RAW Development")
         defer { endEdit() }
 
-        var asset = try? DeepLayer.asset(developed, name: source.fileName())
-        asset?.focalLengthMm = source.cameraMetadata.isEmpty ? 0 : 0
-        asset?.sensorWidthMm = 0
         document?.layers[index].asset = asset
         document?.layers[index].rawDevelopment = RawDevelopmentPersistentState(
             source: source,
-            settings: state.settings,
+            settings: draft.settings,
             developedWidth: source.pixelWidth,
             developedHeight: source.pixelHeight,
-            developedColorSpace: state.developedColorSpace,
-            developedBitsPerComponent: state.developedBitsPerComponent
+            developedColorSpace: draft.developedColorSpace,
+            developedBitsPerComponent: draft.developedBitsPerComponent
         )
         return true
     }
 
-    /// Cancels any pending RAW development settings on the given layer without
-    /// mutating persisted state. Returns false if the layer is not RAW-backed.
+    /// Cancels any pending RAW development draft on the given layer without
+    /// mutating persisted state. Restores the exact pre-edit settings captured
+    /// at `beginRawDevelopmentEdit` time — not a reset to As Shot. Returns
+    /// false if the layer is not RAW-backed or the edit was not begun.
     @discardableResult
     func cancelRawDevelopmentEdit(layerID: UUID) -> Bool {
-        guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
-              var state = document?.layers[index].rawDevelopment else { return false }
-        state.settings.reset()
-        document?.layers[index].rawDevelopment = state
+        guard document?.layers.contains(where: { $0.id == layerID }) == true else { return false }
+        rawDrafts.removeValue(forKey: layerID)
         return true
     }
 
     /// Bakes RAW development into the layer's rendered pixels, discarding
-    /// editable RAW ownership. The operation is undoable. Returns false if
-    /// the layer is not RAW-backed.
+    /// editable RAW ownership. The operation is undoable. Returns false if the
+    /// layer is not RAW-backed.
     @discardableResult
     func bakeRawDevelopment(layerID: UUID) -> Bool {
         guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
-              let state = document?.layers[index].rawDevelopment else { return false }
+              document?.layers[index].rawDevelopment != nil else { return false }
 
         // The current asset already holds the developed pixels; just drop
         // editable RAW ownership so the layer becomes a regular 16-bit layer.
@@ -1243,12 +1261,28 @@ final class EditorSession {
                     guard let developed = await RawImporter.Queue.shared.develop(url, settings: settings, limit: nil, sixteenBit: true)
                     else { throw ImageImportError.unreadable }
                     // Read RAW source bytes once while the security-scoped URL is still valid.
-                    // The bytes are stored immutably so the project never depends on the external file.
-                    let rawData: Data
-                    if url.startAccessingSecurityScopedResource() {
-                        rawData = try Data(contentsOf: url)
-                        url.stopAccessingSecurityScopedResource()
-                    } else { rawData = Data() }
+                    // The enclosing import loop already holds a grant, so this re-grant is
+                    // defensive; either way the bytes must be validated before we commit.
+                    guard let rawBytes = try? Data(contentsOf: url), !rawBytes.isEmpty else {
+                        throw ImageImportError.unreadable
+                    }
+                    // Read camera metadata (EXIF/TIFF) from the original RAW file.
+                    var cameraMetadata: [String: Any] = [:]
+                    var detectedColorSpace: String? = nil
+                    var detectedBitsPerComponent = 14
+                    if let cgSource = CGImageSourceCreateWithData(rawBytes as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+                       let props = CGImageSourceCopyPropertiesAtIndex(cgSource, 0, nil) as? [CFString: Any] {
+                        if let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+                            cameraMetadata["Exif"] = exif
+                        }
+                        if let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+                            cameraMetadata["TIFF"] = tiff
+                        }
+                        if let depth = props[kCGImagePropertyDepth] as? Int {
+                            detectedBitsPerComponent = depth
+                        }
+                        detectedColorSpace = "extendedLinearSRGB"
+                    }
                     var asset = try DeepLayer.asset(developed, name: url.deletingPathExtension().lastPathComponent)
                     let lens = RawImporter.lensGeometry(url)
                     asset.focalLengthMm = lens.focalLengthMm
@@ -1259,14 +1293,14 @@ final class EditorSession {
                     if let index = document?.layers.firstIndex(where: { $0.id == activeLayerID }) {
                         let source = RawSourceAsset(
                             sourceID: UUID(),
-                            rawData: rawData,
+                            rawData: rawBytes,
                             fileExtension: url.pathExtension,
                             utType: "com.adobe.raw-image",
                             pixelWidth: size.width,
                             pixelHeight: size.height,
-                            cameraMetadata: [:],
-                            colorSpace: nil,
-                            bitsPerComponent: 14,
+                            cameraMetadata: cameraMetadata,
+                            colorSpace: detectedColorSpace,
+                            bitsPerComponent: detectedBitsPerComponent,
                             asShotSettings: settings,
                             supportsNoiseReduction: settings.supportsNoiseReduction,
                             supportsLensCorrection: settings.supportsLensCorrection,
@@ -1277,8 +1311,8 @@ final class EditorSession {
                             settings: RawDevelopmentSettingsPersistentState(settings),
                             developedWidth: size.width,
                             developedHeight: size.height,
-                            developedColorSpace: "extendedLinearSRGB",
-                            developedBitsPerComponent: 16
+                            developedColorSpace: detectedColorSpace ?? "extendedLinearSRGB",
+                            developedBitsPerComponent: detectedBitsPerComponent
                         )
                     }
                     if rawOpensCameraRaw { cameraRawAfterImport = activeLayerID }

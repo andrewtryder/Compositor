@@ -528,7 +528,8 @@ actor ProjectStore {
         }
         return ProjectSnapshot(manifest: manifest, images: images, masks: masks, animations: animations,
                                reshapeSources: reshapeSources, reshapeMeshes: reshapeMeshes,
-                               correctionSources: correctionSources, correctionStacks: correctionStacks)
+                               correctionSources: correctionSources, correctionStacks: correctionStacks,
+                               rawSources: rawSources)
     }
 
     private func validate(_ manifest: ProjectManifest) throws {

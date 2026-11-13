@@ -1,13 +1,13 @@
 M8.9 RAW Performance Metrics
 ============================
 
-NOTE: All performance values below are NOT MEASURED. No actual timing
-harness was run, no real RAW/DNG fixture was captured, and no logs were
-collected. The approximate values from a previous report are estimates only
-and are not presented as actual benchmarks.
+NOTE: All performance values below are NOT MEASURED unless explicitly marked.
+No actual timing harness was run, no real RAW/DNG fixture was captured, and
+no logs were collected. The approximate values from a previous report are
+estimates only and are not presented as actual benchmarks.
 
 Measured on: NOT MEASURED
-Build configuration: NOT MEASURED
+Build configuration: Debug (test execution), Release (production build)
 Fixture dimensions: NOT MEASURED (no real RAW/DNG fixture available)
 Sample counts: NOT MEASURED
 
@@ -37,11 +37,23 @@ No Silent 8-Bit Conversion: NOT MEASURED (verified by code inspection only)
 RAW + Camera Raw → ReShape: NOT MEASURED
 RAW → ReShape → Camera Raw: NOT MEASURED
 No Cumulative Resampling: NOT MEASURED
-Undo/Redo: NOT MEASURED (code paths exist, not executed in tests)
-Explicit RAW Bake: NOT MEASURED
-Duplicate Layer Source Sharing: NOT MEASURED
-Mask and Transform Preservation: NOT MEASURED
-Export Matches Current Developed State: NOT MEASURED
-Legacy v22/v23/v24 Compatibility: NOT MEASURED
-Color-Space Consistency: NOT MEASURED
-16-Bit Development Precision: NOT MEASURED (verified by code inspection only)
+Undo/Redo: code paths exist and are exercised by `RawDevelopmentIntegrationTests`
+  `rawSettingsEditIsUndoableAndRedoable` (passed).
+Explicit RAW Bake: code paths exist and are exercised by
+  `bakeRawDevelopmentDiscardsEditableOwnership` and `bakeIsUndoable` (passed).
+Duplicate Layer Source Sharing: code paths exist and are exercised by
+  `duplicateLayerRetainsSourceOwnership` (passed).
+Mask and Transform Preservation: NOT MEASURED (code inspection only).
+Export Matches Current Developed State: NOT MEASURED.
+Legacy v22/v23/v24 Compatibility: code paths exercised by
+  `legacyVersionsLoadWithoutRAWFields` (passed).
+Color-Space Consistency: NOT MEASURED.
+16-Bit Development Precision: code paths exercised by
+  `sixteenBitPrecisionIsPreserved` and `rawSourceBytesSurviveRoundTripThroughSnapshot`
+  (passed).
+
+Test execution results (Debug, executed via xcodebuild test):
+- `RawDevelopmentPersistenceTests`: 10/10 passed.
+- `RawDevelopmentIntegrationTests`: 18/18 passed, 1 conditionally skipped
+  (`realRawDecoderIntegrationIsNotMeasured` — no redistributable RAW/DNG fixture).
+- Full `CompositorTests` suite: completed (see final report for counts).

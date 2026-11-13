@@ -184,7 +184,7 @@ struct RawDevelopmentIntegrationTests {
 
         // Duplicate the layer
         session.beginEdit("Duplicate Layer")
-        let duplicate = ImageLayer(name: "Copy", blankSize: CGSize(width: 2000, height: 1500))
+        var duplicate = ImageLayer(name: "Copy", blankSize: CGSize(width: 2000, height: 1500))
         duplicate.rawDevelopment = session.document?.layers.first(where: { $0.id == layer.id })?.rawDevelopment
         session.document?.layers.append(duplicate)
         session.endEdit()
@@ -222,7 +222,11 @@ struct RawDevelopmentIntegrationTests {
             developedColorSpace: "extendedLinearSRGB",
             developedBitsPerComponent: 16
         )
-        session.document?.layers.first(where: { $0.id == layer.id })?.rawDevelopment = emptyState
+        guard let index = session.document?.layers.firstIndex(where: { $0.id == layer.id }) else {
+            Issue.record("layer not found")
+            return
+        }
+        session.document?.layers[index].rawDevelopment = emptyState
 
         // applyRawDevelopmentEdit should fail gracefully with empty RAW data
         let result = session.applyRawDevelopmentEdit(layerID: layer.id)
@@ -255,7 +259,11 @@ struct RawDevelopmentIntegrationTests {
             developedColorSpace: "extendedLinearSRGB",
             developedBitsPerComponent: 16
         )
-        session.document?.layers.first(where: { $0.id == layer.id })?.rawDevelopment = corruptState
+        guard let index = session.document?.layers.firstIndex(where: { $0.id == layer.id }) else {
+            Issue.record("layer not found")
+            return
+        }
+        session.document?.layers[index].rawDevelopment = corruptState
 
         // apply should fail
         let result = session.applyRawDevelopmentEdit(layerID: layer.id)
@@ -336,6 +344,138 @@ struct RawDevelopmentIntegrationTests {
         // is for post-development adjustments.
     }
 
+    // MARK: - Project save/reopen round trip (synthesized RAW data)
+
+    @Test func rawSourceSurvivesProjectSaveAndReopen() async throws {
+        // Synthesized RAW-backed layer with 16-bit settings, saved to a project
+        // package and reopened without the external file.
+        let session = EditorSession()
+        session.createDocument(width: 2000, height: 1500)
+        guard let layer = makeRAWBackedLayer(session: session, name: "Round Trip RAW") else {
+            Issue.record("failed to create RAW-backed layer")
+            return
+        }
+        let sourceID = layer.rawDevelopment?.source.sourceID
+        #expect(sourceID != nil, "source must have identity before save")
+
+        // Apply an exposure change so settings are committed, not defaults.
+        let applied = session.applyRawDevelopmentEdit(layerID: layer.id)
+        #expect(applied, "apply must succeed for synthesized RAW")
+        let exposedSettings = session.document?.layers.first(where: { $0.id == layer.id })?.rawDevelopment?.settings
+        #expect(exposedSettings?.exposure == 0, "apply keeps as-shot settings when no edit pending")
+
+        // Change settings and apply again (this is the re-edit path).
+        let updated = session.updateRawDevelopmentSettings(layerID: layer.id, exposure: 1.5, temperature: 5600)
+        #expect(updated, "update draft settings must succeed")
+        let appliedAgain = session.applyRawDevelopmentEdit(layerID: layer.id)
+        #expect(appliedAgain, "apply edited settings must succeed")
+
+        // Save the project.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("CompositorRawRoundTrip-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let projectURL = root.appendingPathComponent("RoundTrip.comp")
+        guard let snapshot = try #require(session.projectSnapshot()) else {
+            Issue.record("snapshot is nil")
+            return
+        }
+        try await ProjectStore.shared.save(snapshot, to: projectURL)
+
+        // Verify the RAW source bytes were written into the package.
+        let imagesDir = projectURL.appendingPathComponent("images")
+        let rawFiles = try FileManager.default.contentsOfDirectory(at: imagesDir, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix(sourceID?.uuidString ?? "") && $0.pathExtension == "dng" }
+        #expect(rawFiles.count == 1, "exactly one RAW source file in package")
+        let savedRawBytes = try Data(contentsOf: rawFiles[0])
+        #expect(savedRawBytes.count == 50_000, "RAW source bytes preserved in package")
+
+        // Reopen the project.
+        let loaded = try await ProjectStore.shared.load(from: projectURL)
+        #expect(loaded.rawSources.keys.contains(layer.id),
+                "rawSources must contain the layer's source after reload")
+        let loadedSource = try #require(loaded.rawSources[layer.id])
+        #expect(loadedSource.sourceID == sourceID,
+                "source identity survives reload")
+        #expect(loadedSource.rawData == savedRawBytes,
+                "RAW bytes match after reload")
+
+        // Install into a fresh session and verify the layer is RAW-backed.
+        let reopened = EditorSession()
+        reopened.installProject(loaded, from: projectURL)
+        let restoredLayer = try #require(reopened.document?.layers.first { $0.id == layer.id })
+        let restoredState = try #require(restoredLayer.rawDevelopment)
+        #expect(restoredState.source.sourceID == sourceID,
+                "restored layer retains source identity")
+        #expect(restoredState.source.rawData.count == 50_000,
+                "restored layer retains full byte count")
+        #expect(restoredState.developedBitsPerComponent == 16,
+                "16-bit precision survives reload")
+        #expect(restoredState.settings.exposure == 1.5,
+                "edited exposure survives reload")
+        #expect(restoredState.settings.temperature == 5600,
+                "edited temperature survives reload")
+    }
+
+    @Test func rawReloadWorksWithoutExternalFile() async throws {
+        // Reopening a project must not require the external RAW file; all bytes
+        // live inside the package.
+        let session = EditorSession()
+        session.createDocument(width: 2000, height: 1500)
+        guard makeRAWBackedLayer(session: session, name: "No External File") != nil else {
+            Issue.record("failed to create RAW-backed layer")
+            return
+        }
+        let layerID = try #require(session.activeLayerID)
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("CompositorRawNoExternal-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let projectURL = root.appendingPathComponent("NoExternal.comp")
+        guard let snapshot = try #require(session.projectSnapshot()) else {
+            Issue.record("snapshot is nil")
+            return
+        }
+        try await ProjectStore.shared.save(snapshot, to: projectURL)
+
+        // Delete any external file (there isn't one, but the package must be self-contained).
+        let loaded = try await ProjectStore.shared.load(from: projectURL)
+        #expect(!loaded.rawSources.isEmpty, "package contains RAW source bytes")
+        let loadedSource = try #require(loaded.rawSources.values.first)
+        #expect(!loadedSource.rawData.isEmpty, "RAW bytes not empty in package")
+    }
+
+    @Test func duplicateLayersShareRawSourceAfterReopen() async throws {
+        // Duplicate layers share one RAW source; after save/reopen they still share it.
+        let session = EditorSession()
+        session.createDocument(width: 2000, height: 1500)
+        guard let layer = makeRAWBackedLayer(session: session, name: "Shared Source") else {
+            Issue.record("failed to create RAW-backed layer")
+            return
+        }
+        let sourceID = try #require(layer.rawDevelopment?.source.sourceID)
+
+        session.beginEdit("Duplicate Layer")
+        var duplicate = ImageLayer(name: "Copy", blankSize: CGSize(width: 2000, height: 1500))
+        duplicate.rawDevelopment = layer.rawDevelopment
+        session.document?.layers.append(duplicate)
+        session.endEdit()
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("CompositorRawShared-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let projectURL = root.appendingPathComponent("Shared.comp")
+        guard let snapshot = try #require(session.projectSnapshot()) else {
+            Issue.record("snapshot is nil")
+            return
+        }
+        try await ProjectStore.shared.save(snapshot, to: projectURL)
+
+        let loaded = try await ProjectStore.shared.load(from: projectURL)
+        let layersWithSource = loaded.rawSources.keys.filter { loaded.rawSources[$0]?.sourceID == sourceID }
+        #expect(layersWithSource.count == 2,
+                "both duplicate layers share the same source identity after reload")
+    }
+
     // MARK: - NOT MEASURED: Real RAW/DNG decoder integration
 
     @Test func realRawDecoderIntegrationIsNotMeasured() {
@@ -345,6 +485,8 @@ struct RawDevelopmentIntegrationTests {
         //   - Warm re-develop with CIRAWFilter
         //   - CIRAWFilter(imageURL:) materialization
         //   - Actual sensor data interpretation
-        Issue.record("NOT MEASURED: real RAW/DNG decoder integration requires a redistributable fixture")
+        // Marked as skipped until a developer-supplied local RAW/DNG file is provided
+        // via a configurable fixture path. Actual decoder integration is untested.
+        Issue.record("Skipped: real RAW/DNG decoder integration requires a redistributable fixture")
     }
 }
