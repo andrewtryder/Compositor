@@ -218,17 +218,44 @@ nonisolated struct MeshWarpPersistentState: Codable, Equatable, Sendable {
                         throw DecodeError.malformed("child link \(id.rawValue)")
                     }
                 }
-                // Subdivision depth: walk ancestors.
-                var depth = 0
-                var current = face.parent
-                while let p = current {
-                    depth += 1
-                    guard depth <= MeshWarpTopology.maxSubdivisionDepth else {
-                        throw DecodeError.budget("subdivision depth")
-                    }
-                    current = faceMap[p]?.parent
+            }
+            // Cycle + depth: walk ancestors with a visited set.
+            var depth = 0
+            var seen: Set<Int> = [id.rawValue]
+            var current = face.parent
+            while let p = current {
+                guard seen.insert(p.rawValue).inserted else {
+                    throw DecodeError.malformed("cyclic parent/child topology")
+                }
+                depth += 1
+                guard depth <= MeshWarpTopology.maxSubdivisionDepth else {
+                    throw DecodeError.budget("subdivision depth")
+                }
+                current = faceMap[p]?.parent
+            }
+            // Leaf quads must have positive rest area (reject inverted/degenerate faces).
+            if face.isLeaf {
+                let corners = face.corners.compactMap { vertexMap[$0]?.rest }
+                guard corners.count == 4 else {
+                    throw DecodeError.degenerate("leaf missing vertices \(id.rawValue)")
+                }
+                let area = MeshWarpGrid.signedArea(corners[0], corners[1], corners[2])
+                    + MeshWarpGrid.signedArea(corners[0], corners[2], corners[3])
+                guard abs(area) >= MeshWarpGrid.minimumTriangleArea else {
+                    throw DecodeError.degenerate("degenerate face \(id.rawValue)")
                 }
             }
+        }
+
+        // Every face must be reachable from a root through parent→child links.
+        var reachable: Set<MeshWarpFaceID> = []
+        var stack = roots
+        while let faceID = stack.popLast() {
+            guard reachable.insert(faceID).inserted, let face = faceMap[faceID] else { continue }
+            if let children = face.children { stack.append(contentsOf: children) }
+        }
+        guard reachable.count == faceMap.count else {
+            throw DecodeError.malformed("unreachable or inconsistent topology")
         }
 
         var edgeMidpoints: [MeshWarpEdgeKey: MeshWarpVertexID] = [:]
@@ -264,9 +291,15 @@ nonisolated struct MeshWarpPersistentState: Codable, Equatable, Sendable {
             throw DecodeError.degenerate("no triangles")
         }
         for tri in triangles {
-            let area = MeshWarpGrid.signedArea(tri.destination.0, tri.destination.1, tri.destination.2)
-            guard abs(area) >= MeshWarpGrid.minimumTriangleArea else {
+            let dest = MeshWarpGrid.signedArea(tri.destination.0, tri.destination.1, tri.destination.2)
+            let rest = MeshWarpGrid.signedArea(tri.source.0, tri.source.1, tri.source.2)
+            guard abs(dest) >= MeshWarpGrid.minimumTriangleArea,
+                  abs(rest) >= MeshWarpGrid.minimumTriangleArea else {
                 throw DecodeError.degenerate("degenerate triangle")
+            }
+            // Folded / inverted destination relative to rest winding.
+            if dest * rest < 0 {
+                throw DecodeError.degenerate("invalid triangle orientation")
             }
         }
 

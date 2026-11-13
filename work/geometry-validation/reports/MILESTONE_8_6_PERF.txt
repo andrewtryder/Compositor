@@ -1,0 +1,32 @@
+# Milestone 8.6 — Integrated backend performance
+
+Measured on-device via `UnifiedGeometryPerformanceTests` (wall-clock milliseconds, medians of 5 runs after 1 warm-up).
+Metal kernel-only times are not treated as full interaction latency.
+
+## 1024×1024
+- Camera Raw full-res apply median: 13.47 ms
+- Mesh session create median: 10.62 ms
+- GPU source upload (first session): 8.84 ms
+- Warm GPU mesh preview median: 9.15 ms
+- Adaptive triangle-buffer update median: 0.31 ms
+- Full-resolution mesh Apply (CPU raster) median: 2158.80 ms
+
+## 4000×3000
+- Camera Raw full-res apply median: 136.98 ms
+- Mesh session create median: 120.39 ms
+- GPU source upload (first session): 111.57 ms
+- Warm GPU mesh preview median: 37.57 ms
+- Adaptive triangle-buffer update median: 0.36 ms
+- Full-resolution mesh Apply (CPU raster) median: 24090.95 ms
+
+## 6000×4000
+- Camera Raw full-res apply median: 294.54 ms
+- Mesh session create median: 236.46 ms
+- GPU source upload (first session): 231.54 ms
+- Warm GPU mesh preview median: 77.73 ms
+- Adaptive triangle-buffer update median: 0.38 ms
+- Full-resolution mesh Apply (CPU raster) median: 48153.75 ms
+
+## Project save/reload (512×512 with reshape)
+- Save median: 57.52 ms
+- Load median: 30.84 ms
