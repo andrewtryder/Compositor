@@ -154,6 +154,10 @@ extension EditorSession {
         }
         commitTransform(); cancelCrop(); cancelLasso()
         guard let layer = activeLayer, let document else { return }
+        if let message = reshapeDestructiveRefusal(for: layer) {
+            brushError = message
+            return
+        }
         pauseGIFForEditing(for: layer.id)
         do {
             let edit = try LevelsEdit(layer: pixelEditingLayer(for: layer), selection: selection?.clip(canvas: document.size))

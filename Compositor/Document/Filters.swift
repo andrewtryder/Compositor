@@ -821,6 +821,10 @@ extension EditorSession {
         }
         commitTransform(); cancelCrop(); cancelLasso()
         guard var layer = activeLayer, let document else { return }
+        if let message = reshapeDestructiveRefusal(for: layer) {
+            brushError = message
+            return
+        }
         pauseGIFForEditing(for: layer.id)
         layer = pixelEditingLayer(for: layer)
         do {

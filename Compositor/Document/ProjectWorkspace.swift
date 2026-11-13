@@ -261,10 +261,21 @@ final class ProjectWorkspace {
             var copy = layer
             copy.asset = snapshot.images[layer.id]
             copy.gifAnimation = snapshot.animations[layer.id]
+            if let mesh = snapshot.reshapeMeshes[layer.id], let source = snapshot.reshapeSources[layer.id] {
+                copy.reshape = LayerReshape(persistent: mesh, source: source)
+            } else {
+                copy.reshape = nil
+            }
             return copy
         }
-        let used = target.session.document?.layers.reduce(0) { $0 + ($1.asset.map { $0.image.width * $0.image.height } ?? 0) } ?? 0
-        let added = copied.reduce(0) { $0 + ($1.asset.map { $0.image.width * $0.image.height } ?? 0) }
+        let used = target.session.document?.layers.reduce(0) {
+            $0 + ($1.asset.map { $0.image.width * $0.image.height } ?? 0)
+                + ($1.reshape.map { $0.source.image.width * $0.source.image.height } ?? 0)
+        } ?? 0
+        let added = copied.reduce(0) {
+            $0 + ($1.asset.map { $0.image.width * $0.image.height } ?? 0)
+                + ($1.reshape.map { $0.source.image.width * $0.source.image.height } ?? 0)
+        }
         guard used + added <= DocumentLimits.documentPixelBudget else { target.session.importError = "The copied layers exceed this project’s \(DocumentLimits.documentBudgetMegapixels)-megapixel limit."; return }
         guard target.session.canRetainGIFSources(in: (target.session.document?.layers ?? []) + copied) else {
             target.session.importError = "The copied GIFs exceed this project’s animation memory limit."
@@ -319,7 +330,7 @@ final class ProjectWorkspace {
                 return ImageLayer(id: mapping[layer.id]!, asset: layer.asset, name: layer.name, isVisible: layer.isVisible,
                     transform: transform, parentID: layer.parentID.flatMap { mapping[$0] }, isGroup: layer.isGroup,
                     opacity: layer.opacity, blendMode: layer.blendMode, mask: mask, maskSourceID: layer.maskSourceID.flatMap { mapping[$0] }, adjustment: layer.adjustment, shape: layer.shape, effects: layer.effects, text: layer.text,
-                    gifAnimation: layer.gifAnimation)
+                    gifAnimation: layer.gifAnimation, reshape: layer.reshape)
             }
             target.session.isProjectBusy = false
             target.session.beginEdit("Copy Layers from Project")

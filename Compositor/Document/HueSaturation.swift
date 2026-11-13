@@ -466,6 +466,10 @@ extension EditorSession {
         commitTransform()
         if gradientEdit != nil { resolveGradient() }
         guard let document, let layer = activeLayer, let asset = displayedAsset(for: layer) else { return }
+        if let message = reshapeDestructiveRefusal(for: layer) {
+            brushError = message
+            return
+        }
         pauseGIFForEditing(for: layer.id)
         do {
             hueSaturation = try HueSaturationEdit(layerID: layer.id, original: asset,
