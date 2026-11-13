@@ -582,10 +582,12 @@ struct RawDevelopmentGUITests {
             return
         }
         // Change the node's settings directly to simulate persisted state.
+        // Camera Raw filter temperature is clamped to -100…100 by normalized(),
+        // so use a value within that range (not RAW development kelvin units).
         do {
             try session.editCameraRawFull(nodeID: node.id) { settings in
                 settings.exposure = 2.5
-                settings.temperature = 5600
+                settings.temperature = 50
             }
         } catch {
             Issue.record("editCameraRawFull failed: \(error)")
@@ -602,7 +604,7 @@ struct RawDevelopmentGUITests {
                 "filter edit targets the correct node")
         #expect(edit.settings.cameraRaw.exposure == 2.5,
                 "filter edit loads the node's exposure")
-        #expect(edit.settings.cameraRaw.temperature == 5600,
+        #expect(edit.settings.cameraRaw.temperature == 50,
                 "filter edit loads the node's temperature")
         // Cancel without modifying the node.
         session.cancelCameraRawNodeEdit()
@@ -614,6 +616,8 @@ struct RawDevelopmentGUITests {
         }
         #expect(unchanged.cameraRawFull.exposure == 2.5,
                 "cancel leaves node settings unchanged")
+        #expect(unchanged.cameraRawFull.temperature == 50,
+                "cancel leaves node temperature unchanged")
     }
 
     // MARK: 22. Camera Raw node edit applies to the intended node, not the raster source
