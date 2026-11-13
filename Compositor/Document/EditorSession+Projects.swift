@@ -9,7 +9,9 @@ extension EditorSession {
         var animations: [UUID: GIFAnimation] = [:]
         var reshapeSources: [UUID: ImportedImage] = [:]
         var reshapeMeshes: [UUID: MeshWarpPersistentState] = [:]
-        let layers = document.layers.map { layer in
+        var correctionSources: [UUID: ImportedImage] = [:]
+        var correctionStacks: [UUID: LayerCorrectionStackPersistentState] = [:]
+        let layers = document.layers.map { layer -> ProjectLayerRecord in
             let asset = displayedAsset(for: layer)
             if let asset { images[layer.id] = asset }
             if let mask = layer.mask { masks[layer.id] = mask.asset }
@@ -24,20 +26,53 @@ extension EditorSession {
                     timing: animation.timing == GIFFrameTiming() ? nil : ProjectGIFTimingRecord(animation.timing))
             }
             var reshape: ProjectReshapeRecord?
-            if let state = layer.reshape {
-                reshapeSources[layer.id] = state.source
-                reshapeMeshes[layer.id] = state.persistentState
+            var correction: ProjectCorrectionStackRecord?
+            let stack = layer.correctionStack
+            let persistStack = stack.map { !$0.nodes.isEmpty && ($0.hasCameraRawGeometry || $0.nodes.count > 1) } ?? false
+            if persistStack, let stack,
+               let persistent = try? LayerCorrectionStackPersistentState(stack: stack) {
+                correctionSources[layer.id] = stack.source
+                correctionStacks[layer.id] = persistent
+                let sharesReshapeSource = stack.hasReshape
+                let sourceFile = sharesReshapeSource
+                    ? "\(layer.id.uuidString).reshape-source.png"
+                    : "\(layer.id.uuidString).corrections-source.png"
+                correction = ProjectCorrectionStackRecord(
+                    sourceFile: sourceFile,
+                    stackFile: "\(layer.id.uuidString).corrections.json")
+                if let projected = stack.projectedReshape {
+                    reshapeSources[layer.id] = projected.source
+                    reshapeMeshes[layer.id] = projected.persistentState
+                    reshape = ProjectReshapeRecord(
+                        sourceFile: "\(layer.id.uuidString).reshape-source.png",
+                        meshFile: "\(layer.id.uuidString).reshape.json")
+                }
+            } else if let projected = stack?.projectedReshape ?? layer.reshape {
+                // Reshape-only stays on the v22 reshape dual-write path (no corrections.json).
+                reshapeSources[layer.id] = projected.source
+                reshapeMeshes[layer.id] = projected.persistentState
                 reshape = ProjectReshapeRecord(
                     sourceFile: "\(layer.id.uuidString).reshape-source.png",
                     meshFile: "\(layer.id.uuidString).reshape.json")
             }
             return ProjectLayerRecord(id: layer.id, name: layer.name, isVisible: layer.isVisible,
-                transform: layer.transform, imageFile: asset?.file(for: layer.id), parentID: layer.parentID, isGroup: layer.isGroup, opacity: layer.opacity, blendMode: layer.blendMode, maskFile: layer.mask == nil ? nil : "\(layer.id.uuidString).mask.png", maskEnabled: layer.mask?.isEnabled, maskSourceID: layer.maskSourceID, adjustment: layer.adjustment, maskPlacement: layer.mask?.placement, maskLinked: layer.mask?.isLinked, shape: layer.liveShape?.style, effects: layer.effects, text: layer.liveText?.style, gif: gif, reshape: reshape)
+                transform: layer.transform, imageFile: asset?.file(for: layer.id), parentID: layer.parentID, isGroup: layer.isGroup, opacity: layer.opacity, blendMode: layer.blendMode, maskFile: layer.mask == nil ? nil : "\(layer.id.uuidString).mask.png", maskEnabled: layer.mask?.isEnabled, maskSourceID: layer.maskSourceID, adjustment: layer.adjustment, maskPlacement: layer.mask?.placement, maskLinked: layer.mask?.isLinked, shape: layer.liveShape?.style, effects: layer.effects, text: layer.liveText?.style, gif: gif, reshape: reshape, correctionStack: correction)
         }
-        return ProjectSnapshot(manifest: ProjectManifest(resolution: document.resolution, documentID: document.id, width: document.width,
+        var manifest = ProjectManifest(resolution: document.resolution, documentID: document.id, width: document.width,
             height: document.height, activeLayerID: activeLayerID, layers: layers,
-            guides: document.guides.isEmpty ? nil : document.guides), images: images, masks: masks,
-            animations: animations, reshapeSources: reshapeSources, reshapeMeshes: reshapeMeshes)
+            guides: document.guides.isEmpty ? nil : document.guides)
+        // v23 when a correction-stack record is written. Reshape-only packages stay at v22.
+        // Ordinary documents without reshape/stack still write `current` (23).
+        if !correctionStacks.isEmpty {
+            manifest.version = 23
+        } else if !reshapeMeshes.isEmpty {
+            manifest.version = 22
+        } else {
+            manifest.version = ProjectManifest.current
+        }
+        return ProjectSnapshot(manifest: manifest, images: images, masks: masks,
+            animations: animations, reshapeSources: reshapeSources, reshapeMeshes: reshapeMeshes,
+            correctionSources: correctionSources, correctionStacks: correctionStacks)
     }
 
     /// Called only after the entire package has successfully validated and loaded.
@@ -105,18 +140,26 @@ extension ProjectSnapshot {
     /// and the edits that rebuild the document from a snapshot (canvas and image size, crop, trim) all build them here,
     /// so none of them leaves part of a layer behind.
     var documentLayers: [ImageLayer] {
-        manifest.layers.map {
+        manifest.layers.map { record in
             var reshape: LayerReshape?
-            if let persistent = reshapeMeshes[$0.id], let source = reshapeSources[$0.id] {
+            if let persistent = reshapeMeshes[record.id], let source = reshapeSources[record.id] {
                 reshape = LayerReshape(persistent: persistent, source: source)
             }
-            return ImageLayer(id: $0.id, asset: images[$0.id], name: $0.name,
-                       isVisible: $0.isVisible, transform: $0.transform, parentID: $0.parentID, isGroup: $0.isGroup == true, opacity: $0.opacity ?? 1, blendMode: $0.blendMode ?? .normal, mask: mask(for: $0), maskSourceID: $0.maskSourceID, adjustment: $0.adjustment,
-                       shape: LayerShape.loaded($0.shape, image: images[$0.id]?.image),
-                       effects: $0.effects,
-                       text: LayerText.loaded($0.text, image: images[$0.id]?.image),
-                       gifAnimation: animations[$0.id],
-                       reshape: reshape)
+            var stack: LayerCorrectionStack?
+            if let persistent = correctionStacks[record.id], let source = correctionSources[record.id] {
+                stack = try? persistent.makeStack(source: source)
+            } else if let reshape {
+                // v22 reshape-only: synthesize an in-memory stack so ND ops work after open.
+                stack = LayerCorrectionStack.fromReshape(reshape)
+            }
+            return ImageLayer(id: record.id, asset: images[record.id], name: record.name,
+                       isVisible: record.isVisible, transform: record.transform, parentID: record.parentID, isGroup: record.isGroup == true, opacity: record.opacity ?? 1, blendMode: record.blendMode ?? .normal, mask: mask(for: record), maskSourceID: record.maskSourceID, adjustment: record.adjustment,
+                       shape: LayerShape.loaded(record.shape, image: images[record.id]?.image),
+                       effects: record.effects,
+                       text: LayerText.loaded(record.text, image: images[record.id]?.image),
+                       gifAnimation: animations[record.id],
+                       reshape: reshape ?? stack?.projectedReshape,
+                       correctionStack: stack)
         }
     }
 }

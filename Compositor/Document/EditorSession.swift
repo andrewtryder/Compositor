@@ -7,6 +7,7 @@ struct ImageLayer: Identifiable, Equatable {
             && lhs.asset?.image === rhs.asset?.image && lhs.parentID == rhs.parentID && lhs.isGroup == rhs.isGroup && lhs.opacity == rhs.opacity && lhs.blendMode == rhs.blendMode && lhs.mask == rhs.mask && lhs.maskSourceID == rhs.maskSourceID && lhs.adjustment == rhs.adjustment && lhs.shape == rhs.shape && lhs.text == rhs.text && lhs.effects == rhs.effects
             && lhs.gifAnimation == rhs.gifAnimation
             && lhs.reshape == rhs.reshape
+            && lhs.correctionStack == rhs.correctionStack
     }
     let id: UUID
     var asset: ImportedImage?
@@ -23,7 +24,12 @@ struct ImageLayer: Identifiable, Equatable {
     /// Masks scoped to frames in an imported GIF. The frames remain part of this one layer.
     var gifAnimation: GIFAnimation? = nil
     /// Editable ReShape: immutable source + mesh. `asset` holds the last rendered output.
+    /// When `correctionStack` is present, this is a projection of the stack's reshape node for
+    /// MeshWarp tooling and v22 dual-write compatibility.
     var reshape: LayerReshape? = nil
+    /// Ordered non-destructive geometry corrections. Immutable source lives on the stack;
+    /// `asset` is the rendered display. Prefer this over lone `reshape` when both exist.
+    var correctionStack: LayerCorrectionStack? = nil
     var adjustment: LayerAdjustment?
     /// Set on layers the Shape tool made; see `liveShape`.
     var shape: LayerShape?
@@ -46,7 +52,7 @@ struct ImageLayer: Identifiable, Equatable {
         self.name = name
     }
 
-    init(id: UUID, asset: ImportedImage?, name: String, isVisible: Bool, transform: LayerTransform, parentID: UUID? = nil, isGroup: Bool = false, opacity: Double = 1, blendMode: LayerBlendMode = .normal, mask: LayerMask? = nil, maskSourceID: UUID? = nil, adjustment: LayerAdjustment? = nil, shape: LayerShape? = nil, effects: LayerEffects? = nil, text: LayerText? = nil, gifAnimation: GIFAnimation? = nil, reshape: LayerReshape? = nil) {
+    init(id: UUID, asset: ImportedImage?, name: String, isVisible: Bool, transform: LayerTransform, parentID: UUID? = nil, isGroup: Bool = false, opacity: Double = 1, blendMode: LayerBlendMode = .normal, mask: LayerMask? = nil, maskSourceID: UUID? = nil, adjustment: LayerAdjustment? = nil, shape: LayerShape? = nil, effects: LayerEffects? = nil, text: LayerText? = nil, gifAnimation: GIFAnimation? = nil, reshape: LayerReshape? = nil, correctionStack: LayerCorrectionStack? = nil) {
         self.id = id
         self.asset = asset
         self.name = name
@@ -59,6 +65,7 @@ struct ImageLayer: Identifiable, Equatable {
         self.mask = mask
         self.gifAnimation = gifAnimation
         self.reshape = reshape
+        self.correctionStack = correctionStack
         self.maskSourceID = maskSourceID
         self.adjustment = adjustment
         self.shape = shape

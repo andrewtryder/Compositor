@@ -105,7 +105,7 @@ final class DocumentHistory {
     }
 
     private static func assets(of layer: ImageLayer) -> [ImportedImage] {
-        [layer.asset, layer.mask?.asset, layer.reshape?.source].compactMap { $0 }
+        [layer.asset, layer.mask?.asset, layer.correctionStack?.source ?? layer.reshape?.source].compactMap { $0 }
             + Array(layer.gifAnimation?.framePixels.values ?? [:].values)
     }
 
