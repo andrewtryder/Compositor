@@ -1,0 +1,46 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -project Compositor.xcodeproj -scheme Compositor -testPlan CompositorRegression -destination platform=macOS -configuration Debug "-only-testing:CompositorTests/RawDevelopmentIntegrationTests/realRawFixtureSmokePreview()" -resultBundlePath /tmp/skip_check.xcresult -parallel-testing-enabled NO
+
+Resolve Package Graph
+
+
+Resolved source packages:
+  Sparkle: https://github.com/sparkle-project/Sparkle @ 2.10.0
+
+Writing result bundle at path:
+	/tmp/skip_check.xcresult
+
+2026-11-14 06:43:30.603614-0500 Compositor[42908:26957386] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 06:43:30.604429-0500 Compositor[42908:26957386] [Application] Error registering app with intents framework: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 06:43:30.607307-0500 Compositor[42908:26957365] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 06:43:30.607975-0500 Compositor[42908:26957365] [Connection] Unable to re-register with Process Instance Registry, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 06:43:30.611215-0500 Compositor[42908:26957364] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 06:43:30.611284-0500 Compositor[42908:26957364] [Connection] Unable to re-register with Process Instance Registry, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 06:43:30.614403-0500 Compositor[42908:26957364] [Connection] Will NOT re-try to establish the connection
+2026-11-14 06:43:30.614565-0500 Compositor[42908:26957386] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 06:43:30.614686-0500 Compositor[42908:26957386] [Connection] Unable to re-register with Process Instance Registry, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 06:43:31.139285-0500 Compositor[42908:26957206] ApplePersistenceIgnoreState: Existing state will not be touched. New state will be written to /Users/atr/Library/Containers/com.wonderassembly.compositor/Data/tmp/com.wonderassembly.compositor.savedState
+2026-11-14 06:43:33.616145-0500 Compositor[42908:26957365] [Common] Unable to obtain a task name port right for pid 399: (os/kern) failure (0x5)
+Test Suite 'Selected tests' started at 2026-11-14 06:43:35.225.
+Test Suite 'CompositorTests.xctest' started at 2026-11-14 06:43:35.225.
+Test Suite 'CompositorTests.xctest' passed at 2026-11-14 06:43:35.226.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-11-14 06:43:35.227.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.002) seconds
+◇ Test run started.
+↳ Testing Library Version: 2403
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite RawDevelopmentIntegrationTests started.
+​➜ Test realRawFixtureSmokePreview() skipped: "COMPOSITOR_RAW_FIXTURE_PATH is not set to a readable RAW file"
+​✔ Suite RawDevelopmentIntegrationTests passed after 0.001 seconds.
+✔ Test run with 1 test in 1 suite passed after 0.001 seconds.
+2026-11-14 06:43:35.754 xcodebuild[42551:26956401] [MT] IDETestOperationsObserverDebug: 7.970 elapsed -- Testing started completed.
+2026-11-14 06:43:35.754 xcodebuild[42551:26956401] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-11-14 06:43:35.755 xcodebuild[42551:26956401] [MT] IDETestOperationsObserverDebug: 7.970 sec, +7.970 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/skip_check.xcresult
+
+** TEST EXECUTE SUCCEEDED **
+
+Testing started

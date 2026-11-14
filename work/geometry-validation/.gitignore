@@ -4,3 +4,8 @@ for-viewpoint/
 originals/
 input/photo-*.png
 input/photo-*.json
+
+# Regression run artifacts are produced by scripts/regression.sh, not source.
+/m9_1_6_runs/
+/regression-build.log
+/regression-test.log

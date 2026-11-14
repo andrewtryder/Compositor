@@ -390,7 +390,7 @@ Per the milestone instructions, this is documented as a limitation with a manual
 
 A full `CompositorTests` regression was initiated via `xcodebuild test -only-testing:CompositorTests -resultBundlePath /tmp/final_regression.xcresult` but the `xcodebuild` process became stuck (no output written to stdout/stderr, no `.xcresult` bundle produced after extended runtime) and had to be terminated. The regression counts could not be extracted.
 
-**Status:** Regression run was not completed to a conclusive `.xcresult`. This is a remaining blocker requiring a clean rerun on an idle machine. The cheap real-DNG smoke test (`realRawFixtureEndToEnd`, env-gated on `COMPOSITOR_RAW_FIXTURE_PATH`) was not executed because the fixture path requires manual environment setup.
+**Correction (M9.1.6):** This was not a deadlock. See [M9.1.6](#m916-reliable-final-regression-and-geometry-acceptance) for the evidence-based diagnosis: the run was killed by an external signal, and the test host it left behind is preserved in `/tmp/orphan_testhost_sample.txt`.
 
 ### PR #18 and reports update (Phase 6)
 
@@ -402,17 +402,348 @@ A full `CompositorTests` regression was initiated via `xcodebuild test -only-tes
 - Manual Geometry acceptance is **not** complete (GUI automation could not be performed; manual QA checklist supplied).
 - PR #18 remains draft, not merged into main.
 
-### Remaining blockers
+---
 
-1. Full `CompositorTests` regression suite did not produce a conclusive `.xcresult` (xcodebuild stuck, terminated).
-2. Manual Guided Upright acceptance could not be performed (Accessibility permissions not granted for GUI automation).
-3. Real-DNG smoke test not executed (requires `COMPOSITOR_RAW_FIXTURE_PATH` environment setup).
-4. PR #18 must remain draft until items 1–3 are resolved.
+## M9.1.6: Reliable Final Regression and Geometry Acceptance
+
+**Date:** Saturday Nov 14, 2026  
+**Branch:** `integration/compositor-camera-raw`  
+**Starting SHA:** `8d73ea7cb8cc0fba359304d83cd3b3d0a9fab037`  
+**Draft PR:** [#18](https://github.com/andrewtryder/Compositor/pull/18) (draft, not merged)  
+**Worktrees:** one — `/Users/atr/code/Compositor`
+
+### Summary
+
+The previous "stuck" regression was not a deadlock. The runner was killed by a signal from
+outside it, and the run's own logging could not show that because `xcodebuild` writes nothing
+between a test starting and a test finishing. Re-running detached from the launching process
+group produced a complete, green result bundle. The heavy tests are now
+excluded by a checked-in test plan instead of by comments, and both RAW fixture tests report
+**skipped** rather than passed when no fixture is configured.
+
+| Item | Result |
+|---|---|
+| Regression | **1,101 methods → 1,227 executed runs: 1,226 passed, 0 failed, 1 skipped** |
+| Result bundle | `work/geometry-validation/m9_1_6_runs/M9_1_6_Regression_Final.xcresult` |
+| RAW preview smoke | **800×534 decoded preview**, fixture SHA-256 verified |
+| Heavy tests | Excluded from ordinary regression by `CompositorRegression.xctestplan`; still runnable |
+| Guided Upright GUI acceptance | **Pending** — see the honest assessment below |
+
+### 1. Test configuration correction
+
+**Problem.** The shared scheme hard-coded a fixture path inside a deleted worktree:
+
+```
+/Users/atr/code/Compositor-raw-workflow-ui/Tests/TestFixtures/Ricoh-GR-III.DNG
+```
+
+That directory no longer exists, so the scheme silently pointed the tests at nothing. Worse,
+the tests treated a missing fixture as a pass by returning early.
+
+**Change.** `Compositor.xcodeproj/xcshareddata/xcschemes/Compositor.xcscheme` no longer defines
+`COMPOSITOR_RAW_FIXTURE_PATH` at all. No personal filesystem path is version-controlled.
+
+The path is supplied at run time through xcodebuild's documented prefix, which reaches the
+test runner's environment without touching the project:
+
+```sh
+TEST_RUNNER_COMPOSITOR_RAW_FIXTURE_PATH=/path/to/Ricoh-GR-III.DNG \
+  xcodebuild test ... -only-testing:CompositorTests/RawDevelopmentIntegrationTests/realRawFixtureSmokePreview()
+```
+
+**Verified the variable actually arrives.** With the prefix set, the test decoded the fixture;
+without it, the same test skipped. Both transcripts are in `reports/m9_1_6_evidence/`
+(`raw-smoke.log`, `raw-smoke-skipped.log`).
+
+### 2. Excluding the expensive tests
+
+`MeshWarpPerformanceTests.warmMediansHeavyAt6000x4000()` was still `@Test`, so it stayed
+discoverable by the ordinary runner. Separating it into its own method never excluded it.
+
+Two checked-in test plans now define the selection:
+
+| Plan | Contents |
+|---|---|
+| `CompositorTests/CompositorRegression.xctestplan` | Everything **except** the two heavy tests (default plan) |
+| `CompositorTests/CompositorHeavy.xctestplan` | **Only** the two heavy tests, plus the RAW end-to-end run |
+
+Both are referenced from the shared scheme (`shouldAutocreateTestPlan = "NO"`), so Xcode and
+`xcodebuild` use the same selection.
+
+**Verified in the generated `.xctestrun`, not just in the plan file.** `xcodebuild` bakes the
+plans into the run configuration, which is what the test host actually obeys:
+
+```
+CompositorRegression → SkipTestIdentifiers = [
+    'MeshWarpPerformanceTests/warmMediansHeavyAt6000x4000()',
+    'RawDevelopmentIntegrationTests/realRawFixtureEndToEnd()']
+CompositorHeavy      → OnlyTestIdentifiers = [ the same two ]
+```
+
+Both heavy tests remain explicitly runnable. `warmMediansHeavyAt6000x4000()` was run through
+`CompositorHeavy` during this milestone and prints its `MESH_PERF_HEAVY` block
+(`reports/m9_1_6_evidence/heavy-benchmark.log`).
+
+**A caveat worth recording:** `xcodebuild -enumerate-tests` lists *every discovered test* and
+ignores a plan's `SkipTestIdentifiers`, so the plan's exclusions are invisible to that command.
+`scripts/regression.sh` therefore reads the plan, derives the skip list from it, and passes the
+same identifiers as `-skip-testing` to the enumeration step. The plan stays the single source
+of truth; the enumeration becomes truthful. Also verified, and not relied on: the plan's
+`skippedTests` array does **not** match Swift Testing identifiers with a bare
+`-enumerate-tests` run in Xcode 27.2 in any of the three identifier forms tried — it only
+takes effect through the generated `.xctestrun`.
+
+### 3. Why the previous run appeared to stall
+
+**Verdict: not a deadlock.** The runner was terminated by an external signal. Four independent
+pieces of evidence agree:
+
+1. **The child's last written word was `** BUILD INTERRUPTED **`** on stderr
+   (`final_stderr.txt`, archived at `reports/m9_1_6_evidence/final_stderr.txt`). Interruption
+   is what `xcodebuild` prints when it receives `SIGINT`/`SIGTERM`. A deadlock prints nothing.
+2. **The stdout log ends mid-sentence**: 844 tests had passed with zero failures, and the file
+   stops part-way through a test name (`...searchFindsAFamilyByItsTypedName()` — no closing
+   line, no suite summary). A real result would have written `Test Suite ... passed`.
+3. **The test host survived, idle, for 7.5 hours** (PID 29618, reparented to `launchd`, at 0.1%
+   CPU). `sample` shows it parked in `-[NSApplication run]`
+   (`reports/m9_1_6_evidence/orphan_testhost_sample.txt`) — an app whose runner has gone, not a
+   spinning thread. That is the residue of a `SIGKILL` delivered to `xcodebuild` alone rather
+   than to the whole process group.
+4. **The `.xcresult` was never finalized**: no `Info.plist`, and `xcresulttool` rejects it.
+
+**Why it looked like silence.** `xcodebuild` prints a test's result only *after* it finishes, so
+a run killed part-way through a long test shows nothing for that test at all. The last line of
+the old log is a test that had started, not one that had hung.
+
+**Reproduced deliberately during this milestone.** A `nohup`-launched run stopped precisely at
+`CameraRawUprightComparisonTests/renderComparisonCorpus()` — the identical signature. That test
+was then run alone, in the foreground, and **passed in 36 seconds**. It was never stuck.
+
+**Root cause of the interference:** a child started with `nohup … &` stays in the launching
+shell's process group. When the launching tool call ends, a group-wide signal takes the run with
+it. Starting the run with `setsid` (own session) makes it immune; a control test confirmed a
+detached process keeps making progress across tool calls while a `nohup` one does not.
+
+**Preflight checked, and now automated in `scripts/regression.sh`:**
+
+| Check | Finding |
+|---|---|
+| Competing `xcodebuild`/test host | none (after terminating PID 29618) |
+| Orphaned test hosts | one, from the 22:36 run — terminated after its stack was sampled |
+| Metal command buffers | no separate `MTLCompiler` build in progress; GPU services idle |
+| Disk | 99–106 GB free (plenty) |
+| Memory | ~45% free, but swap fully used (~17 GB of 18 GB) — see note below |
+| Crash reports | the 18:52 crash is the array-index bug fixed in §4, not the regression |
+| Test host build | Debug, from the DerivedData whose `info.plist` names **this** repository |
+
+**On the memory figure.** The machine ran the whole regression while Swap was essentially full
+and the load average sat between 30 and 140, from `kernel_task`, Spotlight (`mds`) and a stray
+`log stream` at 41% CPU. The suite still passed, so the load is not what killed the earlier run
+— but a run on a machine this busy is not a good timing baseline, and the durations in this
+report should be read as "completed", not as benchmarks.
+
+### 4. Controlled regression
+
+Run with `scripts/regression.sh`:
+
+- Reused Xcode's existing DerivedData for this repository (incremental `build-for-testing`, **BUILD SUCCEEDED**).
+- Fresh result bundle, never reused: `work/geometry-validation/m9_1_6_runs/M9_1_6_Regression_Final.xcresult`.
+- Full stdout+stderr captured to `regression-test.log`; the script exits with `xcodebuild`'s own
+  status, so a failure cannot be masked by piping.
+- Started in its own session so the launching shell cannot signal it.
+- One run at a time; the script refuses to start if another test run or an orphaned test host is present.
+  (It caught exactly that during this milestone: the GUI app left open for acceptance had to be
+  quit before the run would start.)
+
+Two green runs were produced. The first (`M9_1_6_Regression.xcresult`, 1,100.3s) validated the
+suite; the second (`M9_1_6_Regression_Final.xcresult`, 903.0s) was run against the final source
+after the test file's indentation was corrected, so the bundle on record provably matches what is
+committed. Both are green; the **final** bundle is the one to cite.
+
+**Parallelism:** disabled for this regression (`-parallel-testing-enabled NO`). This is a
+measured decision, not a way to hide flakiness: **113 of the 130 test files that declare tests
+are `@MainActor`** (17 are not), so extra workers contend for the single main thread while also
+competing for the GPU, and the GPU is the scarce resource here — four GPU suites account for
+683.7 of the 900.0 seconds the tests themselves took (76%). Nothing that failed in the old run is
+hidden by this: the old six failures were fixed in M9.1.3, and this run reports them passing.
+
+**Accounting from the final result bundle (`xcresulttool`):**
+
+| Metric | Count |
+|---|---|
+| Tests discovered | 1,103 |
+| Tests selected | **1,101** |
+| Methods executed | 1,101 |
+| Runs executed (parameterized cases expand) | **1,227** |
+| Passed | **1,226** |
+| Failed | **0** |
+| Skipped | **1** |
+| Expected failures | 0 |
+| Suites | 132 |
+| Test-execution duration | **900.0 s (15.0 min)** |
+| Wall clock, build to finish | ~15.1 min |
+
+The 1,227 figure is `xcresulttool`'s `passedTests`/`totalTestCount` (1,100 + 1) plus the 126 extra
+runs the 50 parameterized tests produce (176 runs for 50 methods). The same arithmetic holds for
+the old run's "1,227 executed, 6 failed", so the two are directly comparable: **the six failures
+are gone and the run count is unchanged.**
+
+**Skipped test (exact name):**
+
+```
+CompositorTests/RawDevelopmentIntegrationTests/realRawFixtureSmokePreview()
+```
+
+It skips here because this regression deliberately does not inject the fixture; it is run
+separately in §6.
+
+**Excluded from the ordinary regression (exact names):**
+
+```
+CompositorTests/MeshWarpPerformanceTests/warmMediansHeavyAt6000x4000()
+CompositorTests/RawDevelopmentIntegrationTests/realRawFixtureEndToEnd()
+```
+
+**Slowest suites** (context for the parallelism decision): `NonDestructiveGeometryPerformanceTests`
+269.3s, `UnifiedGeometryPerformanceTests` 207.7s, `CameraRawVolumeGPUTests` 106.2s,
+`CameraRawUprightComparisonTests` 100.4s.
+
+**Evidence archive:** `work/geometry-validation/reports/m9_1_6_evidence/` —
+`final-regression-summary.json`, `final-regression-tests.json`, `final-regression-test.log`,
+`final-regression-build.log`, `final-regression-outer.log`, `enumeration-with-plan.txt` (plus the
+M9.1.5-era artifacts under their original names).
+
+### 5. Two defects found while validating RAW coverage
+
+Both were latent bugs that made an unverified decoder look verified.
+
+**(a) A missing fixture reported as a pass.** `realRawFixtureEndToEnd()` and
+`realRawFixtureSmokePreview()` opened with `guard … else { return }`. Swift Testing records an
+early return as a **pass**, so the old log's
+`realRawFixtureEndToEnd() passed … (0.000 seconds)` was a zero-second non-decode. Both tests now
+use `@Test(.enabled(if: RAWRawFixture.isAvailable, …))` evaluated at discovery, so a missing
+fixture yields **Skipped**. Verified both ways:
+
+- no fixture → `result: Skipped, totalTestCount: 1, passedTests: 0, skippedTests: 1`
+- fixture set → `result: Passed, passedTests: 1`
+
+**(b) An out-of-bounds array read that crashed the whole test host.** Line 601 read
+`rawFiles[0]` after an `#expect(rawFiles.count == 1)` that does **not** stop the test. When the
+package held no matching `.dng`, the subscript trapped
+(`Compositor-2026-11-13-185245.ips`: `EXC_BREAKPOINT`, `Array.subscript.getter` →
+`RawDevelopmentIntegrationTests.realRawFixtureEndToEnd()` at line 601). A trap in the host kills
+**every** remaining test in that run. Both occurrences (this one and the same pattern in
+`rawSourceSurvivesProjectSaveAndReopen()`) now go through `try #require(rawFiles.first, …)`,
+which records a failure and returns instead of trapping.
+
+The crashing crash report is archived at
+`reports/m9_1_6_evidence/Compositor-2026-11-13-185245.ips`.
+
+### 6. Genuine RAW preview smoke test
+
+Fixture and identity:
+
+- Path: `/Users/atr/Documents/Compositor-worktree-backups/20261113-215314/dng-fixture/Ricoh-GR-III.DNG`
+- Size: 33,374,940 bytes
+- SHA-256: `05513ee72f7cac4165534c9f64995412084f414a033c80c473c79fd94154292e` — **matches the required value**
+
+Only the smoke test was run:
+
+```
+TEST_RUNNER_COMPOSITOR_RAW_FIXTURE_PATH=<fixture> \
+  xcodebuild test ... -only-testing:CompositorTests/RawDevelopmentIntegrationTests/realRawFixtureSmokePreview()
+```
+
+Result — a real decode, not an early return:
+
+```
+[SMOKE] RAW preview: 800x534 in 1.606s
+[SMOKE] fixture: …/Ricoh-GR-III.DNG (33374940 bytes)
+[SMOKE] decoded image: 800x534, limit 800, sixteenBit false
+✔ Test realRawFixtureSmokePreview() passed after 97.617 seconds.
+```
+
+`result: Passed, totalTestCount: 1, passedTests: 1, failedTests: 0, skippedTests: 0`
+
+**Re-verified against the final source.** After the test file's indentation was corrected the
+smoke test was run again, so the evidence matches the committed code rather than an earlier
+edit — `M9_1_6_Smoke_Rerun.xcresult`, exit status 0:
+
+```
+[SMOKE] RAW preview: 800x534 in 1.080s
+[SMOKE] fixture: …/Ricoh-GR-III.DNG (33374940 bytes)
+[SMOKE] decoded image: 800x534, limit 800, sixteenBit false
+✔ Test realRawFixtureSmokePreview() passed after 1.115 seconds.
+```
+
+Decode time varies between runs (1.1s–2.2s; the first run's 1.6s includes a cold decoder), while
+the reported dimensions are identical every time. The rerun confirms the reindentation changed
+nothing about behavior.
+
+The test now also asserts the fixture is a real file, not a stub: more than 1 MB, and carrying a
+TIFF-family container header. The 800×534 preview is within the 800-pixel bound, and both
+dimensions are nonzero. The full-resolution `realRawFixtureEndToEnd()` was **not** run.
+
+Transcripts: `reports/m9_1_6_evidence/raw-smoke.log` (first run) and
+`reports/m9_1_6_evidence/raw-smoke-rerun.log` (after the final edit).
+
+### 7. Guided Upright manual acceptance — PENDING
+
+**Permissions are no longer the blocker.** Accessibility and Screen Recording are both granted
+(`computer_check_permissions`: `ax=true screen_recording=true`), and native `screencapture` and
+System Events accessibility scripting both work against the running app.
+
+**What was done, and what prevented completion:**
+
+| Step | Outcome |
+|---|---|
+| Launch the Debug app | Done; a real JPEG (`originals/window-wall.jpg`) loads as a layer |
+| Reach Camera Raw Filter | Done (enabled once an image layer is selected); the dialog opens |
+| Find the Geometry panel | **Blocked.** The section list is a SwiftUI `ScrollView` of custom disclosure rows with no accessibility identifiers; the panel is not reachable by name. |
+| Draw guides, drag endpoints, Escape, Constrain Crop, Apply/Cancel/Undo/Redo, save/reopen | **Not performed** |
+| Genuine screenshots | Captured (`m9_1_6_gui/01_camera_raw_basic.jpg`, `02_document_with_image.jpg`), but they are not evidence of acceptance |
+
+The `cursor-computer-use` sidecar also failed repeatedly during this session
+(`computer-use sidecar did not become ready in time`, then
+`computer-use RPC connection closed after request delivery`), so the coordinate-driven path was
+unavailable; and the Camera Raw dialog closed several times while accessibility introspection was
+walking it, which is why coordinate clicking was not pursued further.
+
+**This is not acceptance.** No guide was drawn, no perspective change was observed, and no
+corrected crop was inspected. The two captured screenshots show the document and the Basic panel
+only. Manual acceptance remains open.
+
+**Exact steps for the person performing it** (Debug app: `xcodebuild -scheme Compositor -configuration Debug`,
+then open `Compositor.app`):
+
+1. Open an architectural JPEG or PNG.
+2. Select the image layer, then **Filter ▸ Camera Raw Filter…**.
+3. In the right rail, expand **Geometry** (it appears for images where `adjustsGeometry` holds) and turn on **Draw Guides**.
+4. **Two guides:** draw two lines that should be vertical or horizontal. Confirm the image straightens and the perspective changes.
+5. **Four guides:** clear and draw four. Confirm the perspective recomputes again.
+6. **Drag an endpoint:** confirm the guide follows the pointer and the correction updates live while dragging.
+7. **Escape:** start dragging an endpoint, press Escape before releasing, and confirm the endpoint returns to where it was.
+8. **Constrain Crop:** toggle it and confirm the crop is bounded by the corrected geometry.
+9. **Apply**, then **Undo**, then **Redo**, and confirm the canvas matches each state. Reopen the dialog and **Cancel** to confirm pending guides are discarded.
+10. **Save and reopen** the project and confirm the guides and geometry persist.
+
+**Screenshots still required** (none were obtained): the Geometry panel with two guides placed;
+the same with four guides; mid-drag of an endpoint; the state after Escape; Constrain Crop on;
+the canvas after Apply, after Undo, and after Redo; and the reopened project showing the guides.
+
+### 8. Remaining blockers before merge
+
+1. **Manual Guided Upright acceptance** — §7. Everything else is done.
+2. **`realRawFixtureEndToEnd()` has not been run in this milestone.** It is excluded from the
+   ordinary regression by design and was not run separately. Only the bounded preview decode in
+   §6 is verified.
 
 ### Commit
 
-No new commit made yet. Changes to commit:
-- `Compositor/Rendering/MetalMeshWarp.swift` (GPU resource release in `invalidate()`/`deinit`)
-- `CompositorTests/MeshWarpPerformanceTests.swift` (separated 6000×4000 heavy test)
+`M9.1.6: Reliable regression, verified RAW preview, honest test selection` on
+`integration/compositor-camera-raw`.
 
-This report and PR #18 description should be updated after the final regression and manual acceptance are complete.
+Changed: the shared scheme (fixture path removed, test plans wired), two new test plans,
+`scripts/regression.sh`, `RawDevelopmentIntegrationTests.swift` (skip traits, crash fix,
+fixture-identity assertions), `work/geometry-validation/.gitignore`, this report, and the
+evidence archive.

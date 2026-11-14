@@ -5,13 +5,35 @@ import UniformTypeIdentifiers
 import Darwin.Mach
 @testable import Compositor
 
+/// The optional real RAW/DNG photograph the decoder tests need.
+///
+/// Never commit a personal RAW file, and never hard-code an absolute path in the project:
+/// the fixture is supplied at run time through `COMPOSITOR_RAW_FIXTURE_PATH`, which the
+/// scheme deliberately does not set. Pass it with xcodebuild's `TEST_RUNNER_` prefix:
+///
+///     TEST_RUNNER_COMPOSITOR_RAW_FIXTURE_PATH=/path/Ricoh-GR-III.DNG \
+///       xcodebuild test ... -only-testing:CompositorTests/RawDevelopmentIntegrationTests/realRawFixtureSmokePreview()
+///
+/// `isAvailable` is read by `.enabled(if:)` at discovery, so a missing fixture makes these
+/// tests skip instead of passing.
+nonisolated enum RAWRawFixture {
+    static var url: URL? {
+        guard let path = ProcessInfo.processInfo.environment["COMPOSITOR_RAW_FIXTURE_PATH"],
+              !path.isEmpty,
+              FileManager.default.fileExists(atPath: path) else { return nil }
+        return URL(fileURLWithPath: path)
+    }
+
+    static var isAvailable: Bool { url != nil }
+}
+
 /// Integration tests for RAW development: import, save/reopen, re-edit, cancel,
 /// undo/redo, bake, corruption handling, and downstream correction compatibility.
 ///
-/// NOTE: These tests use synthesized data rather than real RAW/DNG fixtures because
-/// no redistributable RAW photograph is available in this worktree. Tests that
-/// require decoding a real RAW photograph with `CIRAWFilter` are marked as skipped.
-/// Actual decoder integration with a real RAW photograph is untested.
+/// NOTE: Most tests use synthesized data rather than real RAW/DNG fixtures because
+/// no redistributable RAW photograph is available in this worktree. The two tests that
+/// require decoding a real RAW photograph with `CIRAWFilter` are gated on
+/// `COMPOSITOR_RAW_FIXTURE_PATH` and skip when it is not set.
 struct RawDevelopmentIntegrationTests {
 
     // MARK: - Import and layer setup
@@ -428,7 +450,9 @@ struct RawDevelopmentIntegrationTests {
         let rawFiles = try FileManager.default.contentsOfDirectory(at: imagesDir, includingPropertiesForKeys: nil)
             .filter { $0.lastPathComponent.hasPrefix(sourceID?.uuidString ?? "") && $0.pathExtension == "dng" }
         #expect(rawFiles.count == 1, "exactly one RAW source file in package")
-        let savedRawBytes = try Data(contentsOf: rawFiles[0])
+        // `#expect` does not stop the test, so index safely instead of trapping on an empty result.
+        let rawFile = try #require(rawFiles.first, "RAW source file present in package")
+        let savedRawBytes = try Data(contentsOf: rawFile)
         #expect(savedRawBytes.count == 50_000, "RAW source bytes preserved in package")
 
         // Reopen the project.
@@ -520,226 +544,231 @@ struct RawDevelopmentIntegrationTests {
 
     // MARK: - Real RAW/DNG fixture test (optional, env-gated)
 
-/// End-to-end import → save → reopen → NEW edit → Apply → compare pixels → Undo/Redo
-/// using an optional local RAW/DNG file supplied through `COMPOSITOR_RAW_FIXTURE_PATH`.
-///
-/// Do not commit personal RAW photographs. When the environment variable is absent or
-/// the file does not exist, the test is skipped with an accurate explanation.
-/// A successful Apply through `RawDevelopmentRenderer` is verified by comparing actual
-/// pixel bytes before and after the apply — it is never simulated by directly mutating
-/// the document.
-///
-/// NOTE: Draft settings (rawDrafts) are intentionally NOT persisted across save/reopen.
-/// The reopened document retains the last COMMITTED settings. A new edit session
-/// must be started with `beginRawDevelopmentEdit()` before calling Apply.
-@Test func realRawFixtureEndToEnd() async throws {
-    guard let fixturePath = ProcessInfo.processInfo.environment["COMPOSITOR_RAW_FIXTURE_PATH"],
-          !fixturePath.isEmpty,
-          FileManager.default.fileExists(atPath: fixturePath) else {
-        // No local fixture: skip, not fail. Document in the M8.9 report.
-        return
+    /// End-to-end import → save → reopen → NEW edit → Apply → compare pixels → Undo/Redo
+    /// using an optional local RAW/DNG file supplied through `COMPOSITOR_RAW_FIXTURE_PATH`.
+    ///
+    /// Do not commit personal RAW photographs. When the environment variable is absent or
+    /// the file does not exist, the test is skipped with an accurate explanation.
+    /// A successful Apply through `RawDevelopmentRenderer` is verified by comparing actual
+    /// pixel bytes before and after the apply — it is never simulated by directly mutating
+    /// the document.
+    ///
+    /// NOTE: Draft settings (rawDrafts) are intentionally NOT persisted across save/reopen.
+    /// The reopened document retains the last COMMITTED settings. A new edit session
+    /// must be started with `beginRawDevelopmentEdit()` before calling Apply.
+    @Test(.enabled(if: RAWRawFixture.isAvailable, "COMPOSITOR_RAW_FIXTURE_PATH is not set to a readable RAW file"))
+    func realRawFixtureEndToEnd() async throws {
+        // A missing fixture must report as SKIPPED, never as passed: an early return would look
+        // like a successful decode in the result bundle. The trait above does the skipping.
+        let fixtureURL = try #require(RAWRawFixture.url, "fixture path missing")
+        let testStartTime = CFAbsoluteTimeGetCurrent()
+        var stageTimings: [(String, Double, Int64, String)] = []  // (stage, duration, memoryMB, details)
+
+        func recordStage(_ name: String, startTime: CFAbsoluteTime, startMemory: Int64, details: String = "") {
+            let duration = CFAbsoluteTimeGetCurrent() - startTime
+            let currentMemory = getMemoryUsageMB()
+            let deltaMB = currentMemory - startMemory
+            stageTimings.append((name, duration, deltaMB, details))
+            let detail = details.isEmpty ? "" : "  \(details)"
+            print("[TIMING] \(name): \(String(format: "%.3f", duration))s, memory delta: \(deltaMB) MB\(detail)")
+        }
+
+        // --- Stage 1: Import and initial RAW development ---
+        let importStartTime = CFAbsoluteTimeGetCurrent()
+        let importStartMemory = getMemoryUsageMB()
+        let session = EditorSession()
+        session.createDocument(width: 2000, height: 1500)
+        session.confirmRawDevelop = { _, settings in settings }
+        await session.importImages([fixtureURL])
+
+        // Find the RAW-backed layer that was just imported
+        guard let layer = session.document?.layers.first(where: { $0.rawDevelopment != nil }),
+              let rawDev = layer.rawDevelopment else {
+            Issue.record("import did not create a RAW-backed layer")
+            return
+        }
+
+        // Capture pixels after initial import (as-shot development)
+        let beforeAsset = try #require(
+            session.document?.layers.first(where: { $0.id == layer.id })?.asset,
+            "layer has an initial developed asset after import"
+        )
+        let beforeBytes = try #require(pixelBytes(beforeAsset.image), "initial asset has pixel data")
+        recordStage("Import + initial RAW develop", startTime: importStartTime, startMemory: importStartMemory,
+                    details: "\(beforeAsset.image.width)x\(beforeAsset.image.height), \(beforeBytes.count) bytes")
+        print("[INFO] Initial developed image: \(beforeAsset.image.width)x\(beforeAsset.image.height), bytes: \(beforeBytes.count)")
+
+        // --- Stage 2: Save project with committed (as-shot) settings ---
+        let saveStartTime = CFAbsoluteTimeGetCurrent()
+        let saveStartMemory = getMemoryUsageMB()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("CompositorRawFixture-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let projectURL = root.appendingPathComponent("Fixture.comp")
+        guard let snapshot = try #require(session.projectSnapshot()) else {
+            Issue.record("snapshot is nil")
+            return
+        }
+        try await ProjectStore.shared.save(snapshot, to: projectURL)
+        recordStage("Project snapshot + save", startTime: saveStartTime, startMemory: saveStartMemory,
+                    details: "package: \(projectURL.path)")
+
+        // Verify the RAW source bytes were written into the package
+        let imagesDir = projectURL.appendingPathComponent("images")
+        let rawFiles = try FileManager.default.contentsOfDirectory(at: imagesDir, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix(rawDev.source.sourceID.uuidString) && $0.pathExtension == "dng" }
+        // `#expect` records the failure but keeps going, so index through `first`: a bare
+        // `rawFiles[0]` on an empty result trapped the whole test host (crash 2026-11-13 18:52).
+        let savedRawFile = try #require(rawFiles.first, "exactly one RAW source file in package")
+        let savedRawBytes = try Data(contentsOf: savedRawFile)
+        #expect(rawFiles.count == 1, "exactly one RAW source file in package")
+        #expect(savedRawBytes.count == rawDev.source.rawData.count, "RAW source bytes preserved in package")
+        #expect(savedRawBytes == rawDev.source.rawData, "RAW bytes match exactly after save")
+
+        // --- Stage 3: Load the package ---
+        let loadStartTime = CFAbsoluteTimeGetCurrent()
+        let loadStartMemory = getMemoryUsageMB()
+        let loaded = try await ProjectStore.shared.load(from: projectURL)
+        recordStage("Load project package", startTime: loadStartTime, startMemory: loadStartMemory,
+                    details: "RAW sources: \(loaded.rawSources.count)")
+
+        // --- Stage 4: Install into fresh session ---
+        let installStartTime = CFAbsoluteTimeGetCurrent()
+        let installStartMemory = getMemoryUsageMB()
+        let loadedSession = EditorSession()
+        loadedSession.installProject(loaded, from: projectURL)
+        recordStage("Install reopened project", startTime: installStartTime, startMemory: installStartMemory,
+                    details: "layers: \(loadedSession.document?.layers.count ?? 0)")
+
+        // Find the reloaded layer (same ID should persist)
+        guard let reloadedLayer = loadedSession.document?.layers.first(where: { $0.id == layer.id }),
+              reloadedLayer.rawDevelopment != nil else {
+            Issue.record("reopened project does not contain the RAW-backed layer")
+            return
+        }
+
+        // --- Verify no uncommitted draft was persisted ---
+        // The reopened session should have NO draft entry for this layer
+        let drafts = rawDrafts(in: loadedSession)
+        #expect(drafts[layer.id] == nil, "no uncommitted draft persisted across save/reopen")
+        // The layer's persisted settings should be the original as-shot settings
+        #expect(reloadedLayer.rawDevelopment?.settings.exposure == 0, "reopened layer retains as-shot exposure")
+        #expect(reloadedLayer.rawDevelopment?.settings.temperature == rawDev.settings.temperature, "reopened layer retains as-shot temperature")
+
+        // --- Stage 5: Begin NEW edit session, set exposure, Apply ---
+        let editStartTime = CFAbsoluteTimeGetCurrent()
+        let editStartMemory = getMemoryUsageMB()
+        loadedSession.beginRawDevelopmentEdit(layerID: layer.id)
+        #expect(loadedSession.updateRawDevelopmentSettings(layerID: layer.id, exposure: 1.5),
+                "exposure edit is accepted as a valid draft")
+
+        // Verify the draft holds the new settings
+        let newDraft = rawDrafts(in: loadedSession)[layer.id]
+        #expect(newDraft?.settings.exposure == 1.5, "draft holds updated exposure")
+
+        // Apply the exposure edit through RawDevelopmentRenderer
+        let applyStartTime = CFAbsoluteTimeGetCurrent()
+        let applyStartMemory = getMemoryUsageMB()
+        let applied = try await loadedSession.applyRawDevelopmentEdit(layerID: layer.id)
+        recordStage("Apply RAW development (re-develop)", startTime: applyStartTime, startMemory: applyStartMemory,
+                    details: "apply=\(applied)")
+        #expect(applied, "Apply succeeds through RawDevelopmentRenderer")
+        recordStage("Full edit + Apply", startTime: editStartTime, startMemory: editStartMemory)
+
+        // --- Compare pixels before and after Apply ---
+        let afterAsset = try #require(
+            loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset,
+            "layer has a developed image after Apply"
+        )
+        let afterBytes = try #require(pixelBytes(afterAsset.image), "after asset has pixel data")
+        #expect(afterAsset.image !== beforeAsset.image, "Apply produced a new image")
+        // Verify pixel bytes actually changed (not just a new wrapper).
+        #expect(beforeBytes != afterBytes, "exposure edit changed pixel bytes")
+        print("[INFO] After apply: \(afterAsset.image.width)x\(afterAsset.image.height), bytes: \(afterBytes.count)")
+
+        // --- Stage 6: Pixel comparison ---
+        let compareStartTime = CFAbsoluteTimeGetCurrent()
+        let compareStartMemory = getMemoryUsageMB()
+        // Use a bounded checksum for faster comparison if images are large
+        let beforeChecksum = computeChecksum(beforeBytes)
+        let afterChecksum = computeChecksum(afterBytes)
+        #expect(beforeChecksum != afterChecksum, "pixel checksum changed after exposure edit")
+        recordStage("Pixel comparison", startTime: compareStartTime, startMemory: compareStartMemory)
+
+        // --- Stage 7: Undo/Redo ---
+        let undoStartTime = CFAbsoluteTimeGetCurrent()
+        let undoStartMemory = getMemoryUsageMB()
+        loadedSession.undo()
+        let undoAsset = try #require(
+            loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset,
+            "layer still has an asset after Undo"
+        )
+        let undoBytes = try #require(pixelBytes(undoAsset.image), "asset has pixel data after Undo")
+        let undoChecksum = computeChecksum(undoBytes)
+        #expect(undoChecksum == beforeChecksum, "Undo restores original pixel checksum")
+        recordStage("Undo", startTime: undoStartTime, startMemory: undoStartMemory)
+
+        let redoStartTime = CFAbsoluteTimeGetCurrent()
+        let redoStartMemory = getMemoryUsageMB()
+        loadedSession.redo()
+        let redoAsset = try #require(
+            loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset,
+            "layer still has an asset after Redo"
+        )
+        let redoBytes = try #require(pixelBytes(redoAsset.image), "asset has pixel data after Redo")
+        let redoChecksum = computeChecksum(redoBytes)
+        #expect(redoChecksum == afterChecksum, "Redo restores edited pixel checksum")
+        recordStage("Redo", startTime: redoStartTime, startMemory: redoStartMemory)
+
+        // --- Stage 8: Source byte integrity ---
+        let integrityStartTime = CFAbsoluteTimeGetCurrent()
+        let integrityStartMemory = getMemoryUsageMB()
+        let finalLayer = try #require(loadedSession.document?.layers.first(where: { $0.id == layer.id }))
+        let finalSource = try #require(finalLayer.rawDevelopment?.source)
+        #expect(finalSource.rawData == rawDev.source.rawData, "source bytes unchanged after re-edit cycle")
+        #expect(finalSource.sourceID == rawDev.source.sourceID, "source identity unchanged")
+        recordStage("Source byte integrity check", startTime: integrityStartTime, startMemory: integrityStartMemory)
+
+        // --- Summary ---
+        let totalDuration = CFAbsoluteTimeGetCurrent() - testStartTime
+        print("[SUMMARY] Total test duration: \(String(format: "%.3f", totalDuration))s")
+        print("[SUMMARY] Peak memory: \(getPeakMemoryMB()) MB")
+        for (stage, duration, deltaMB, details) in stageTimings {
+            let detail = details.isEmpty ? "" : "  \(details)"
+            print("[SUMMARY]   \(stage): \(String(format: "%.3f", duration))s, \(deltaMB) MB\(detail)")
+        }
     }
 
-    let fixtureURL = URL(fileURLWithPath: fixturePath)
-    let testStartTime = CFAbsoluteTimeGetCurrent()
-    var stageTimings: [(String, Double, Int64, String)] = []  // (stage, duration, memoryMB, details)
+    /// Fast smoke test: validates Apple's decoder can open the real RAW and produce a bounded 800px preview.
+    /// This test is fast and should run with every focused RAW test run.
+    @Test(.enabled(if: RAWRawFixture.isAvailable, "COMPOSITOR_RAW_FIXTURE_PATH is not set to a readable RAW file"))
+    func realRawFixtureSmokePreview() async throws {
+        // Skipping is the trait's job. Returning early here would report a pass and hide the
+        // fact that Apple's decoder was never exercised.
+        let fixtureURL = try #require(RAWRawFixture.url, "fixture path missing")
 
-    func recordStage(_ name: String, startTime: CFAbsoluteTime, startMemory: Int64, details: String = "") {
+        // Prove the fixture is the real RAW and not a placeholder that happened to decode.
+        let bytes = try Data(contentsOf: fixtureURL)
+        #expect(bytes.count > 1_000_000, "a full RAW file, not a stub (\(bytes.count) bytes)")
+        #expect(bytes.starts(with: [0x49, 0x49, 0x2A, 0x00]) || bytes.starts(with: [0x4D, 0x4D, 0x00, 0x2A]),
+                "TIFF-based container header (DNG/NEF/CR2)")
+
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        // Use RawImporter directly to get a bounded preview (800px max)
+        let asShot = RawImporter.asShot(fixtureURL) ?? RawDevelopSettings()
+        guard let preview = await RawImporter.Queue.shared.develop(fixtureURL, settings: asShot, limit: 800, sixteenBit: false) else {
+            Issue.record("Failed to decode RAW preview")
+            return
+        }
+
         let duration = CFAbsoluteTimeGetCurrent() - startTime
-        let currentMemory = getMemoryUsageMB()
-        let deltaMB = currentMemory - startMemory
-        stageTimings.append((name, duration, deltaMB, details))
-        let detail = details.isEmpty ? "" : "  \(details)"
-        print("[TIMING] \(name): \(String(format: "%.3f", duration))s, memory delta: \(deltaMB) MB\(detail)")
+        #expect(preview.width <= 800 && preview.height <= 800, "preview bounded to 800px")
+        #expect(preview.width > 0 && preview.height > 0, "preview has valid dimensions")
+        print("[SMOKE] RAW preview: \(preview.width)x\(preview.height) in \(String(format: "%.3f", duration))s")
+        print("[SMOKE] fixture: \(fixtureURL.path) (\(bytes.count) bytes)")
+        print("[SMOKE] decoded image: \(preview.width)x\(preview.height), limit 800, sixteenBit false")
     }
-
-    // --- Stage 1: Import and initial RAW development ---
-    let importStartTime = CFAbsoluteTimeGetCurrent()
-    let importStartMemory = getMemoryUsageMB()
-    let session = EditorSession()
-    session.createDocument(width: 2000, height: 1500)
-    session.confirmRawDevelop = { _, settings in settings }
-    await session.importImages([fixtureURL])
-
-    // Find the RAW-backed layer that was just imported
-    guard let layer = session.document?.layers.first(where: { $0.rawDevelopment != nil }),
-          let rawDev = layer.rawDevelopment else {
-        Issue.record("import did not create a RAW-backed layer")
-        return
-    }
-
-    // Capture pixels after initial import (as-shot development)
-    let beforeAsset = try #require(
-        session.document?.layers.first(where: { $0.id == layer.id })?.asset,
-        "layer has an initial developed asset after import"
-    )
-    let beforeBytes = try #require(pixelBytes(beforeAsset.image), "initial asset has pixel data")
-    recordStage("Import + initial RAW develop", startTime: importStartTime, startMemory: importStartMemory,
-                details: "\(beforeAsset.image.width)x\(beforeAsset.image.height), \(beforeBytes.count) bytes")
-    print("[INFO] Initial developed image: \(beforeAsset.image.width)x\(beforeAsset.image.height), bytes: \(beforeBytes.count)")
-
-    // --- Stage 2: Save project with committed (as-shot) settings ---
-    let saveStartTime = CFAbsoluteTimeGetCurrent()
-    let saveStartMemory = getMemoryUsageMB()
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("CompositorRawFixture-\(UUID())")
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let projectURL = root.appendingPathComponent("Fixture.comp")
-    guard let snapshot = try #require(session.projectSnapshot()) else {
-        Issue.record("snapshot is nil")
-        return
-    }
-    try await ProjectStore.shared.save(snapshot, to: projectURL)
-    recordStage("Project snapshot + save", startTime: saveStartTime, startMemory: saveStartMemory,
-                details: "package: \(projectURL.path)")
-
-    // Verify the RAW source bytes were written into the package
-    let imagesDir = projectURL.appendingPathComponent("images")
-    let rawFiles = try FileManager.default.contentsOfDirectory(at: imagesDir, includingPropertiesForKeys: nil)
-        .filter { $0.lastPathComponent.hasPrefix(rawDev.source.sourceID.uuidString) && $0.pathExtension == "dng" }
-    #expect(rawFiles.count == 1, "exactly one RAW source file in package")
-    let savedRawBytes = try Data(contentsOf: rawFiles[0])
-    #expect(savedRawBytes.count == rawDev.source.rawData.count, "RAW source bytes preserved in package")
-    #expect(savedRawBytes == rawDev.source.rawData, "RAW bytes match exactly after save")
-
-    // --- Stage 3: Load the package ---
-    let loadStartTime = CFAbsoluteTimeGetCurrent()
-    let loadStartMemory = getMemoryUsageMB()
-    let loaded = try await ProjectStore.shared.load(from: projectURL)
-    recordStage("Load project package", startTime: loadStartTime, startMemory: loadStartMemory,
-                details: "RAW sources: \(loaded.rawSources.count)")
-
-    // --- Stage 4: Install into fresh session ---
-    let installStartTime = CFAbsoluteTimeGetCurrent()
-    let installStartMemory = getMemoryUsageMB()
-    let loadedSession = EditorSession()
-    loadedSession.installProject(loaded, from: projectURL)
-    recordStage("Install reopened project", startTime: installStartTime, startMemory: installStartMemory,
-                details: "layers: \(loadedSession.document?.layers.count ?? 0)")
-
-    // Find the reloaded layer (same ID should persist)
-    guard let reloadedLayer = loadedSession.document?.layers.first(where: { $0.id == layer.id }),
-          reloadedLayer.rawDevelopment != nil else {
-        Issue.record("reopened project does not contain the RAW-backed layer")
-        return
-    }
-
-    // --- Verify no uncommitted draft was persisted ---
-    // The reopened session should have NO draft entry for this layer
-    let drafts = rawDrafts(in: loadedSession)
-    #expect(drafts[layer.id] == nil, "no uncommitted draft persisted across save/reopen")
-    // The layer's persisted settings should be the original as-shot settings
-    #expect(reloadedLayer.rawDevelopment?.settings.exposure == 0, "reopened layer retains as-shot exposure")
-    #expect(reloadedLayer.rawDevelopment?.settings.temperature == rawDev.settings.temperature, "reopened layer retains as-shot temperature")
-
-    // --- Stage 5: Begin NEW edit session, set exposure, Apply ---
-    let editStartTime = CFAbsoluteTimeGetCurrent()
-    let editStartMemory = getMemoryUsageMB()
-    loadedSession.beginRawDevelopmentEdit(layerID: layer.id)
-    #expect(loadedSession.updateRawDevelopmentSettings(layerID: layer.id, exposure: 1.5),
-            "exposure edit is accepted as a valid draft")
-
-    // Verify the draft holds the new settings
-    let newDraft = rawDrafts(in: loadedSession)[layer.id]
-    #expect(newDraft?.settings.exposure == 1.5, "draft holds updated exposure")
-
-    // Apply the exposure edit through RawDevelopmentRenderer
-    let applyStartTime = CFAbsoluteTimeGetCurrent()
-    let applyStartMemory = getMemoryUsageMB()
-    let applied = try await loadedSession.applyRawDevelopmentEdit(layerID: layer.id)
-    recordStage("Apply RAW development (re-develop)", startTime: applyStartTime, startMemory: applyStartMemory,
-                details: "apply=\(applied)")
-    #expect(applied, "Apply succeeds through RawDevelopmentRenderer")
-    recordStage("Full edit + Apply", startTime: editStartTime, startMemory: editStartMemory)
-
-    // --- Compare pixels before and after Apply ---
-    let afterAsset = try #require(
-        loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset,
-        "layer has a developed image after Apply"
-    )
-    let afterBytes = try #require(pixelBytes(afterAsset.image), "after asset has pixel data")
-    #expect(afterAsset.image !== beforeAsset.image, "Apply produced a new image")
-    // Verify pixel bytes actually changed (not just a new wrapper).
-    #expect(beforeBytes != afterBytes, "exposure edit changed pixel bytes")
-    print("[INFO] After apply: \(afterAsset.image.width)x\(afterAsset.image.height), bytes: \(afterBytes.count)")
-
-    // --- Stage 6: Pixel comparison ---
-    let compareStartTime = CFAbsoluteTimeGetCurrent()
-    let compareStartMemory = getMemoryUsageMB()
-    // Use a bounded checksum for faster comparison if images are large
-    let beforeChecksum = computeChecksum(beforeBytes)
-    let afterChecksum = computeChecksum(afterBytes)
-    #expect(beforeChecksum != afterChecksum, "pixel checksum changed after exposure edit")
-    recordStage("Pixel comparison", startTime: compareStartTime, startMemory: compareStartMemory)
-
-    // --- Stage 7: Undo/Redo ---
-    let undoStartTime = CFAbsoluteTimeGetCurrent()
-    let undoStartMemory = getMemoryUsageMB()
-    loadedSession.undo()
-    let undoAsset = try #require(
-        loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset,
-        "layer still has an asset after Undo"
-    )
-    let undoBytes = try #require(pixelBytes(undoAsset.image), "asset has pixel data after Undo")
-    let undoChecksum = computeChecksum(undoBytes)
-    #expect(undoChecksum == beforeChecksum, "Undo restores original pixel checksum")
-    recordStage("Undo", startTime: undoStartTime, startMemory: undoStartMemory)
-
-    let redoStartTime = CFAbsoluteTimeGetCurrent()
-    let redoStartMemory = getMemoryUsageMB()
-    loadedSession.redo()
-    let redoAsset = try #require(
-        loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset,
-        "layer still has an asset after Redo"
-    )
-    let redoBytes = try #require(pixelBytes(redoAsset.image), "asset has pixel data after Redo")
-    let redoChecksum = computeChecksum(redoBytes)
-    #expect(redoChecksum == afterChecksum, "Redo restores edited pixel checksum")
-    recordStage("Redo", startTime: redoStartTime, startMemory: redoStartMemory)
-
-    // --- Stage 8: Source byte integrity ---
-    let integrityStartTime = CFAbsoluteTimeGetCurrent()
-    let integrityStartMemory = getMemoryUsageMB()
-    let finalLayer = try #require(loadedSession.document?.layers.first(where: { $0.id == layer.id }))
-    let finalSource = try #require(finalLayer.rawDevelopment?.source)
-    #expect(finalSource.rawData == rawDev.source.rawData, "source bytes unchanged after re-edit cycle")
-    #expect(finalSource.sourceID == rawDev.source.sourceID, "source identity unchanged")
-    recordStage("Source byte integrity check", startTime: integrityStartTime, startMemory: integrityStartMemory)
-
-    // --- Summary ---
-    let totalDuration = CFAbsoluteTimeGetCurrent() - testStartTime
-    print("[SUMMARY] Total test duration: \(String(format: "%.3f", totalDuration))s")
-    print("[SUMMARY] Peak memory: \(getPeakMemoryMB()) MB")
-    for (stage, duration, deltaMB, details) in stageTimings {
-        let detail = details.isEmpty ? "" : "  \(details)"
-        print("[SUMMARY]   \(stage): \(String(format: "%.3f", duration))s, \(deltaMB) MB\(detail)")
-    }
-}
-
-/// Fast smoke test: validates Apple's decoder can open the real RAW and produce a bounded 800px preview.
-/// This test is fast and should run with every focused RAW test run.
-@Test func realRawFixtureSmokePreview() async throws {
-    guard let fixturePath = ProcessInfo.processInfo.environment["COMPOSITOR_RAW_FIXTURE_PATH"],
-          !fixturePath.isEmpty,
-          FileManager.default.fileExists(atPath: fixturePath) else {
-        return
-    }
-
-    let fixtureURL = URL(fileURLWithPath: fixturePath)
-    let startTime = CFAbsoluteTimeGetCurrent()
-
-    // Use RawImporter directly to get a bounded preview (800px max)
-    let asShot = RawImporter.asShot(fixtureURL) ?? RawDevelopSettings()
-    guard let preview = await RawImporter.Queue.shared.develop(fixtureURL, settings: asShot, limit: 800, sixteenBit: false) else {
-        Issue.record("Failed to decode RAW preview")
-        return
-    }
-
-    let duration = CFAbsoluteTimeGetCurrent() - startTime
-    #expect(preview.width <= 800 && preview.height <= 800, "preview bounded to 800px")
-    #expect(preview.width > 0 && preview.height > 0, "preview has valid dimensions")
-    print("[SMOKE] RAW preview: \(preview.width)x\(preview.height) in \(String(format: "%.3f", duration))s")
-}
 
 /// Computes a fast FNV-1a checksum for pixel data.
 private func computeChecksum(_ bytes: [UInt8]) -> UInt64 {

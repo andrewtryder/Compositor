@@ -1,0 +1,11 @@
+# M9.1.6 preflight snapshot Sat Nov 14 06:08:39 EST 2026
+## load
+ 6:08  up 10 days, 17:13, 2 users, load averages: 96.86 48.21 26.66
+## cpu/mem
+11
+19327352832
+## disk
+/dev/disk3s5   460Gi   315Gi   106Gi    75%    6.3M  1.1G    1%   /System/Volumes/Data
+## memory_pressure
+The system has 19327352832 (1179648 pages with a page size of 16384).
+System-wide memory free percentage: 31%

@@ -32,3 +32,5 @@ BUILD_PLAN.md
 
 # Test fixtures (large binaries, not committed)
 Tests/TestFixtures/
+/regression-build.log
+/regression-test.log
