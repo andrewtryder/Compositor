@@ -799,6 +799,11 @@ var rawImporting = false
 /// Tests assign this to develop without a sheet.
 @ObservationIgnored var confirmRawDevelop: ((URL, RawDevelopSettings) async -> RawDevelopSettings?)?
 
+/// RAW development re-edit sheet for existing RAW-backed layers.
+var showRawDevelopEditor = false { didSet { resumeFileRequests() } }
+/// The layer ID being edited in the RAW development re-edit sheet.
+var rawDevelopEditorLayerID: UUID?
+
     /// Puts the develop sheet up and waits for the choice; nil means the import was cancelled.
     func developRaw(_ url: URL) async -> RawDevelopSettings? {
         let asShot = RawImporter.asShot(url) ?? RawDevelopSettings()
@@ -991,6 +996,85 @@ var rawImporting = false
         beginEdit("Bake RAW Development")
         defer { endEdit() }
         document?.layers[index].rawDevelopment = nil
+        return true
+    }
+
+    /// Starts a Camera Raw node edit for the correction-stack node at `nodeID`
+    /// on the active layer. Pins the node's `CameraRawSettings` as the live
+    /// filter edit source, sets `cameraRawTargetNodeID` so the filter panel
+    /// commits back to the exact node, and opens the Camera Raw filter sheet.
+    /// Returns false if the node is not a `.cameraRawFull` node or the layer
+    /// cannot be edited.
+    @discardableResult
+    func beginCameraRawNodeEdit(layerID: UUID, nodeID: UUID) -> Bool {
+        guard canEditLayers,
+              let layerIndex = document?.layers.firstIndex(where: { $0.id == layerID }),
+              var layer = document?.layers[layerIndex],
+              var stack = layer.correctionStack,
+              let nodeIndex = stack.nodes.firstIndex(where: { $0.id == nodeID }),
+              case .cameraRawFull = stack.nodes[nodeIndex].kind else {
+            return false
+        }
+
+        // Seed the filter edit from the node's persisted settings so the
+        // panel opens showing exactly what the node holds.
+        var settings = FilterSettings()
+        settings.cameraRaw = stack.nodes[nodeIndex].cameraRawFull
+
+        do {
+            let edit = try FilterEdit(kind: .cameraRaw, layer: layer, selection: nil, settings: settings)
+            edit.cameraRawTargetNodeID = nodeID
+            filterEdit = edit
+        } catch {
+            brushError = error.localizedDescription
+            return false
+        }
+
+        // Keep the filter edit in place until the panel closes; commit
+        // routes through `commitFilter` which now writes back to the node.
+        return true
+    }
+
+    /// Commits an in-flight Camera Raw node edit back to its target correction
+    /// stack node (via `cameraRawTargetNodeID`), producing one undo entry.
+    /// Returns false if there is no Camera Raw node edit in progress or the
+    /// target node is missing.
+    @discardableResult
+    func commitCameraRawNodeEdit() -> Bool {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, let nodeID = edit.cameraRawTargetNodeID,
+              let layerID = filterEdit?.layerID,
+              let layerIndex = document?.layers.firstIndex(where: { $0.id == layerID }),
+              var layer = document?.layers[layerIndex],
+              var stack = layer.correctionStack,
+              let nodeIndex = stack.nodes.firstIndex(where: { $0.id == nodeID }) else {
+            return false
+        }
+
+        let rendered = edit.renderSettings()
+        beginEdit("Edit Camera Raw Correction")
+        stack.nodes[nodeIndex].cameraRawFull = rendered.cameraRaw
+        stack.invalidateFromIndex(nodeIndex)
+        do {
+            try commitCorrectionStack(stack, on: &layer, index: layerIndex, expandPlacement: false)
+        } catch {
+            endEdit()
+            brushError = error.localizedDescription
+            return false
+        }
+        endEdit()
+        filterEdit = nil
+        return true
+    }
+
+    /// Cancels an in-flight Camera Raw node edit without touching the node or
+    /// the document. Returns false if there is no Camera Raw node edit in
+    /// progress.
+    @discardableResult
+    func cancelCameraRawNodeEdit() -> Bool {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, edit.cameraRawTargetNodeID != nil else {
+            return false
+        }
+        filterEdit = nil
         return true
     }
 

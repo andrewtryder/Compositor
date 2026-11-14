@@ -22,6 +22,12 @@ extension EditorSession {
             return stack
         }
         guard let asset = layer.asset else {
+            // A blank RAW-backed layer (no developed asset yet) is still 16-bit:
+            // correction stacks require 8-bit, so reject with deepOrHDR rather
+            // than a generic "no image" error.
+            if let rawDev = layer.rawDevelopment, rawDev.developedBitsPerComponent > 8 {
+                throw LayerCorrectionError.deepOrHDR
+            }
             throw LayerCorrectionError.unsupported("The layer has no image to correct.")
         }
         guard asset.deep == nil, asset.image.bitsPerComponent <= 8, !DeepLayer.isHDR(asset.image) else {
@@ -280,10 +286,10 @@ extension EditorSession {
     }
 
     /// Writes rendered display + synced reshape projection. Caller owns `beginEdit`/`endEdit`.
-    fileprivate func commitCorrectionStack(_ stack: LayerCorrectionStack,
-                                           on layer: inout ImageLayer,
-                                           index: Int,
-                                           expandPlacement: Bool) throws {
+    func commitCorrectionStack(_ stack: LayerCorrectionStack,
+                               on layer: inout ImageLayer,
+                               index: Int,
+                               expandPlacement: Bool) throws {
         var working = stack
         try working.validatePrecision()
         try working.validateStageDimensions()

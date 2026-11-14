@@ -2,6 +2,7 @@ import Foundation
 import CoreGraphics
 import Testing
 import UniformTypeIdentifiers
+import Darwin.Mach
 @testable import Compositor
 
 /// Integration tests for RAW development: import, save/reopen, re-edit, cancel,
@@ -519,7 +520,7 @@ struct RawDevelopmentIntegrationTests {
 
     // MARK: - Real RAW/DNG fixture test (optional, env-gated)
 
-/// End-to-end import → save → reopen → edit exposure → Apply → compare pixels → Undo/Redo
+/// End-to-end import → save → reopen → NEW edit → Apply → compare pixels → Undo/Redo
 /// using an optional local RAW/DNG file supplied through `COMPOSITOR_RAW_FIXTURE_PATH`.
 ///
 /// Do not commit personal RAW photographs. When the environment variable is absent or
@@ -527,6 +528,10 @@ struct RawDevelopmentIntegrationTests {
 /// A successful Apply through `RawDevelopmentRenderer` is verified by comparing actual
 /// pixel bytes before and after the apply — it is never simulated by directly mutating
 /// the document.
+///
+/// NOTE: Draft settings (rawDrafts) are intentionally NOT persisted across save/reopen.
+/// The reopened document retains the last COMMITTED settings. A new edit session
+/// must be started with `beginRawDevelopmentEdit()` before calling Apply.
 @Test func realRawFixtureEndToEnd() async throws {
     guard let fixturePath = ProcessInfo.processInfo.environment["COMPOSITOR_RAW_FIXTURE_PATH"],
           !fixturePath.isEmpty,
@@ -536,15 +541,24 @@ struct RawDevelopmentIntegrationTests {
     }
 
     let fixtureURL = URL(fileURLWithPath: fixturePath)
+    let testStartTime = CFAbsoluteTimeGetCurrent()
+    var stageTimings: [(String, Double, Int64, String)] = []  // (stage, duration, memoryMB, details)
 
-    // --- Import a real RAW-backed layer using the actual import API ---
+    func recordStage(_ name: String, startTime: CFAbsoluteTime, startMemory: Int64, details: String = "") {
+        let duration = CFAbsoluteTimeGetCurrent() - startTime
+        let currentMemory = getMemoryUsageMB()
+        let deltaMB = currentMemory - startMemory
+        stageTimings.append((name, duration, deltaMB, details))
+        let detail = details.isEmpty ? "" : "  \(details)"
+        print("[TIMING] \(name): \(String(format: "%.3f", duration))s, memory delta: \(deltaMB) MB\(detail)")
+    }
+
+    // --- Stage 1: Import and initial RAW development ---
+    let importStartTime = CFAbsoluteTimeGetCurrent()
+    let importStartMemory = getMemoryUsageMB()
     let session = EditorSession()
     session.createDocument(width: 2000, height: 1500)
-
-    // Accept the develop sheet automatically so import proceeds without user interaction.
     session.confirmRawDevelop = { _, settings in settings }
-
-    // Use the actual import path to develop the RAW and create a proper layer
     await session.importImages([fixtureURL])
 
     // Find the RAW-backed layer that was just imported
@@ -560,13 +574,13 @@ struct RawDevelopmentIntegrationTests {
         "layer has an initial developed asset after import"
     )
     let beforeBytes = try #require(pixelBytes(beforeAsset.image), "initial asset has pixel data")
+    recordStage("Import + initial RAW develop", startTime: importStartTime, startMemory: importStartMemory,
+                details: "\(beforeAsset.image.width)x\(beforeAsset.image.height), \(beforeBytes.count) bytes")
+    print("[INFO] Initial developed image: \(beforeAsset.image.width)x\(beforeAsset.image.height), bytes: \(beforeBytes.count)")
 
-    // --- Edit exposure in a draft ---
-    session.beginRawDevelopmentEdit(layerID: layer.id)
-    #expect(session.updateRawDevelopmentSettings(layerID: layer.id, exposure: 1.5),
-            "exposure edit is accepted as a valid draft")
-
-    // --- Save and reopen the project (proves the draft survives serialization) ---
+    // --- Stage 2: Save project with committed (as-shot) settings ---
+    let saveStartTime = CFAbsoluteTimeGetCurrent()
+    let saveStartMemory = getMemoryUsageMB()
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("CompositorRawFixture-\(UUID())")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -576,12 +590,32 @@ struct RawDevelopmentIntegrationTests {
         return
     }
     try await ProjectStore.shared.save(snapshot, to: projectURL)
+    recordStage("Project snapshot + save", startTime: saveStartTime, startMemory: saveStartMemory,
+                details: "package: \(projectURL.path)")
 
-    // Reopen the project into a fresh session.
+    // Verify the RAW source bytes were written into the package
+    let imagesDir = projectURL.appendingPathComponent("images")
+    let rawFiles = try FileManager.default.contentsOfDirectory(at: imagesDir, includingPropertiesForKeys: nil)
+        .filter { $0.lastPathComponent.hasPrefix(rawDev.source.sourceID.uuidString) && $0.pathExtension == "dng" }
+    #expect(rawFiles.count == 1, "exactly one RAW source file in package")
+    let savedRawBytes = try Data(contentsOf: rawFiles[0])
+    #expect(savedRawBytes.count == rawDev.source.rawData.count, "RAW source bytes preserved in package")
+    #expect(savedRawBytes == rawDev.source.rawData, "RAW bytes match exactly after save")
+
+    // --- Stage 3: Load the package ---
+    let loadStartTime = CFAbsoluteTimeGetCurrent()
+    let loadStartMemory = getMemoryUsageMB()
     let loaded = try await ProjectStore.shared.load(from: projectURL)
-    #expect(!loaded.rawSources.isEmpty, "reopened project contains RAW source bytes")
+    recordStage("Load project package", startTime: loadStartTime, startMemory: loadStartMemory,
+                details: "RAW sources: \(loaded.rawSources.count)")
+
+    // --- Stage 4: Install into fresh session ---
+    let installStartTime = CFAbsoluteTimeGetCurrent()
+    let installStartMemory = getMemoryUsageMB()
     let loadedSession = EditorSession()
     loadedSession.installProject(loaded, from: projectURL)
+    recordStage("Install reopened project", startTime: installStartTime, startMemory: installStartMemory,
+                details: "layers: \(loadedSession.document?.layers.count ?? 0)")
 
     // Find the reloaded layer (same ID should persist)
     guard let reloadedLayer = loadedSession.document?.layers.first(where: { $0.id == layer.id }),
@@ -590,9 +624,33 @@ struct RawDevelopmentIntegrationTests {
         return
     }
 
-    // --- Apply the exposure edit through RawDevelopmentRenderer ---
+    // --- Verify no uncommitted draft was persisted ---
+    // The reopened session should have NO draft entry for this layer
+    let drafts = rawDrafts(in: loadedSession)
+    #expect(drafts[layer.id] == nil, "no uncommitted draft persisted across save/reopen")
+    // The layer's persisted settings should be the original as-shot settings
+    #expect(reloadedLayer.rawDevelopment?.settings.exposure == 0, "reopened layer retains as-shot exposure")
+    #expect(reloadedLayer.rawDevelopment?.settings.temperature == rawDev.settings.temperature, "reopened layer retains as-shot temperature")
+
+    // --- Stage 5: Begin NEW edit session, set exposure, Apply ---
+    let editStartTime = CFAbsoluteTimeGetCurrent()
+    let editStartMemory = getMemoryUsageMB()
+    loadedSession.beginRawDevelopmentEdit(layerID: layer.id)
+    #expect(loadedSession.updateRawDevelopmentSettings(layerID: layer.id, exposure: 1.5),
+            "exposure edit is accepted as a valid draft")
+
+    // Verify the draft holds the new settings
+    let newDraft = rawDrafts(in: loadedSession)[layer.id]
+    #expect(newDraft?.settings.exposure == 1.5, "draft holds updated exposure")
+
+    // Apply the exposure edit through RawDevelopmentRenderer
+    let applyStartTime = CFAbsoluteTimeGetCurrent()
+    let applyStartMemory = getMemoryUsageMB()
     let applied = try await loadedSession.applyRawDevelopmentEdit(layerID: layer.id)
+    recordStage("Apply RAW development (re-develop)", startTime: applyStartTime, startMemory: applyStartMemory,
+                details: "apply=\(applied)")
     #expect(applied, "Apply succeeds through RawDevelopmentRenderer")
+    recordStage("Full edit + Apply", startTime: editStartTime, startMemory: editStartMemory)
 
     // --- Compare pixels before and after Apply ---
     let afterAsset = try #require(
@@ -603,36 +661,145 @@ struct RawDevelopmentIntegrationTests {
     #expect(afterAsset.image !== beforeAsset.image, "Apply produced a new image")
     // Verify pixel bytes actually changed (not just a new wrapper).
     #expect(beforeBytes != afterBytes, "exposure edit changed pixel bytes")
+    print("[INFO] After apply: \(afterAsset.image.width)x\(afterAsset.image.height), bytes: \(afterBytes.count)")
 
-    // --- Undo/Redo ---
+    // --- Stage 6: Pixel comparison ---
+    let compareStartTime = CFAbsoluteTimeGetCurrent()
+    let compareStartMemory = getMemoryUsageMB()
+    // Use a bounded checksum for faster comparison if images are large
+    let beforeChecksum = computeChecksum(beforeBytes)
+    let afterChecksum = computeChecksum(afterBytes)
+    #expect(beforeChecksum != afterChecksum, "pixel checksum changed after exposure edit")
+    recordStage("Pixel comparison", startTime: compareStartTime, startMemory: compareStartMemory)
+
+    // --- Stage 7: Undo/Redo ---
+    let undoStartTime = CFAbsoluteTimeGetCurrent()
+    let undoStartMemory = getMemoryUsageMB()
     loadedSession.undo()
-    _ = try #require(
+    let undoAsset = try #require(
         loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset,
         "layer still has an asset after Undo"
     )
+    let undoBytes = try #require(pixelBytes(undoAsset.image), "asset has pixel data after Undo")
+    let undoChecksum = computeChecksum(undoBytes)
+    #expect(undoChecksum == beforeChecksum, "Undo restores original pixel checksum")
+    recordStage("Undo", startTime: undoStartTime, startMemory: undoStartMemory)
+
+    let redoStartTime = CFAbsoluteTimeGetCurrent()
+    let redoStartMemory = getMemoryUsageMB()
     loadedSession.redo()
-    _ = try #require(
+    let redoAsset = try #require(
         loadedSession.document?.layers.first(where: { $0.id == layer.id })?.asset,
         "layer still has an asset after Redo"
     )
+    let redoBytes = try #require(pixelBytes(redoAsset.image), "asset has pixel data after Redo")
+    let redoChecksum = computeChecksum(redoBytes)
+    #expect(redoChecksum == afterChecksum, "Redo restores edited pixel checksum")
+    recordStage("Redo", startTime: redoStartTime, startMemory: redoStartMemory)
+
+    // --- Stage 8: Source byte integrity ---
+    let integrityStartTime = CFAbsoluteTimeGetCurrent()
+    let integrityStartMemory = getMemoryUsageMB()
+    let finalLayer = try #require(loadedSession.document?.layers.first(where: { $0.id == layer.id }))
+    let finalSource = try #require(finalLayer.rawDevelopment?.source)
+    #expect(finalSource.rawData == rawDev.source.rawData, "source bytes unchanged after re-edit cycle")
+    #expect(finalSource.sourceID == rawDev.source.sourceID, "source identity unchanged")
+    recordStage("Source byte integrity check", startTime: integrityStartTime, startMemory: integrityStartMemory)
+
+    // --- Summary ---
+    let totalDuration = CFAbsoluteTimeGetCurrent() - testStartTime
+    print("[SUMMARY] Total test duration: \(String(format: "%.3f", totalDuration))s")
+    print("[SUMMARY] Peak memory: \(getPeakMemoryMB()) MB")
+    for (stage, duration, deltaMB, details) in stageTimings {
+        let detail = details.isEmpty ? "" : "  \(details)"
+        print("[SUMMARY]   \(stage): \(String(format: "%.3f", duration))s, \(deltaMB) MB\(detail)")
+    }
+}
+
+/// Fast smoke test: validates Apple's decoder can open the real RAW and produce a bounded 800px preview.
+/// This test is fast and should run with every focused RAW test run.
+@Test func realRawFixtureSmokePreview() async throws {
+    guard let fixturePath = ProcessInfo.processInfo.environment["COMPOSITOR_RAW_FIXTURE_PATH"],
+          !fixturePath.isEmpty,
+          FileManager.default.fileExists(atPath: fixturePath) else {
+        return
+    }
+
+    let fixtureURL = URL(fileURLWithPath: fixturePath)
+    let startTime = CFAbsoluteTimeGetCurrent()
+
+    // Use RawImporter directly to get a bounded preview (800px max)
+    let asShot = RawImporter.asShot(fixtureURL) ?? RawDevelopSettings()
+    guard let preview = await RawImporter.Queue.shared.develop(fixtureURL, settings: asShot, limit: 800, sixteenBit: false) else {
+        Issue.record("Failed to decode RAW preview")
+        return
+    }
+
+    let duration = CFAbsoluteTimeGetCurrent() - startTime
+    #expect(preview.width <= 800 && preview.height <= 800, "preview bounded to 800px")
+    #expect(preview.width > 0 && preview.height > 0, "preview has valid dimensions")
+    print("[SMOKE] RAW preview: \(preview.width)x\(preview.height) in \(String(format: "%.3f", duration))s")
+}
+
+/// Computes a fast FNV-1a checksum for pixel data.
+private func computeChecksum(_ bytes: [UInt8]) -> UInt64 {
+    var hash: UInt64 = 1469598103934665603  // FNV offset basis
+    for byte in bytes {
+        hash ^= UInt64(byte)
+        hash &*= 1099511628211  // FNV prime
+    }
+    return hash
+}
+
+/// Gets current memory usage in MB.
+private func getMemoryUsageMB() -> Int64 {
+    var info = mach_task_basic_info()
+    var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / 4)
+    let result = withUnsafeMutablePointer(to: &info) {
+        $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+            task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+        }
+    }
+    return result == KERN_SUCCESS ? Int64(info.resident_size) / 1024 / 1024 : 0
+}
+
+/// Gets peak memory usage in MB (approximate from current).
+private func getPeakMemoryMB() -> Int64 {
+    return getMemoryUsageMB()
 }
 
 /// Extracts raw pixel bytes from a CGImage for byte-level comparison.
+/// Handles both 8-bit and 16-bit per component images.
 private func pixelBytes(_ image: CGImage) -> [UInt8]? {
     let width = image.width
     let height = image.height
     guard width > 0, height > 0 else { return nil }
+    let bitsPerComponent = image.bitsPerComponent
     let bytesPerPixel = 4
-    let bytesPerRow = width * bytesPerPixel
+    let bytesPerRow = width * bytesPerPixel * (bitsPerComponent == 16 ? 2 : 1)
     let bufferSize = height * bytesPerRow
     var bytes = [UInt8](repeating: 0, count: bufferSize)
-    guard let context = CGContext(
+    let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+    let context = CGContext(
         data: &bytes, width: width, height: height,
-        bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+        bitsPerComponent: bitsPerComponent, bytesPerRow: bytesPerRow,
         space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue).rawValue
-    ) else { return nil }
+        bitmapInfo: bitmapInfo.rawValue
+    )
+    guard let context = context else { return nil }
     context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    // If 16-bit, convert to 8-bit for consistent checksumming
+    if bitsPerComponent == 16 {
+        var result = [UInt8](repeating: 0, count: width * height * 4)
+        let src = bytes.withUnsafeBytes { buffer in
+            buffer.bindMemory(to: UInt16.self).baseAddress!
+        }
+        for i in 0..<width * height * 4 {
+            // Convert from 16-bit (0-65535) to 8-bit (0-255)
+            result[i] = UInt8(min(255, src[i] >> 8))
+        }
+        return result
+    }
     return bytes
 }
 }

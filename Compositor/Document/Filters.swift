@@ -637,6 +637,8 @@ final class FilterEdit {
     /// The layer had no pixels yet (an empty layer); the filter started it from clear ones.
     @ObservationIgnored var startedEmpty = false
     @ObservationIgnored var preparedPreview: CGImage?
+    /// Target correction-stack node ID for Camera Raw Full / Geometry editing.
+    var cameraRawTargetNodeID: UUID? = nil
     /// Where `preparedPreview` goes: the grown layer it was made from, or nil for the layer's own place. A blur grows
     /// the layer as it gets bigger; the last preview stays up where it belongs until the next one replaces it.
     @ObservationIgnored var preparedTransform: LayerTransform?
@@ -1071,6 +1073,12 @@ extension EditorSession {
         if case .dither = colorPicker?.target { closeColorPicker(commit: false) }
         if finishAdjustmentEditing(commit: false) { return }
         guard let edit = filterEdit, !edit.committing else { return }
+        // A Camera Raw correction-stack node edit is cancelled without touching
+        // the node or the document.
+        if edit.kind == .cameraRaw, edit.cameraRawTargetNodeID != nil {
+            cancelCameraRawNodeEdit()
+            return
+        }
         edit.previewTask?.cancel()
         if edit.kind == .cameraRaw, edit.previewJob.cameraRawUsesGPU {
             Task.detached(priority: .utility) { MetalCameraRawLookup.shared?.discardBuffers() }
@@ -1086,6 +1094,15 @@ extension EditorSession {
         if case .dither = colorPicker?.target { closeColorPicker(commit: true) }
         if finishAdjustmentEditing(commit: true) { return }
         guard let edit = filterEdit, !edit.committing else { return }
+
+        // A Camera Raw correction-stack node edit commits back to the node
+        // (one undo entry) rather than painting the layer destructively.
+        if edit.kind == .cameraRaw, edit.cameraRawTargetNodeID != nil {
+            let committed = commitCameraRawNodeEdit()
+            if !committed { brushError = "Could not commit the Camera Raw correction." }
+            return
+        }
+
         if edit.kind.isAutomatic {
             await edit.previewTask?.value
             guard filterEdit === edit, !edit.committing, edit.preparedPreview != nil, edit.previewError == nil else { return }
