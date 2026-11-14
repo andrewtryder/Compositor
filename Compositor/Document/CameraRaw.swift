@@ -666,12 +666,82 @@ extension EditorSession {
 
     func commitCameraRawGeometryGuide() {
         guard let edit = filterEdit, let draft = edit.cameraRawGuideDraft else { return }
+        // Prevent malformed or zero-length guides from entering committed settings.
+        guard hypot(draft.end.x - draft.start.x, draft.end.y - draft.start.y) > 0.01 else {
+            edit.cameraRawGuideDraft = nil
+            edit.cameraRawDraggingGuideIndex = nil
+            edit.cameraRawDraggingEndpoint = false
+            return
+        }
         var settings = edit.settings
+        // Enforce the maximum of four manual guides.
+        guard settings.cameraRaw.geometry.guides.count < 4 else { return }
         settings.cameraRaw.geometry.guides.append(CameraRawGeometryGuide(startX: draft.start.x, startY: draft.start.y,
                                                                          endX: draft.end.x, endY: draft.end.y))
         settings.cameraRaw.geometry.upright = .guided
         edit.cameraRawGuideDraft = nil
+        edit.cameraRawDraggingGuideIndex = nil
+        edit.cameraRawDraggingEndpoint = false
         updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Hit-tests a Camera Raw guide endpoint at a document point, returning the guide index and
+    /// whether the endpoint is the end (`true`) or the start (`false`). Tolerance scales with zoom.
+    func cameraRawHitGuideEndpoint(at documentPoint: CGPoint, zoom: CGFloat) -> (guideIndex: Int, endpoint: Bool)? {
+        guard let edit = filterEdit else { return nil }
+        let geometry = edit.settings.cameraRaw.geometry
+        guard !geometry.guides.isEmpty else { return nil }
+        let image = edit.previewSource
+        let tolerance = 14.0 / max(zoom, 0.001)
+        for index in geometry.guides.indices {
+            let guide = geometry.guides[index]
+            for endpoint in [false, true] {
+                let normalized = endpoint ? guide.end : guide.start
+                let pixel = CGPoint(x: normalized.x * CGFloat(image.width), y: normalized.y * CGFloat(image.height))
+                let documentPointForEndpoint = pixel.applying(edit.previewMapping)
+                let dx = documentPoint.x - documentPointForEndpoint.x
+                let dy = documentPoint.y - documentPointForEndpoint.y
+                if hypot(dx, dy) <= tolerance {
+                    return (index, endpoint)
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Begins dragging a Camera Raw guide endpoint. The opposite endpoint stays fixed.
+    func beginCameraRawGuideEndpointDrag(at documentPoint: CGPoint, zoom: CGFloat) {
+        guard let edit = filterEdit else { return }
+        guard let hit = cameraRawHitGuideEndpoint(at: documentPoint, zoom: zoom) else { return }
+        edit.cameraRawDraggingGuideIndex = hit.guideIndex
+        edit.cameraRawDraggingEndpoint = hit.endpoint
+    }
+
+    /// Moves the currently dragged endpoint to a document point. The opposite endpoint is unchanged.
+    func continueCameraRawGuideEndpointDrag(to documentPoint: CGPoint) {
+        guard let edit = filterEdit, let guideIndex = edit.cameraRawDraggingGuideIndex,
+              edit.settings.cameraRaw.geometry.guides.indices.contains(guideIndex) else { return }
+        var settings = edit.settings
+        let image = edit.previewSource
+        guard let normalized = cameraRawNormalizedPoint(at: documentPoint) else { return }
+        var guide = settings.cameraRaw.geometry.guides[guideIndex]
+        if edit.cameraRawDraggingEndpoint {
+            guide.endX = normalized.x
+            guide.endY = normalized.y
+        } else {
+            guide.startX = normalized.x
+            guide.startY = normalized.y
+        }
+        settings.cameraRaw.geometry.guides[guideIndex] = guide
+        edit.settings = settings
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Cancels an in-progress endpoint drag, restoring the guide to its original coordinates.
+    func cancelCameraRawGuideEndpointDrag() {
+        guard let edit = filterEdit else { return }
+        edit.cameraRawDraggingGuideIndex = nil
+        edit.cameraRawDraggingEndpoint = false
     }
 
     private func cameraRawNormalizedPoint(at point: CGPoint) -> CGPoint? {

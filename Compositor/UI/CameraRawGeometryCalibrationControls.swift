@@ -5,7 +5,7 @@ import SwiftUI
 ///
 /// Layout:
 ///   1. Compact Geometry header (title, chevron, reset)
-///   2. Upright mode icon strip (Off, Auto, Level, Vertical, Full, Guided)
+///   2. Upright mode icon strip (Off, Auto Level, Auto Vertical, Auto Full, Guided)
 ///   3. Guided Upright on-image guide drawing (when Guided is active)
 ///   4. Manual Transformations expandable section
 ///   5. Constrain Crop
@@ -24,9 +24,6 @@ struct CameraRawGeometryControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // MARK: Header
-            geometryHeader
-
             // MARK: Upright mode icon strip
             uprightModeStrip
 
@@ -50,39 +47,12 @@ struct CameraRawGeometryControls: View {
             // MARK: Constrain Crop
             constrainCropToggle
 
-            // MARK: Reset
-            resetButton
-
             // MARK: Advanced Geometry (disclosure)
             advancedGeometrySection
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: - Header
-
-    private var geometryHeader: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "square.3.layers.3d.down.right")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-            Text("Geometry")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-            Spacer(minLength: 0)
-            Button {
-                session.resetCameraRaw(.geometry)
-            } label: {
-                Image(systemName: "arrow.counterclockwise")
-                    .font(.system(size: 12, weight: .regular))
-            }
-            .buttonStyle(.plain)
-            .help("Reset Geometry")
-            .accessibilityLabel("Reset Geometry")
-        }
-        .padding(.bottom, 2)
     }
 
     // MARK: - Upright mode icon strip
@@ -263,25 +233,6 @@ struct CameraRawGeometryControls: View {
             .font(.system(size: 12))
             .help("Crops empty edges after the transform and fits the result back into the frame.")
             .accessibilityLabel("Constrain Crop")
-    }
-
-    // MARK: - Reset
-
-    private var resetButton: some View {
-        Button {
-            session.resetCameraRaw(.geometry)
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "arrow.counterclockwise")
-                    .font(.system(size: 11))
-                Text("Reset Geometry")
-                    .font(.system(size: 11, weight: .medium))
-            }
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(Color.accentColor)
-        .help("Clears upright, guides, volume, and framing polish. Keeps the photo's focal length for Volume Auto.")
-        .accessibilityLabel("Reset Geometry")
     }
 
     // MARK: - Advanced Geometry (disclosure)
@@ -526,19 +477,19 @@ private struct UprightModeButton: View {
     private var tooltip: String {
         switch mode {
         case .off: return "Off — No perspective correction"
-        case .autoLevel: return "Auto — Balanced perspective correction"
-        case .autoVertical: return "Level — Level the horizon only"
-        case .autoFull: return "Full — Full perspective correction"
-        case .guided: return "Guided — Draw custom guides"
+        case .autoLevel: return "Auto Level — Levels the image and corrects horizontal tilt"
+        case .autoVertical: return "Auto Vertical — Straightens converging vertical lines"
+        case .autoFull: return "Auto Full — Full perspective correction for level and vertical"
+        case .guided: return "Guided — Draw custom guides on the image"
         }
     }
 
     private var accessibilityLabel: String {
         switch mode {
         case .off: return "Off"
-        case .autoLevel: return "Auto"
-        case .autoVertical: return "Level"
-        case .autoFull: return "Full"
+        case .autoLevel: return "Auto Level"
+        case .autoVertical: return "Auto Vertical"
+        case .autoFull: return "Auto Full"
         case .guided: return "Guided"
         }
     }
