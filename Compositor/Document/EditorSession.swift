@@ -6,6 +6,9 @@ struct ImageLayer: Identifiable, Equatable {
         lhs.id == rhs.id && lhs.name == rhs.name && lhs.isVisible == rhs.isVisible && lhs.transform == rhs.transform
             && lhs.asset?.image === rhs.asset?.image && lhs.parentID == rhs.parentID && lhs.isGroup == rhs.isGroup && lhs.opacity == rhs.opacity && lhs.blendMode == rhs.blendMode && lhs.mask == rhs.mask && lhs.maskSourceID == rhs.maskSourceID && lhs.adjustment == rhs.adjustment && lhs.shape == rhs.shape && lhs.text == rhs.text && lhs.effects == rhs.effects
             && lhs.gifAnimation == rhs.gifAnimation
+            && lhs.reshape == rhs.reshape
+            && lhs.correctionStack == rhs.correctionStack
+            && lhs.rawDevelopment == rhs.rawDevelopment
     }
     let id: UUID
     var asset: ImportedImage?
@@ -21,6 +24,18 @@ struct ImageLayer: Identifiable, Equatable {
     var mask: LayerMask?
     /// Masks scoped to frames in an imported GIF. The frames remain part of this one layer.
     var gifAnimation: GIFAnimation? = nil
+    /// Editable ReShape: immutable source + mesh. `asset` holds the last rendered output.
+    /// When `correctionStack` is present, this is a projection of the stack's reshape node for
+    /// MeshWarp tooling and v22 dual-write compatibility.
+    var reshape: LayerReshape? = nil
+    /// Ordered non-destructive geometry corrections. Immutable source lives on the stack;
+    /// `asset` is the rendered display. Prefer this over lone `reshape` when both exist.
+    var correctionStack: LayerCorrectionStack? = nil
+    /// Persistent RAW development state: immutable source + versioned settings.
+    /// When present, the layer's source bytes and settings survive save/reopen and
+    /// `beginRawDevelopmentEdit`/`updateRawDevelopmentSettings`/`applyRawDevelopmentEdit`
+    /// operate on the original sensor data rather than a developed render.
+    var rawDevelopment: RawDevelopmentPersistentState? = nil
     var adjustment: LayerAdjustment?
     /// Set on layers the Shape tool made; see `liveShape`.
     var shape: LayerShape?
@@ -34,6 +49,7 @@ struct ImageLayer: Identifiable, Equatable {
         self.asset = asset
         self.transform = LayerTransform(origin: origin, size: CGSize(width: asset.image.width, height: asset.image.height))
         self.name = asset.name
+        self.rawDevelopment = nil
     }
 
     init(name: String, blankSize: CGSize) {
@@ -41,9 +57,10 @@ struct ImageLayer: Identifiable, Equatable {
         self.asset = nil // Allocate pixels when painting begins, not when adding an empty layer.
         self.transform = LayerTransform(origin: .zero, size: blankSize)
         self.name = name
+        self.rawDevelopment = nil
     }
 
-    init(id: UUID, asset: ImportedImage?, name: String, isVisible: Bool, transform: LayerTransform, parentID: UUID? = nil, isGroup: Bool = false, opacity: Double = 1, blendMode: LayerBlendMode = .normal, mask: LayerMask? = nil, maskSourceID: UUID? = nil, adjustment: LayerAdjustment? = nil, shape: LayerShape? = nil, effects: LayerEffects? = nil, text: LayerText? = nil, gifAnimation: GIFAnimation? = nil) {
+    init(id: UUID, asset: ImportedImage?, name: String, isVisible: Bool, transform: LayerTransform, parentID: UUID? = nil, isGroup: Bool = false, opacity: Double = 1, blendMode: LayerBlendMode = .normal, mask: LayerMask? = nil, maskSourceID: UUID? = nil, adjustment: LayerAdjustment? = nil, shape: LayerShape? = nil, effects: LayerEffects? = nil, text: LayerText? = nil, gifAnimation: GIFAnimation? = nil, reshape: LayerReshape? = nil, correctionStack: LayerCorrectionStack? = nil, rawDevelopment: RawDevelopmentPersistentState? = nil) {
         self.id = id
         self.asset = asset
         self.name = name
@@ -55,11 +72,14 @@ struct ImageLayer: Identifiable, Equatable {
         self.blendMode = blendMode
         self.mask = mask
         self.gifAnimation = gifAnimation
+        self.reshape = reshape
+        self.correctionStack = correctionStack
         self.maskSourceID = maskSourceID
         self.adjustment = adjustment
         self.shape = shape
         self.effects = effects
         self.text = text
+        self.rawDevelopment = rawDevelopment
     }
 }
 
@@ -92,15 +112,55 @@ struct CanvasDocument: Equatable {
 }
 
 enum NavigationTool: String, CaseIterable {
-    case move, marquee, lasso, wand, crop, brush, spotHealing, cloneStamp, blur, gradient, shape, type, eyedropper, hand, zoom
+    case move, marquee, lasso, wand, crop, brush, spotHealing, cloneStamp, blur, reshape, gradient, shape, type, eyedropper, hand, zoom
     /// No tool (A): nothing in the tool rail is selected and canvas clicks do nothing.
     case idle
     /// Tools that paint with the brush tip, sharing its size, hardness, opacity, and keys.
     var isBrushTool: Bool { self == .brush || self == .spotHealing || self == .cloneStamp || self == .blur }
     /// Tools that draw and edit selections, sharing modifiers, moving, and nudging.
     var isSelectionTool: Bool { self == .marquee || self == .lasso || self == .wand }
-    var symbol: String { self == .type ? "textformat" : self == .eyedropper ? "eyedropper" : self == .marquee ? "rectangle.dashed" : self == .lasso ? "lasso" : self == .wand ? "wand.and.stars" : self == .brush ? "paintbrush.pointed" : self == .spotHealing ? "bandage" : self == .cloneStamp ? "seal" : self == .blur ? "drop" : self == .gradient ? "square.bottomhalf.filled" : self == .shape ? "square.on.circle" : self == .crop ? "crop" : self == .move ? "arrow.up.left.and.arrow.down.right" : self == .hand ? "hand.raised" : "magnifyingglass" }
-    var label: String { self == .type ? "Type (T)" : self == .eyedropper ? "Eyedropper (I)" : self == .marquee ? "Marquee (M)" : self == .lasso ? "Lasso (L)" : self == .wand ? "Magic (W) · Tab switches Wand and Object" : self == .brush ? "Brush (B) · Eraser (E)" : self == .spotHealing ? "Spot Healing Brush (J)" : self == .cloneStamp ? "Clone Stamp (S) · Option-click sets the source" : self == .blur ? "Smear (R)" : self == .gradient ? "Gradient (G)" : self == .shape ? "Shape (U) · Shift-U switches Rectangle/Ellipse" : self == .crop ? "Crop (C)" : self == .move ? "Move / Transform (V)" : self == .hand ? "Hand (H)" : "Zoom (Z)" }
+    var symbol: String {
+        switch self {
+        case .type: return "textformat"
+        case .eyedropper: return "eyedropper"
+        case .marquee: return "rectangle.dashed"
+        case .lasso: return "lasso"
+        case .wand: return "wand.and.stars"
+        case .brush: return "paintbrush.pointed"
+        case .spotHealing: return "bandage"
+        case .cloneStamp: return "seal"
+        case .blur: return "drop"
+        case .reshape: return "square.grid.3x3"
+        case .gradient: return "square.bottomhalf.filled"
+        case .shape: return "square.on.circle"
+        case .crop: return "crop"
+        case .move: return "arrow.up.left.and.arrow.down.right"
+        case .hand: return "hand.raised"
+        case .zoom: return "magnifyingglass"
+        case .idle: return "hand.raised"
+        }
+    }
+    var label: String {
+        switch self {
+        case .type: return "Type (T)"
+        case .eyedropper: return "Eyedropper (I)"
+        case .marquee: return "Marquee (M)"
+        case .lasso: return "Lasso (L)"
+        case .wand: return "Magic (W) · Tab switches Wand and Object"
+        case .brush: return "Brush (B) · Eraser (E)"
+        case .spotHealing: return "Spot Healing Brush (J)"
+        case .cloneStamp: return "Clone Stamp (S) · Option-click sets the source"
+        case .blur: return "Smear (R)"
+        case .reshape: return "ReShape"
+        case .gradient: return "Gradient (G)"
+        case .shape: return "Shape (U) · Shift-U switches Rectangle/Ellipse"
+        case .crop: return "Crop (C)"
+        case .move: return "Move / Transform (V)"
+        case .hand: return "Hand (H)"
+        case .zoom: return "Zoom (Z)"
+        case .idle: return "No tool"
+        }
+    }
 }
 
 private struct GIFLayerTimelineState {
@@ -483,6 +543,10 @@ final class EditorSession {
     @ObservationIgnored var brushStroke: BrushStroke? { didSet { resumeFileRequests() } }
     /// A Smudge or Liquify stroke in progress.
     @ObservationIgnored var warpStroke: WarpStroke? { didSet { resumeFileRequests() } }
+    /// ReShape mesh edit in progress.
+    var meshWarpEdit: MeshWarpEdit?
+    /// Session-only resident Metal textures for correction-stack mesh stages. Never persisted.
+    @ObservationIgnored let correctionGPUContext = LayerCorrectionGPUContext()
 
     var canTransform: Bool {
         guard canEditLayers else { return false }
@@ -526,7 +590,10 @@ final class EditorSession {
     func selectTool(_ value: NavigationTool) {
         if tool != value, !finishText() { return }
         guard !isProjectBusy, brushStroke == nil, warpStroke == nil, levels == nil else { return }
-        if tool != value { commitTransform(); cancelCrop(); resolveGradient(); cancelLasso(); cancelShape() }
+        if tool != value {
+            commitTransform(); cancelCrop(); resolveGradient(); cancelLasso(); cancelShape()
+            if value != .reshape { cancelMeshWarp() }
+        }
         let from = Self.tipFamily(tool), to = Self.tipFamily(value)
         if from != to, let parked = parkedBrushTips[to] {
             parkedBrushTips[from] = (brushSettings.diameter, brushSettings.hardness, brushSettings.opacity)
@@ -538,6 +605,7 @@ final class EditorSession {
         }
         tool = value
         if value.isBrushTool { _ = MetalBrushCoverage.shared }
+        if value == .reshape, meshWarpEdit == nil { beginMeshWarp() }
         if value == .crop, cropRect == nil, let document {
             cropRatioChoice = "Free"
             let canvas = CGRect(origin: .zero, size: document.size)
@@ -716,17 +784,25 @@ final class EditorSession {
     var conversionRequest: PSDConversionRequest?
     /// Tests assign this to skip the conversion sheet.
     @ObservationIgnored var confirmConversions: (([PSDConversion]) async -> Bool)?
-    /// The RAW file being developed, and the settings the sheet is editing (see RawImporter).
-    var rawDevelop: (url: URL, settings: RawDevelopSettings)?
-    var showsRawDevelop = false { didSet { resumeFileRequests() } }
-    /// Import was pressed and the full frame is developing: the sheet stays up, showing that, until the layer is in.
-    var rawImporting = false
-    /// Camera Raw… was pressed: once the import is done, the Camera Raw Filter opens on the RAW's layer.
-    @ObservationIgnored private var rawOpensCameraRaw = false
-    @ObservationIgnored private var cameraRawAfterImport: UUID?
-    @ObservationIgnored private var rawContinuation: CheckedContinuation<RawDevelopSettings?, Never>?
-    /// Tests assign this to develop without a sheet.
-    @ObservationIgnored var confirmRawDevelop: ((URL, RawDevelopSettings) async -> RawDevelopSettings?)?
+/// The RAW file being developed, and the settings the sheet is editing (see RawImporter).
+var rawDevelop: (url: URL, settings: RawDevelopSettings)?
+var showsRawDevelop = false { didSet { resumeFileRequests() } }
+/// Import was pressed and the full frame is developing: the sheet stays up, showing that, until the layer is in.
+var rawImporting = false
+/// Camera Raw… was pressed: once the import is done, the Camera Raw Filter opens on the RAW's layer.
+@ObservationIgnored private var rawOpensCameraRaw = false
+@ObservationIgnored private var cameraRawAfterImport: UUID?
+@ObservationIgnored private var rawContinuation: CheckedContinuation<RawDevelopSettings?, Never>?
+/// Draft RAW development state captured at the start of an edit, so cancel restores the
+    /// exact pre-edit state rather than resetting to As Shot. Keyed by layer ID.
+    @ObservationIgnored var rawDrafts: [UUID: RawDevelopmentPersistentState] = [:]
+/// Tests assign this to develop without a sheet.
+@ObservationIgnored var confirmRawDevelop: ((URL, RawDevelopSettings) async -> RawDevelopSettings?)?
+
+/// RAW development re-edit sheet for existing RAW-backed layers.
+var showRawDevelopEditor = false { didSet { resumeFileRequests() } }
+/// The layer ID being edited in the RAW development re-edit sheet.
+var rawDevelopEditorLayerID: UUID?
 
     /// Puts the develop sheet up and waits for the choice; nil means the import was cancelled.
     func developRaw(_ url: URL) async -> RawDevelopSettings? {
@@ -753,6 +829,255 @@ final class EditorSession {
         rawDevelop = nil
         Task { await RawImporter.Queue.shared.release() }
     }
+
+    // MARK: - RAW Development Re-edit API
+
+    /// Begins a RAW development edit session on the given layer, pinning the
+    /// current settings as a draft so later `updateRawDevelopmentSettings`
+    /// changes can be applied or cancelled. Returns the persistent state if the
+    /// layer is RAW-backed, or nil otherwise. Capture happens only once per
+    /// layer per edit session; subsequent calls return the already-captured
+    /// draft so cancel can restore the exact pre-edit state.
+    func beginRawDevelopmentEdit(layerID: UUID) -> RawDevelopmentPersistentState? {
+        guard let layer = document?.layers.first(where: { $0.id == layerID }),
+              let existing = layer.rawDevelopment else { return nil }
+        if rawDrafts[layerID] == nil {
+            rawDrafts[layerID] = existing
+        }
+        return existing
+    }
+
+    /// Updates the draft RAW development settings for the given layer. Does not
+    /// re-render; use `applyRawDevelopmentEdit` to commit. Returns false if the
+    /// layer is not RAW-backed, the edit was not begun, or values are invalid.
+    /// Validates the *completed* draft, not only the previous state, so NaN,
+    /// infinity, out-of-range values, and unsupported feature combinations are
+    /// rejected before the draft is accepted.
+    @discardableResult
+    func updateRawDevelopmentSettings(layerID: UUID, exposure: Float? = nil, temperature: Float? = nil,
+                                      tint: Float? = nil, boost: Float? = nil, noiseReduction: Float? = nil,
+                                      lensCorrection: Bool? = nil, highlightRecovery: Bool? = nil) -> Bool {
+        guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
+              var draft = rawDrafts[layerID] ?? document?.layers[index].rawDevelopment else { return false }
+        if let exposure { draft.settings.exposure = exposure }
+        if let temperature { draft.settings.temperature = temperature }
+        if let tint { draft.settings.tint = tint }
+        if let boost { draft.settings.boost = boost }
+        if let noiseReduction { draft.settings.noiseReduction = noiseReduction }
+        if let lensCorrection { draft.settings.lensCorrection = lensCorrection }
+        if let highlightRecovery { draft.settings.highlightRecovery = highlightRecovery }
+        // Validate the completed draft, not only the previous state.
+        guard draft.settings.isValid() else { return false }
+        rawDrafts[layerID] = draft
+        return true
+    }
+
+    /// Resets RAW development draft settings on the given layer to As Shot
+    /// defaults. This is a distinct explicit action, not what Cancel does.
+    /// Returns false if the layer is not RAW-backed or the edit was not begun.
+    @discardableResult
+    func resetRawDevelopmentToAsShot(layerID: UUID) -> Bool {
+        guard var draft = rawDrafts[layerID] ?? document?.layers.first(where: { $0.id == layerID })?.rawDevelopment else { return false }
+        draft.settings.reset()
+        rawDrafts[layerID] = draft
+        return true
+    }
+
+    /// Applies pending RAW development settings to the given layer: re-reads
+    /// the original RAW source, develops at 16-bit via `RawDevelopmentRenderer`,
+    /// updates the displayed layer while preserving identity, masks, and transforms.
+    /// Commits one document Undo action containing both settings and rendered output.
+    /// Returns false if the layer is not RAW-backed, the edit was not begun,
+    /// or development fails (leaving prior state untouched).
+    @discardableResult
+    func applyRawDevelopmentEdit(layerID: UUID) async -> Bool {
+        guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
+              let draft = rawDrafts[layerID] else { return false }
+
+        let source = draft.source
+        let settings = draft.settings.makeSettings()
+
+        // Read original RAW bytes from the retained source asset.
+        let rawData = source.rawData
+        guard !rawData.isEmpty else { return false }
+
+        // Capture the current document revision and layer identity for the guard check.
+        let documentID = document?.id
+        let layerIDAtStart = layerID
+        let layerSourceID = source.sourceID
+
+        // Develop through the RawDevelopmentRenderer actor (CIRAWFilter, 16-bit,
+        // revision-based cancellation, temp file cleanup).
+        let revision = await RawDevelopmentRenderer.shared.beginDevelop(
+            source: source,
+            settings: settings,
+            sixteenBit: true
+        )
+
+        // Wait for the develop to complete on the renderer actor.
+        let result = await RawDevelopmentRenderer.shared.waitForDevelop(revision: revision)
+        guard case let .success(developedImage) = result else { return false }
+
+        // DOCUMENT-REVISION GUARD: Verify the project, layer, and source haven't changed
+        // while we were awaiting the render.
+        guard let document = self.document,
+              document.id == documentID,
+              let layerIndex = document.layers.firstIndex(where: { $0.id == layerIDAtStart }),
+              document.layers[layerIndex].rawDevelopment?.source.sourceID == layerSourceID else {
+            // Document or layer changed - discard the stale render to avoid
+            // installing it into the wrong/outdated document state.
+            return false
+        }
+
+        // Build the 16-bit asset; do not report success if the asset can't be made.
+        var asset: ImportedImage
+        do { asset = try DeepLayer.asset(developedImage, name: source.fileName()) }
+        catch { return false }
+
+        // Preserve lens geometry from the source metadata (EXIF focal length, inferred sensor width).
+        var focalLengthMm: Double = 0
+        var sensorWidthMm: Double = 0
+        if let exif = draft.source.cameraMetadata["Exif"] as? [CFString: Any] {
+            if let focal = exif[kCGImagePropertyExifFocalLength] as? Double {
+                focalLengthMm = focal
+            } else if let focal = exif[kCGImagePropertyExifFocalLength] as? Float {
+                focalLengthMm = Double(focal)
+            } else if let focal = exif[kCGImagePropertyExifFocalLength] as? Int {
+                focalLengthMm = Double(focal)
+            }
+            if let focal35 = exif[kCGImagePropertyExifFocalLenIn35mmFilm] as? Double,
+               focal35 > 0, focalLengthMm > 0 {
+                sensorWidthMm = 36 * focalLengthMm / focal35
+            }
+        }
+        asset.focalLengthMm = focalLengthMm
+        asset.sensorWidthMm = sensorWidthMm
+
+        // Begin undo step, preserving layer identity/masks/transforms.
+        beginEdit("Apply RAW Development")
+        defer { endEdit() }
+
+        // Now remove the draft since the apply succeeded
+        rawDrafts.removeValue(forKey: layerID)
+
+        self.document?.layers[layerIndex].asset = asset
+        self.document?.layers[layerIndex].rawDevelopment = RawDevelopmentPersistentState(
+            source: source,
+            settings: draft.settings,
+            developedWidth: source.pixelWidth,
+            developedHeight: source.pixelHeight,
+            developedColorSpace: draft.developedColorSpace,
+            developedBitsPerComponent: 16 // Output is always 16-bit via RawDevelopmentRenderer
+        )
+        return true
+    }
+
+    /// Cancels any pending RAW development draft on the given layer without
+    /// mutating persisted state. Restores the exact pre-edit settings captured
+    /// at `beginRawDevelopmentEdit` time — not a reset to As Shot. Returns
+    /// false if the layer is not RAW-backed or the edit was not begun.
+    @discardableResult
+    func cancelRawDevelopmentEdit(layerID: UUID) -> Bool {
+        guard document?.layers.contains(where: { $0.id == layerID }) == true else { return false }
+        rawDrafts.removeValue(forKey: layerID)
+        return true
+    }
+
+    /// Bakes RAW development into the layer's rendered pixels, discarding
+    /// editable RAW ownership. The operation is undoable. Returns false if the
+    /// layer is not RAW-backed.
+    @discardableResult
+    func bakeRawDevelopment(layerID: UUID) -> Bool {
+        guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
+              document?.layers[index].rawDevelopment != nil else { return false }
+
+        // The current asset already holds the developed pixels; just drop
+        // editable RAW ownership so the layer becomes a regular 16-bit layer.
+        beginEdit("Bake RAW Development")
+        defer { endEdit() }
+        document?.layers[index].rawDevelopment = nil
+        return true
+    }
+
+    /// Starts a Camera Raw node edit for the correction-stack node at `nodeID`
+    /// on the active layer. Pins the node's `CameraRawSettings` as the live
+    /// filter edit source, sets `cameraRawTargetNodeID` so the filter panel
+    /// commits back to the exact node, and opens the Camera Raw filter sheet.
+    /// Returns false if the node is not a `.cameraRawFull` node or the layer
+    /// cannot be edited.
+    @discardableResult
+    func beginCameraRawNodeEdit(layerID: UUID, nodeID: UUID) -> Bool {
+        guard canEditLayers,
+              let layerIndex = document?.layers.firstIndex(where: { $0.id == layerID }),
+              var layer = document?.layers[layerIndex],
+              var stack = layer.correctionStack,
+              let nodeIndex = stack.nodes.firstIndex(where: { $0.id == nodeID }),
+              case .cameraRawFull = stack.nodes[nodeIndex].kind else {
+            return false
+        }
+
+        // Seed the filter edit from the node's persisted settings so the
+        // panel opens showing exactly what the node holds.
+        var settings = FilterSettings()
+        settings.cameraRaw = stack.nodes[nodeIndex].cameraRawFull
+
+        do {
+            let edit = try FilterEdit(kind: .cameraRaw, layer: layer, selection: nil, settings: settings)
+            edit.cameraRawTargetNodeID = nodeID
+            filterEdit = edit
+        } catch {
+            brushError = error.localizedDescription
+            return false
+        }
+
+        // Keep the filter edit in place until the panel closes; commit
+        // routes through `commitFilter` which now writes back to the node.
+        return true
+    }
+
+    /// Commits an in-flight Camera Raw node edit back to its target correction
+    /// stack node (via `cameraRawTargetNodeID`), producing one undo entry.
+    /// Returns false if there is no Camera Raw node edit in progress or the
+    /// target node is missing.
+    @discardableResult
+    func commitCameraRawNodeEdit() -> Bool {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, let nodeID = edit.cameraRawTargetNodeID,
+              let layerID = filterEdit?.layerID,
+              let layerIndex = document?.layers.firstIndex(where: { $0.id == layerID }),
+              var layer = document?.layers[layerIndex],
+              var stack = layer.correctionStack,
+              let nodeIndex = stack.nodes.firstIndex(where: { $0.id == nodeID }) else {
+            return false
+        }
+
+        let rendered = edit.renderSettings()
+        beginEdit("Edit Camera Raw Correction")
+        stack.nodes[nodeIndex].cameraRawFull = rendered.cameraRaw
+        stack.invalidateFromIndex(nodeIndex)
+        do {
+            try commitCorrectionStack(stack, on: &layer, index: layerIndex, expandPlacement: false)
+        } catch {
+            endEdit()
+            brushError = error.localizedDescription
+            return false
+        }
+        endEdit()
+        filterEdit = nil
+        return true
+    }
+
+    /// Cancels an in-flight Camera Raw node edit without touching the node or
+    /// the document. Returns false if there is no Camera Raw node edit in
+    /// progress.
+    @discardableResult
+    func cancelCameraRawNodeEdit() -> Bool {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, edit.cameraRawTargetNodeID != nil else {
+            return false
+        }
+        filterEdit = nil
+        return true
+    }
+
     @ObservationIgnored private var conversionContinuation: CheckedContinuation<Bool, Never>?
     /// Cancel pressed while a Photoshop file was still being read.
     @ObservationIgnored private var conversionCancelled = false
@@ -815,6 +1140,8 @@ final class EditorSession {
         activeLayerID = snapshot.activeLayerID
         isMaskSelected = keepMaskTarget && activeLayer?.mask != nil
         if changedCanvas, let document { viewport.fit(documentSize: document.size) }
+        // Clear stale RAW drafts when history is restored; drafts don't survive undo/redo.
+        rawDrafts.removeAll()
     }
 
     /// Nestable transaction boundary; future tools can group a complete gesture.
@@ -882,6 +1209,8 @@ final class EditorSession {
     func deleteLayer(_ id: UUID) {
         guard canEditLayers, document?.layers.contains(where: { $0.id == id }) == true else { return }
         guard !deleteWithLiveMaskChoice(id) else { return }
+        // Clear any pending RAW draft for the deleted layer.
+        rawDrafts.removeValue(forKey: id)
         finishDeletingLayer(id, baked: [:])
     }
 
@@ -1053,7 +1382,61 @@ final class EditorSession {
                     // A 16-bit layer: a RAW's latitude stays for later Levels, Curves and Camera Raw (`DeepLayer`).
                     guard let developed = await RawImporter.Queue.shared.develop(url, settings: settings, limit: nil, sixteenBit: true)
                     else { throw ImageImportError.unreadable }
-                    insert(try DeepLayer.asset(developed, name: url.deletingPathExtension().lastPathComponent), centeredAt: point)
+                    // Read RAW source bytes once while the security-scoped URL is still valid.
+                    // The enclosing import loop already holds a grant, so this re-grant is
+                    // defensive; either way the bytes must be validated before we commit.
+                    guard let rawBytes = try? Data(contentsOf: url), !rawBytes.isEmpty else {
+                        throw ImageImportError.unreadable
+                    }
+                    // Read camera metadata (EXIF/TIFF) from the original RAW file.
+                    var cameraMetadata: [String: Any] = [:]
+                    var detectedColorSpace: String? = nil
+                    var detectedBitsPerComponent = 14
+                    if let cgSource = CGImageSourceCreateWithData(rawBytes as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+                       let props = CGImageSourceCopyPropertiesAtIndex(cgSource, 0, nil) as? [CFString: Any] {
+                        if let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+                            cameraMetadata["Exif"] = exif
+                        }
+                        if let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+                            cameraMetadata["TIFF"] = tiff
+                        }
+                        if let depth = props[kCGImagePropertyDepth] as? Int {
+                            detectedBitsPerComponent = depth
+                        }
+                        detectedColorSpace = "extendedLinearSRGB"
+                    }
+                    var asset = try DeepLayer.asset(developed, name: url.deletingPathExtension().lastPathComponent)
+                    let lens = RawImporter.lensGeometry(url)
+                    asset.focalLengthMm = lens.focalLengthMm
+                    asset.sensorWidthMm = lens.sensorWidthMm
+                    insert(asset, centeredAt: point)
+                    // Attach RAW source ownership and development settings to the new layer.
+                    // Must mutate the layer in-place in the document's array; a local copy would be discarded.
+                    if let index = document?.layers.firstIndex(where: { $0.id == activeLayerID }) {
+                        let source = RawSourceAsset(
+                            sourceID: UUID(),
+                            rawData: rawBytes,
+                            fileExtension: url.pathExtension,
+                            utType: "com.adobe.raw-image",
+                            pixelWidth: size.width,
+                            pixelHeight: size.height,
+                            cameraMetadata: cameraMetadata,
+                            colorSpace: detectedColorSpace,
+                            bitsPerComponent: detectedBitsPerComponent,
+                            asShotSettings: settings,
+                            supportsNoiseReduction: settings.supportsNoiseReduction,
+                            supportsLensCorrection: settings.supportsLensCorrection,
+                            supportsHighlightRecovery: settings.supportsHighlightRecovery
+                        )
+                        document?.layers[index].rawDevelopment = RawDevelopmentPersistentState(
+                            source: source,
+                            settings: RawDevelopmentSettingsPersistentState(settings),
+                            developedWidth: size.width,
+                            developedHeight: size.height,
+                            developedColorSpace: detectedColorSpace ?? "extendedLinearSRGB",
+                            developedBitsPerComponent: 16 // Output is always 16-bit via RawDevelopmentRenderer
+                        )
+                    }
                     if rawOpensCameraRaw { cameraRawAfterImport = activeLayerID }
                     rawOpensCameraRaw = false
                 } else if UTType(filenameExtension: url.pathExtension)?.conforms(to: .svg) == true {

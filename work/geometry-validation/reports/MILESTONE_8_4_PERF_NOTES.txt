@@ -1,0 +1,5 @@
+Debug: MeshWarpPerformanceTests.localCorrectionAndAdaptiveWarmMedians — TEST SUCCEEDED (2026-11-13).
+Sandbox blocked writing /tmp from the test host; numbers are warm medians of:
+  local transform compute, leaf validity, triangle rebuild, Metal session kernel (regular + one-face adaptive).
+Sizes: 1024×1024, 4000×3000, 6000×4000.
+Kernel ms ≠ pointer-to-display latency. Source stays GPU-resident across local ops (session.render only updates triangles).

@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// photosite at 12–14 bits; every choice a JPEG has already baked in — exposure, white balance,
 /// contrast — is still open. Compositor's layers are 8-bit, so that latitude has to be spent at
 /// import: these are the controls for spending it deliberately rather than accepting a default.
-nonisolated struct RawDevelopSettings: Equatable, Sendable {
+nonisolated struct RawDevelopSettings: Equatable, Sendable, Codable {
     /// Stops of exposure, either side of what the camera recorded.
     var exposure: Float = 0
     /// White balance in Kelvin, starting from the camera's own reading.
@@ -178,5 +178,47 @@ nonisolated enum RawImporter {
               let width = props[kCGImagePropertyPixelWidth] as? Int,
               let height = props[kCGImagePropertyPixelHeight] as? Int else { return nil }
         return (width, height)
+    }
+
+    /// Focal length and an estimated sensor width for Camera Raw volume auto. Zeros when EXIF is missing.
+    static func lensGeometry(_ url: URL) -> RawLensGeometry {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            return RawLensGeometry()
+        }
+        return RawLensGeometry(properties: props)
+    }
+}
+
+/// EXIF focal / sensor hints threaded from RAW import into Camera Raw Geometry.
+nonisolated struct RawLensGeometry: Equatable, Sendable {
+    var focalLengthMm: Double = 0
+    var sensorWidthMm: Double = 0
+
+    init(focalLengthMm: Double = 0, sensorWidthMm: Double = 0) {
+        self.focalLengthMm = focalLengthMm
+        self.sensorWidthMm = sensorWidthMm
+    }
+
+    init(properties: [CFString: Any]) {
+        let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        let focal = Self.number(exif?[kCGImagePropertyExifFocalLength])
+            ?? Self.number(properties[kCGImagePropertyExifFocalLength])
+        let focal35 = Self.number(exif?[kCGImagePropertyExifFocalLenIn35mmFilm])
+        focalLengthMm = focal ?? 0
+        // Prefer an explicit sensor width; otherwise infer from 35 mm equivalent: sensorWidth ≈ 36 * f / f35.
+        if let focal, let focal35, focal35 > 0 {
+            sensorWidthMm = 36 * focal / focal35
+        } else {
+            sensorWidthMm = 0
+        }
+    }
+
+    private static func number(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let number = value as? Double { return number }
+        if let number = value as? Float { return Double(number) }
+        if let number = value as? Int { return Double(number) }
+        return nil
     }
 }

@@ -22,6 +22,8 @@ actor CanvasResizer {
             transform.origin.y += offset.y
             guard transform.isValid else { throw ProjectError.tooLarge }
             let gif = layer.gif
+            let reshape = layer.reshape
+            let correction = layer.correctionStack
             manifest.layers.append(ProjectLayerRecord(id: layer.id, name: layer.name,
                 isVisible: layer.isVisible, transform: transform, imageFile: layer.imageFile, parentID: layer.parentID, isGroup: layer.isGroup, opacity: layer.opacity, blendMode: layer.blendMode, maskFile: layer.maskFile, maskEnabled: layer.maskEnabled, maskSourceID: layer.maskSourceID, adjustment: layer.adjustment,
                 maskPlacement: layer.maskPlacement.map { placement -> LayerTransform in
@@ -29,13 +31,15 @@ actor CanvasResizer {
                     moved.origin.x += offset.x
                     moved.origin.y += offset.y
                     return moved
-                }, maskLinked: layer.maskLinked, shape: layer.shape, effects: layer.effects, text: layer.text, gif: gif))
+                }, maskLinked: layer.maskLinked, shape: layer.shape, effects: layer.effects, text: layer.text, gif: gif, reshape: reshape, correctionStack: correction))
         }
         var images = snapshot.images
         // A colored extension is separate bottom-layer content. The old canvas
         // intersection remains transparent, including holes in the existing artwork.
         if let color = options.fill, options.width > old.width || options.height > old.height {
             let used = images.values.reduce(0) { $0 + $1.image.width * $1.image.height }
+                + snapshot.reshapeSources.values.reduce(0) { $0 + $1.image.width * $1.image.height }
+                + snapshot.correctionSources.values.reduce(0) { $0 + $1.image.width * $1.image.height }
             guard options.width * options.height <= DocumentLimits.documentPixelBudget - used,
                   manifest.layers.count < 10_000 else { throw ProjectError.tooLarge }
             guard [color.red, color.green, color.blue].allSatisfy({ $0.isFinite && (0...1).contains($0) }) else {
@@ -70,6 +74,10 @@ actor CanvasResizer {
                 imageFile: "\(id.uuidString).png"), at: 0)
         }
         return ProjectSnapshot(manifest: manifest, images: images, masks: snapshot.masks,
-                               animations: snapshot.animations)
+                               animations: snapshot.animations,
+                               reshapeSources: snapshot.reshapeSources,
+                               reshapeMeshes: snapshot.reshapeMeshes,
+                               correctionSources: snapshot.correctionSources,
+                               correctionStacks: snapshot.correctionStacks)
     }
 }

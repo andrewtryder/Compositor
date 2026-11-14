@@ -1,0 +1,52 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "00006030-0018599C3A52001C",
+        "deviceName" : "My Mac",
+        "modelName" : "MacBook Pro",
+        "osBuildNumber" : "26A434",
+        "osVersion" : "27.0.1",
+        "platform" : "macOS"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 0,
+      "passedTests" : 1226,
+      "skippedTests" : 1,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Ordinary regression"
+      }
+    }
+  ],
+  "environmentDescription" : "CompositorRegression · Built with macOS 27.0.1",
+  "expectedFailures" : 0,
+  "failedTests" : 0,
+  "finishTime" : 1794661175.557,
+  "passedTests" : 1100,
+  "result" : "Passed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 1,
+  "startTime" : 1794660272.596,
+  "statistics" : [
+    {
+      "subtitle" : "176 test runs",
+      "title" : "50 tests ran with dynamic parameters"
+    }
+  ],
+  "testFailures" : [
+
+  ],
+  "title" : "Test - Compositor",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "76% of duration",
+      "text" : "7 longest test runs with outlier durations exceeding 27.14s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 1101
+}

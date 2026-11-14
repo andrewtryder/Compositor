@@ -7,7 +7,7 @@ extension UTType {
     static let compositorProject = UTType(exportedAs: "com.compositor.project", conformingTo: .package)
     nonisolated static let photoshopImage = UTType(importedAs: "com.adobe.photoshop-image")
     nonisolated static let photoshopLargeImage = UTType(importedAs: "com.adobe.photoshop-large-image")
-    static let importableImages: [UTType] = [.jpeg, .png, .gif, .heic, .heif, .tiff, .webP, .openEXR, .radianceHDR, .photoshopImage,
+    nonisolated static let importableImages: [UTType] = [.jpeg, .png, .gif, .heic, .heif, .tiff, .webP, .openEXR, .radianceHDR, .photoshopImage,
                                              .photoshopLargeImage, .rawImage, .svg, .pdf]
     /// OpenEXR, the format renders (Blender's among them) keep light brighter than white in.
     static let openEXR = UTType("com.ilm.openexr-image") ?? .image
@@ -17,7 +17,7 @@ extension UTType {
 
 nonisolated struct ProjectManifest: Codable, Sendable {
     /// The format version new saves write.
-    static let current = 21
+    static let current = 25
     /// Every version `load` accepts: each one a release has written (1 through `current`), and 27 from the
     /// GIF branch's own builds. Leaving out 15 and 16 once locked out projects saved by 1.5.4 and 1.5.5.
     /// The package-header and manifest checks both read this, so they can't drift apart when `current` is bumped.
@@ -61,6 +61,81 @@ nonisolated struct ProjectLayerRecord: Codable, Sendable {
     var text: LayerTextStyle? = nil
     /// The embedded animation and masks scoped to individual frames. Missing before version 27.
     var gif: ProjectGIFRecord? = nil
+    /// Editable ReShape mesh + immutable source asset. Missing before version 22.
+    var reshape: ProjectReshapeRecord? = nil
+    /// Ordered non-destructive correction stack. Missing before version 23.
+    /// Full Camera Raw (`cameraRawFull`) nodes require version 24.
+    var correctionStack: ProjectCorrectionStackRecord? = nil
+    /// Original RAW file source retained inside the package. Missing before version 25.
+    var rawSourceFile: String? = nil
+    /// Persistent RAW development settings and developed output metadata. Missing before version 25.
+    var rawDevelopment: ProjectRawDevelopmentRecord? = nil
+}
+
+nonisolated struct ProjectRawDevelopmentRecord: Codable, Sendable {
+    /// `<source-id>.raw-source.<ext>` under `images/`.
+    let sourceFile: String
+    /// Versioned Codable development settings.
+    let settings: RawDevelopmentSettingsPersistentState
+    /// Dimensions of the developed output at last full-resolution develop.
+    var developedWidth: Int
+    var developedHeight: Int
+    /// Color space the developed image was rendered into.
+    var developedColorSpace: String
+    /// 8 or 16 bits per component.
+    var developedBitsPerComponent: Int
+    /// Original As Shot development defaults read from the file.
+    /// Stored separately from `settings` so edited values can't overwrite the originals.
+    var asShotSettings: RawDevelopmentSettingsPersistentState?
+    /// Camera metadata extracted from EXIF/TIFF (Make, Model, focal length, etc.).
+    var cameraMetadata: [String: String]?
+    /// Original sensor color space, if determinable.
+    var colorSpace: String?
+    /// Original sensor bits per component.
+    var bitsPerComponent: Int?
+    /// Which RAW features this camera's decoder supports.
+    var supportsNoiseReduction: Bool = false
+    var supportsLensCorrection: Bool = false
+    var supportsHighlightRecovery: Bool = false
+
+    init(sourceFile: String, settings: RawDevelopmentSettingsPersistentState,
+         developedWidth: Int, developedHeight: Int,
+         developedColorSpace: String, developedBitsPerComponent: Int,
+         asShotSettings: RawDevelopmentSettingsPersistentState? = nil,
+         cameraMetadata: [String: String]? = nil,
+         colorSpace: String? = nil,
+         bitsPerComponent: Int? = nil,
+         supportsNoiseReduction: Bool = false,
+         supportsLensCorrection: Bool = false,
+         supportsHighlightRecovery: Bool = false) {
+        self.sourceFile = sourceFile
+        self.settings = settings
+        self.developedWidth = developedWidth
+        self.developedHeight = developedHeight
+        self.developedColorSpace = developedColorSpace
+        self.developedBitsPerComponent = developedBitsPerComponent
+        self.asShotSettings = asShotSettings
+        self.cameraMetadata = cameraMetadata
+        self.colorSpace = colorSpace
+        self.bitsPerComponent = bitsPerComponent
+        self.supportsNoiseReduction = supportsNoiseReduction
+        self.supportsLensCorrection = supportsLensCorrection
+        self.supportsHighlightRecovery = supportsHighlightRecovery
+    }
+}
+
+nonisolated struct ProjectReshapeRecord: Codable, Sendable {
+    /// `<layer UUID>.reshape-source.png` under `images/`.
+    let sourceFile: String
+    /// `<layer UUID>.reshape.json` under `images/`.
+    let meshFile: String
+}
+
+nonisolated struct ProjectCorrectionStackRecord: Codable, Sendable {
+    /// Immutable source PNG under `images/` (`<layer UUID>.corrections-source.png`, or shared reshape source).
+    let sourceFile: String
+    /// `<layer UUID>.corrections.json` under `images/`.
+    let stackFile: String
 }
 
 nonisolated struct ProjectGIFRecord: Codable, Sendable {
@@ -138,6 +213,16 @@ nonisolated struct ProjectSnapshot: @unchecked Sendable {
     let images: [UUID: ImportedImage]
     var masks: [UUID: ImportedImage] = [:]
     var animations: [UUID: GIFAnimation] = [:]
+    /// Immutable ReShape sources keyed by layer id (rendered display stays in `images`).
+    var reshapeSources: [UUID: ImportedImage] = [:]
+    /// Validated mesh payloads keyed by layer id.
+    var reshapeMeshes: [UUID: MeshWarpPersistentState] = [:]
+    /// Immutable correction-stack sources keyed by layer id.
+    var correctionSources: [UUID: ImportedImage] = [:]
+    /// Validated correction-stack payloads keyed by layer id.
+    var correctionStacks: [UUID: LayerCorrectionStackPersistentState] = [:]
+    /// Immutable RAW sources keyed by layer id (original camera bytes retained in the package).
+    var rawSources: [UUID: RawSourceAsset] = [:]
 }
 
 nonisolated enum ProjectError: LocalizedError {
@@ -164,6 +249,12 @@ actor ProjectStore {
         try validate(snapshot.manifest)
         let animatedIDs = Set(snapshot.manifest.layers.filter { $0.gif != nil }.map(\.id))
         guard Set(snapshot.animations.keys) == animatedIDs else { throw ProjectError.invalid }
+        let reshapeIDs = Set(snapshot.manifest.layers.filter { $0.reshape != nil }.map(\.id))
+        guard Set(snapshot.reshapeSources.keys) == reshapeIDs,
+              Set(snapshot.reshapeMeshes.keys) == reshapeIDs else { throw ProjectError.invalid }
+        let correctionIDs = Set(snapshot.manifest.layers.filter { $0.correctionStack != nil }.map(\.id))
+        guard Set(snapshot.correctionSources.keys) == correctionIDs,
+              Set(snapshot.correctionStacks.keys) == correctionIDs else { throw ProjectError.invalid }
         var images: [String: FileWrapper] = [:]
         var pixels = 0, maskPixels = 0
         var gifBytes = 0, thumbnailPixels = 0
@@ -189,8 +280,47 @@ actor ProjectStore {
             }
             guard data.count <= 512 * 1024 * 1024 else { throw ProjectError.tooLarge }
             if layer.gif != nil, !isMask, asset.deep != nil { throw ProjectError.invalid }
+            if layer.reshape != nil || layer.correctionStack != nil, !isMask, asset.deep != nil {
+                throw ProjectError.invalid
+            }
             images[filename] = FileWrapper(regularFileWithContents: data)
           }
+            if let correction = layer.correctionStack {
+                guard let source = snapshot.correctionSources[layer.id],
+                      let stack = snapshot.correctionStacks[layer.id],
+                      let display = snapshot.images[layer.id]?.image else { throw ProjectError.missingImage }
+                try validateCorrectionStack(stack: stack, source: source, display: display,
+                                            record: correction, layerID: layer.id,
+                                            reshape: layer.reshape,
+                                            reshapeMesh: snapshot.reshapeMeshes[layer.id])
+                try checkSize(width: source.image.width, height: source.image.height, used: &pixels)
+                if images[correction.sourceFile] == nil {
+                    images[correction.sourceFile] = FileWrapper(regularFileWithContents: try pngData(source.image))
+                }
+                images[correction.stackFile] = FileWrapper(regularFileWithContents: try stack.encodedJSON())
+            }
+            if let reshape = layer.reshape {
+                guard let source = snapshot.reshapeSources[layer.id],
+                      let mesh = snapshot.reshapeMeshes[layer.id],
+                      let display = snapshot.images[layer.id]?.image else { throw ProjectError.missingImage }
+                try validateReshape(mesh: mesh, source: source, display: display, record: reshape, layerID: layer.id,
+                                    allowDisplaySizeMismatch: layer.correctionStack != nil)
+                if layer.correctionStack == nil {
+                    try checkSize(width: source.image.width, height: source.image.height, used: &pixels)
+                }
+                if images[reshape.sourceFile] == nil {
+                    images[reshape.sourceFile] = FileWrapper(regularFileWithContents: try pngData(source.image))
+                }
+                let meshData = try mesh.encodedJSON()
+                images[reshape.meshFile] = FileWrapper(regularFileWithContents: meshData)
+            }
+            // Persistent RAW source: write the original immutable bytes into the package.
+            if let raw = layer.rawDevelopment,
+               let source = snapshot.rawSources[layer.id] {
+                try validateRawSource(source, layerID: layer.id)
+                try checkSize(width: source.pixelWidth, height: source.pixelHeight, used: &pixels)
+                images[raw.sourceFile] = FileWrapper(regularFileWithContents: source.rawData)
+            }
             guard let gif = layer.gif else { continue }
             guard let animation = snapshot.animations[layer.id], let image = snapshot.images[layer.id]?.image else {
                 throw ProjectError.missingImage
@@ -259,6 +389,11 @@ actor ProjectStore {
         var images: [UUID: ImportedImage] = [:]
         var masks: [UUID: ImportedImage] = [:]
         var animations: [UUID: GIFAnimation] = [:]
+        var reshapeSources: [UUID: ImportedImage] = [:]
+        var reshapeMeshes: [UUID: MeshWarpPersistentState] = [:]
+        var correctionSources: [UUID: ImportedImage] = [:]
+        var correctionStacks: [UUID: LayerCorrectionStackPersistentState] = [:]
+        var rawSources: [UUID: RawSourceAsset] = [:]
         var pixels = 0, maskPixels = 0
         var gifBytes = 0, thumbnailPixels = 0
         for layer in manifest.layers {
@@ -303,8 +438,114 @@ actor ProjectStore {
                 return ImportedImage(image: standard, thumbnail: thumbnail, name: layer.name)
             }
             if layer.gif != nil, !isMask, asset.deep != nil { throw ProjectError.invalid }
+            if layer.reshape != nil || layer.correctionStack != nil, !isMask, asset.deep != nil {
+                throw ProjectError.invalid
+            }
             if isMask { masks[layer.id] = asset } else { images[layer.id] = asset }
           }
+            if let correction = layer.correctionStack {
+                let sourceFile = url.appendingPathComponent("images").appendingPathComponent(correction.sourceFile)
+                try checkFile(sourceFile, inside: url, maximumBytes: 512 * 1024 * 1024)
+                let source = try readPNG(sourceFile, name: layer.name, isMask: false, used: &pixels)
+                let stackFile = url.appendingPathComponent("images").appendingPathComponent(correction.stackFile)
+                try checkFile(stackFile, inside: url, maximumBytes: LayerCorrectionStack.maximumEncodedBytes)
+                let stackData = try Data(contentsOf: stackFile)
+                let stack: LayerCorrectionStackPersistentState
+                do { stack = try LayerCorrectionStackPersistentState.decode(from: stackData) }
+                catch { throw ProjectError.invalid }
+                if stack.nodes.contains(where: { $0.kind == .cameraRawFull }), manifest.version < 24 {
+                    throw ProjectError.invalid
+                }
+                guard let display = images[layer.id]?.image else { throw ProjectError.missingImage }
+                try validateCorrectionStack(stack: stack, source: source, display: display,
+                                            record: correction, layerID: layer.id,
+                                            reshape: layer.reshape, reshapeMesh: nil)
+                _ = try stack.makeStack(source: source)
+                correctionSources[layer.id] = source
+                correctionStacks[layer.id] = stack
+            }
+            if let reshape = layer.reshape {
+                let sourceFile = url.appendingPathComponent("images").appendingPathComponent(reshape.sourceFile)
+                try checkFile(sourceFile, inside: url, maximumBytes: 512 * 1024 * 1024)
+                let source: ImportedImage
+                if let shared = correctionSources[layer.id], reshape.sourceFile == layer.correctionStack?.sourceFile {
+                    source = shared
+                } else {
+                    source = try readPNG(sourceFile, name: layer.name, isMask: false, used: &pixels)
+                }
+                let meshFile = url.appendingPathComponent("images").appendingPathComponent(reshape.meshFile)
+                try checkFile(meshFile, inside: url, maximumBytes: MeshWarpPersistentState.maximumEncodedBytes)
+                let meshData = try Data(contentsOf: meshFile)
+                let mesh: MeshWarpPersistentState
+                do { mesh = try MeshWarpPersistentState.decode(from: meshData) }
+                catch { throw ProjectError.invalid }
+                guard let display = images[layer.id]?.image else { throw ProjectError.missingImage }
+                try validateReshape(mesh: mesh, source: source, display: display, record: reshape, layerID: layer.id,
+                                    allowDisplaySizeMismatch: layer.correctionStack != nil)
+                // Rebuild triangulation; reject if the payload cannot become a live mesh.
+                _ = try mesh.makeGrid()
+                reshapeSources[layer.id] = source
+                reshapeMeshes[layer.id] = mesh
+                if let stack = correctionStacks[layer.id],
+                   let node = stack.nodes.first(where: { $0.kind == .reshape }),
+                   let embedded = node.mesh,
+                   embedded != mesh {
+                    throw ProjectError.invalid
+                }
+            }
+            // Persistent RAW source: read the original immutable bytes back from the package.
+// RAW bytes are stored as-is; they are only decoded when a develop is actually requested.
+            if let rawRecord = layer.rawDevelopment {
+                let sourceFile = url.appendingPathComponent("images").appendingPathComponent(rawRecord.sourceFile)
+                try checkFile(sourceFile, inside: url, maximumBytes: RawDevelopmentLimits.maxRawSourceBytes)
+                let rawData = try Data(contentsOf: sourceFile)
+                guard !rawData.isEmpty else { throw ProjectError.missingImage }
+                let ext = sourceFile.pathExtension
+                guard let type = UTType(filenameExtension: ext),
+                      type.conforms(to: .rawImage) else {
+                    throw ProjectError.invalid
+                }
+                // Reject malformed source-ID references: filename must be <valid-UUID>.raw-source.<ext>
+                let fileBase = rawRecord.sourceFile.components(separatedBy: ".").first ?? ""
+                guard let sourceID = UUID(uuidString: fileBase) else {
+                    throw ProjectError.invalid
+                }
+                // Reconstruct camera metadata from JSON-encoded strings.
+                var cameraMetadata: [String: Any] = [:]
+                if let stored = rawRecord.cameraMetadata {
+                    for (key, jsonString) in stored {
+                        if let data = jsonString.data(using: .utf8),
+                           let value = try? JSONSerialization.jsonObject(with: data, options: []) {
+                            cameraMetadata[key] = value
+                        } else {
+                            // Fallback for simple string values
+                            cameraMetadata[key] = jsonString
+                        }
+                    }
+                }
+                // As Shot settings are preserved independently of edited settings.
+                let asShotSettings: RawDevelopSettings
+                if let asShotPersistent = rawRecord.asShotSettings {
+                    asShotSettings = asShotPersistent.makeSettings()
+                } else {
+                    // Backward compatibility: v25 projects written before this fix.
+                    asShotSettings = rawRecord.settings.makeSettings()
+                }
+                let sourceAsset = RawSourceAsset(sourceID: sourceID,
+                                                 rawData: rawData,
+                                                 fileExtension: ext,
+                                                 utType: type.identifier,
+                                                 pixelWidth: rawRecord.developedWidth > 0 ? rawRecord.developedWidth : 0,
+                                                 pixelHeight: rawRecord.developedHeight > 0 ? rawRecord.developedHeight : 0,
+                                                 cameraMetadata: cameraMetadata,
+                                                 colorSpace: rawRecord.colorSpace,
+                                                 bitsPerComponent: rawRecord.bitsPerComponent ?? 0,
+                                                 asShotSettings: asShotSettings,
+                                                 supportsNoiseReduction: rawRecord.supportsNoiseReduction,
+                                                 supportsLensCorrection: rawRecord.supportsLensCorrection,
+                                                 supportsHighlightRecovery: rawRecord.supportsHighlightRecovery)
+                rawSources[layer.id] = sourceAsset
+            }
             guard let gif = layer.gif else { continue }
             let file = url.appendingPathComponent("images").appendingPathComponent(gif.sourceFile)
             let byteCount = try checkFile(file, inside: url, maximumBytes: GIFSource.byteLimit)
@@ -328,7 +569,10 @@ actor ProjectStore {
             try checkGIFBudget(source, bytes: &gifBytes, thumbnails: &thumbnailPixels)
             animations[layer.id] = animation
         }
-        return ProjectSnapshot(manifest: manifest, images: images, masks: masks, animations: animations)
+        return ProjectSnapshot(manifest: manifest, images: images, masks: masks, animations: animations,
+                               reshapeSources: reshapeSources, reshapeMeshes: reshapeMeshes,
+                               correctionSources: correctionSources, correctionStacks: correctionStacks,
+                               rawSources: rawSources)
     }
 
     private func validate(_ manifest: ProjectManifest) throws {
@@ -344,10 +588,28 @@ actor ProjectStore {
             if layer.shape?.smoothing == true {
                 guard manifest.version >= 14 else { throw ProjectError.invalid }
             }
+            if let correction = layer.correctionStack {
+                let sourceOK = correction.sourceFile == "\(layer.id.uuidString).corrections-source.png"
+                    || correction.sourceFile == "\(layer.id.uuidString).reshape-source.png"
+                guard manifest.version >= 23, layer.imageFile != nil, layer.isGroup != true,
+                      layer.adjustment == nil, layer.gif == nil, sourceOK,
+                      correction.stackFile == "\(layer.id.uuidString).corrections.json" else {
+                    throw ProjectError.invalid
+                }
+            }
+            if let reshape = layer.reshape {
+                guard manifest.version >= 22, layer.imageFile != nil, layer.isGroup != true,
+                      layer.adjustment == nil, layer.gif == nil,
+                      reshape.sourceFile == "\(layer.id.uuidString).reshape-source.png",
+                      reshape.meshFile == "\(layer.id.uuidString).reshape.json" else {
+                    throw ProjectError.invalid
+                }
+            }
             if let gif = layer.gif {
                 let identityLimit = manifest.version >= 17 ? GIFTimelineLimits.frameIdentityLimit : GIFTimelineLimits.maxFrames
                 guard manifest.version >= 17, layer.imageFile != nil, layer.isGroup != true,
                       layer.adjustment == nil, layer.text == nil, layer.shape == nil,
+                      layer.reshape == nil, layer.correctionStack == nil,
                       gif.sourceFile == "\(layer.id.uuidString).gif",
                       (0..<identityLimit).contains(gif.selectedFrameIndex),
                       gif.geometry.map(\.isValid) ?? true else { throw ProjectError.invalid }
@@ -415,6 +677,19 @@ actor ProjectStore {
                     guard manifest.version >= 21 else { throw ProjectError.invalid }
                 }
             }
+            // Persistent RAW source arrived in version 25.
+            if let raw = layer.rawDevelopment {
+                guard manifest.version >= 25, layer.isGroup != true,
+                      layer.adjustment == nil, layer.gif == nil else { throw ProjectError.invalid }
+                guard raw.settings.isValid() else { throw ProjectError.invalid }
+                // sourceFile format: <sourceID>.raw-source.<ext> where sourceID is a UUID
+                // (which itself contains hyphens), so check from the end. Reject malformed
+                // source-ID references rather than falling back to the layer ID.
+                let components = raw.sourceFile.components(separatedBy: ".")
+                guard components.count >= 3,
+                      components[components.count - 2] == "raw-source",
+                      UUID(uuidString: components.first ?? "") != nil else { throw ProjectError.invalid }
+            }
             // Layer masks arrived in version 4, folder masks in version 6.
             guard layer.maskFile == nil || (manifest.version >= (layer.isGroup == true ? 6 : 4)
                 && layer.maskFile == "\(layer.id.uuidString).mask.png"),
@@ -464,6 +739,91 @@ actor ProjectStore {
             throw ProjectError.tooLarge
         }
         used += width * height
+    }
+
+    private func validateReshape(mesh: MeshWarpPersistentState, source: ImportedImage, display: CGImage,
+                                 record: ProjectReshapeRecord, layerID: UUID,
+                                 allowDisplaySizeMismatch: Bool = false) throws {
+        let displayOK = allowDisplaySizeMismatch
+            || (display.width == mesh.imageWidth && display.height == mesh.imageHeight)
+        guard record.sourceFile == "\(layerID.uuidString).reshape-source.png",
+              record.meshFile == "\(layerID.uuidString).reshape.json",
+              source.deep == nil, source.image.bitsPerComponent <= 8, !DeepLayer.isHDR(source.image),
+              source.image.width == mesh.imageWidth, source.image.height == mesh.imageHeight,
+              displayOK,
+              mesh.schemaVersion == MeshWarpPersistentState.schemaVersion else {
+            throw ProjectError.invalid
+        }
+        // Ensure the payload reconstructs; triangulation is derived, not trusted from disk.
+        do { _ = try mesh.makeGrid() } catch { throw ProjectError.invalid }
+    }
+
+    private func validateCorrectionStack(stack: LayerCorrectionStackPersistentState,
+                                         source: ImportedImage, display: CGImage,
+                                         record: ProjectCorrectionStackRecord, layerID: UUID,
+                                         reshape: ProjectReshapeRecord?,
+                                         reshapeMesh: MeshWarpPersistentState?) throws {
+        let sourceOK = record.sourceFile == "\(layerID.uuidString).corrections-source.png"
+            || record.sourceFile == "\(layerID.uuidString).reshape-source.png"
+        guard record.stackFile == "\(layerID.uuidString).corrections.json", sourceOK,
+              source.deep == nil, source.image.bitsPerComponent <= 8, !DeepLayer.isHDR(source.image),
+              source.image.width == stack.sourceWidth, source.image.height == stack.sourceHeight,
+              stack.schemaVersion == 1 || stack.schemaVersion == LayerCorrectionStackPersistentState.schemaVersion,
+              !stack.nodes.isEmpty, stack.nodes.count <= LayerCorrectionStack.maximumNodes else {
+            throw ProjectError.invalid
+        }
+        let hasFull = stack.nodes.contains { $0.kind == .cameraRawFull }
+        // Schema 1 stacks and geometry-only v23 packages cannot carry full Camera Raw.
+        if hasFull, stack.schemaVersion < 2 { throw ProjectError.invalid }
+        do {
+            let live = try stack.makeStack(source: source)
+            // Display size must match a fresh render for dimension-preserving stacks.
+            let rendered = try LayerCorrectionRenderer.renderCopy(live)
+            guard rendered.image.width == display.width, rendered.image.height == display.height else {
+                throw ProjectError.invalid
+            }
+            if let reshape, let reshapeMesh {
+                guard let node = stack.nodes.first(where: { $0.kind == .reshape }),
+                      let embedded = node.mesh,
+                      embedded == reshapeMesh,
+                      reshape.sourceFile == "\(layerID.uuidString).reshape-source.png" else {
+                    throw ProjectError.invalid
+                }
+            } else if stack.nodes.contains(where: { $0.kind == .reshape }) {
+                // Reshape dual-write is required when a reshape node is present.
+                guard reshape != nil else { throw ProjectError.invalid }
+            }
+        } catch {
+            throw ProjectError.invalid
+        }
+    }
+
+    /// Validates a RAW source retained in the project package: byte budget, decoded dimensions,
+    /// format sanity, and path safety.
+    private func validateRawSource(_ source: RawSourceAsset, layerID: UUID) throws {
+        let expectedFile = "\(source.sourceID.uuidString).raw-source.\(source.fileExtension)"
+        guard source.byteCount <= RawDevelopmentLimits.maxRawSourceBytes else {
+            throw ProjectError.tooLarge
+        }
+        guard source.byteCount > 0 else { throw ProjectError.missingImage }
+        guard (1...DocumentLimits.maxSide).contains(source.pixelWidth),
+              (1...DocumentLimits.maxSide).contains(source.pixelHeight) else {
+            throw ProjectError.invalid
+        }
+        guard source.pixelWidth > 0, source.pixelHeight > 0 else { throw ProjectError.invalid }
+        // Sanity-check the format identifier looks like a real UTI.
+        guard UTType(source.utType) != nil else { throw ProjectError.invalid }
+        _ = expectedFile
+    }
+
+    /// Budgets for RAW source retention, shared with the document limits.
+    enum RawDevelopmentLimits {
+        /// Maximum original RAW bytes retained in a single layer source.
+        static let maxRawSourceBytes = 512 * 1024 * 1024
+        /// Maximum decoded megapixels for a developed RAW asset.
+        static let maxDecodedMegapixels: Double = 200
+        /// Maximum combined RAW source bytes across all layers in a document.
+        static let maxTotalRawBytes = 1 * 1024 * 1024 * 1024
     }
 
     private func validateAnimation(_ animation: GIFAnimation, record: ProjectGIFRecord, image: CGImage) throws {

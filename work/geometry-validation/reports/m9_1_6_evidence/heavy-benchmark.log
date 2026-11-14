@@ -1,0 +1,51 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -project Compositor.xcodeproj -scheme Compositor -testPlan CompositorHeavy -destination platform=macOS -configuration Debug -derivedDataPath /tmp/dd_heavy_probe "-only-testing:CompositorTests/MeshWarpPerformanceTests/warmMediansHeavyAt6000x4000()" -resultBundlePath /tmp/heavy_run.xcresult -parallel-testing-enabled NO
+
+Resolve Package Graph
+
+
+Resolved source packages:
+  Sparkle: https://github.com/sparkle-project/Sparkle @ 2.10.0
+
+Writing result bundle at path:
+	/tmp/heavy_run.xcresult
+
+2026-11-14 07:29:23.378042-0500 Compositor[37230:27156391] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 07:29:23.378123-0500 Compositor[37230:27156391] [Application] Error registering app with intents framework: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 07:29:23.379219-0500 Compositor[37230:27156354] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 07:29:23.379242-0500 Compositor[37230:27156354] [Connection] Unable to re-register with Process Instance Registry, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 07:29:23.380175-0500 Compositor[37230:27156355] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 07:29:23.380206-0500 Compositor[37230:27156355] [Connection] Unable to re-register with Process Instance Registry, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 07:29:23.381174-0500 Compositor[37230:27156355] [Connection] Will NOT re-try to establish the connection
+2026-11-14 07:29:23.381212-0500 Compositor[37230:27156391] [Connection] Unable to get synchronousRemoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 07:29:23.381234-0500 Compositor[37230:27156391] [Connection] Unable to re-register with Process Instance Registry, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-14 07:29:23.677475-0500 Compositor[37230:27156244] ApplePersistenceIgnoreState: Existing state will not be touched. New state will be written to /Users/atr/Library/Containers/com.wonderassembly.compositor/Data/tmp/com.wonderassembly.compositor.savedState
+2026-11-14 07:29:25.545084-0500 Compositor[37230:27156530] [Common] Unable to obtain a task name port right for pid 399: (os/kern) failure (0x5)
+Test Suite 'Selected tests' started at 2026-11-14 07:29:27.038.
+Test Suite 'CompositorTests.xctest' started at 2026-11-14 07:29:27.038.
+Test Suite 'CompositorTests.xctest' passed at 2026-11-14 07:29:27.039.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-11-14 07:29:27.039.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+◇ Test run started.
+↳ Testing Library Version: 2403
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite MeshWarpPerformanceTests started.
+◇ Test warmMediansHeavyAt6000x4000() started.
+MESH_PERF_HEAVY_BEGIN
+build=Debug (xcodebuild test); host=Mac15,6
+6000x4000 megapixels=24.0 upload=3.06ms kernel=25.86ms readback=2.57ms gpu=25.30ms residentPreview=25.96ms residentKernel=25.74ms
+MESH_PERF_HEAVY_END
+✔ Test warmMediansHeavyAt6000x4000() passed after 1.436 seconds.
+✔ Suite MeshWarpPerformanceTests passed after 1.437 seconds.
+✔ Test run with 1 test in 1 suite passed after 1.437 seconds.
+2026-11-14 07:29:28.799 xcodebuild[37118:27155977] [MT] IDETestOperationsObserverDebug: 6.846 elapsed -- Testing started completed.
+2026-11-14 07:29:28.800 xcodebuild[37118:27155977] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-11-14 07:29:28.800 xcodebuild[37118:27155977] [MT] IDETestOperationsObserverDebug: 6.846 sec, +6.846 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/heavy_run.xcresult
+
+** TEST EXECUTE SUCCEEDED **
+
+Testing started

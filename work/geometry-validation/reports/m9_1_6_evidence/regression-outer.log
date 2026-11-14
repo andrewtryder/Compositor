@@ -1,0 +1,28 @@
+== Preflight ==
+load: 41.89 37.86 46.82
+disk: 100Gi free
+swap: total = 17408.00M  used = 16548.12M  free = 859.88M  (encrypted)
+== Enumerating the selected tests ==
+discovered: 1103   selected: 1101
+excluded by CompositorTests/CompositorRegression.xctestplan:
+  CompositorTests/MeshWarpPerformanceTests/warmMediansHeavyAt6000x4000()
+  CompositorTests/RawDevelopmentIntegrationTests/realRawFixtureEndToEnd()
+== Incremental build-for-testing ==
+build status: 0
+== Regression ==
+== Test results ==
+result: Passed
+totalTestCount: 1101
+passedTests: 1100
+failedTests: 0
+skippedTests: 1
+expectedFailures: 0
+startTime: 1794657947.91
+finishTime: 1794659048.199
+== Excluded from this plan ==
+  CompositorTests/MeshWarpPerformanceTests/warmMediansHeavyAt6000x4000()
+  CompositorTests/RawDevelopmentIntegrationTests/realRawFixtureEndToEnd()
+
+xcodebuild exit status: 0
+log: regression-test.log
+result bundle: /Users/atr/code/Compositor/work/geometry-validation/m9_1_6_runs/M9_1_6_Regression.xcresult

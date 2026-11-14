@@ -15,6 +15,9 @@ struct EditorCanvas: NSViewRepresentable {
         _ = session.extrasHideGuides
         _ = session.guideDrag
         _ = session.document?.guides
+        _ = session.filterEdit?.settings.cameraRaw.geometry.guides
+        _ = session.filterEdit?.drawingCameraRawGeometryGuide
+        _ = session.filterEdit?.cameraRawGuideDraft
         view.synchronizeDisplay()
         view.window?.isDocumentEdited = session.isModified
     }
@@ -127,6 +130,8 @@ final class CanvasView: NSView {
     private var rgbSplitDrag = false
     /// Volumetric Light's light being dragged on the canvas.
     private var volumetricDrag = false
+    /// ReShape control-point drag in progress.
+    private var meshDragging = false
     private var antsTimer: Timer?
     private var modifierMonitor: Any?
     private var sampleClickMonitor: Any?
@@ -1054,6 +1059,24 @@ final class CanvasView: NSView {
                     opacity: opacity, blendMode: blendMode(of: layer), mask: mask, in: context)
                 return
             }
+            // ReShape mesh preview: warped pixels in the layer's existing placement.
+            // The GPU canvas prefers a resident CIImage; Core Graphics needs a CGImage, so read back once
+            // only when this path actually draws (GPU canvas unavailable / forced CPU canvas).
+            if let edit = session.meshWarpEdit, edit.layerID == layer.id {
+                let image: CGImage
+                if let preview = edit.previewImage {
+                    image = preview
+                } else if edit.previewCIImage != nil,
+                          let readback = edit.commitImageForCanvas() {
+                    image = readback
+                } else {
+                    image = edit.displayedImage
+                }
+                LayerRenderer.draw(image, transform: edit.transform, center: center(edit.transform.center),
+                    scale: scale, opacity: opacity, blendMode: blendMode(of: layer),
+                    mask: displayedMask?.enabledImage, in: context)
+                return
+            }
             // A pending distortion shows the layer warped into its new shape — with its effects warped along with
             // it, so they stay on while the corners move.
             // Asked only while corners are being dragged: the request it makes stands for the layer's effects in the
@@ -1442,7 +1465,90 @@ final class CanvasView: NSView {
             let visible = rect.intersection(bounds).intersection(dirtyRect)
             if !visible.isNull, !visible.isEmpty { drawPixelGrid(in: visible, document: document, context: context) }
         }
+        drawCameraRawGeometryGuides(context: context, document: document, dirtyRect: dirtyRect)
         drawTextBoxDraft()
+    }
+
+    /// Draws Camera Raw Geometry (Guided Upright) guide lines over the canvas image.
+    /// Each guide is a segment in normalized image coordinates (0…1, lower-left origin).
+    /// Vertical guides draw in magenta, horizontal guides in cyan, with draggable endpoint dots.
+    ///
+    /// Guide coordinates are converted through the same image→document→view chain used by
+    /// `beginCameraRawGeometryGuide(at:)`, so the overlay aligns with the actual source image
+    /// regardless of layer offset, scale, transform, document size, zoom, or pan.
+    private func drawCameraRawGeometryGuides(context: CGContext, document: CanvasDocument, dirtyRect: NSRect) {
+        let viewport = session.viewport
+        let edit = session.filterEdit
+        let geometry = edit?.settings.cameraRaw.geometry
+        guard let geometry, let edit else { return }
+        let image = edit.previewSource
+
+        let guides = geometry.guides
+        guard !guides.isEmpty else { return }
+
+        let canvas = CGRect(origin: viewport.viewPoint(from: .zero, documentSize: document.size),
+                            size: CGSize(width: document.size.width * viewport.pointsPerPixel,
+                                         height: document.size.height * viewport.pointsPerPixel))
+        let area = dirtyRect.intersection(canvas)
+        guard !area.isNull, !area.isEmpty else { return }
+
+        let scale = viewport.pointsPerPixel
+        let isDrawing = edit.drawingCameraRawGeometryGuide
+        let draft = edit.cameraRawGuideDraft
+
+        /// Converts a normalized image-coordinate point (0…1, lower-left origin) to a view point,
+        /// using the same `previewMapping` chain that guide creation uses.
+        func viewPoint(for normalized: CGPoint) -> CGPoint? {
+            let pixel = CGPoint(x: normalized.x * CGFloat(image.width), y: normalized.y * CGFloat(image.height))
+            let documentPoint = pixel.applying(edit.previewMapping)
+            return viewport.viewPoint(from: documentPoint, documentSize: document.size)
+        }
+
+        context.saveGState()
+        context.setLineWidth(1.5 / scale)
+        context.setLineCap(.round)
+
+        for guide in guides {
+            guard let start = viewPoint(for: guide.start),
+                  let end = viewPoint(for: guide.end) else { continue }
+            let dx = (guide.endX - guide.startX) * CGFloat(image.width)
+            let dy = (guide.endY - guide.startY) * CGFloat(image.height)
+            let isVertical = abs(dy) > abs(dx)
+
+            context.setStrokeColor(isVertical ? CGColor(srgbRed: 1, green: 0, blue: 1, alpha: 0.85)
+                                              : CGColor(srgbRed: 0, green: 1, blue: 1, alpha: 0.85))
+            context.beginPath()
+            context.move(to: start)
+            context.addLine(to: end)
+            context.strokePath()
+
+            // Endpoint dots
+            for point in [start, end] {
+                let dot = CGRect(x: point.x - 3.5, y: point.y - 3.5, width: 7, height: 7)
+                context.setFillColor(isVertical ? CGColor(srgbRed: 1, green: 0, blue: 1, alpha: 0.9)
+                                                : CGColor(srgbRed: 0, green: 1, blue: 1, alpha: 0.9))
+                context.fillEllipse(in: dot)
+                context.setStrokeColor(CGColor.white)
+                context.setLineWidth(1 / scale)
+                context.strokeEllipse(in: dot)
+            }
+        }
+
+        // Draft guide while drawing
+        if isDrawing, let draft {
+            guard let start = viewPoint(for: draft.start),
+                  let end = viewPoint(for: draft.end) else { return }
+            context.setStrokeColor(CGColor.white)
+            context.setLineWidth(1 / scale)
+            context.setLineDash(phase: 0, lengths: [4, 4])
+            context.beginPath()
+            context.move(to: start)
+            context.addLine(to: end)
+            context.strokePath()
+            context.setLineDash(phase: 0, lengths: [])
+        }
+
+        context.restoreGState()
     }
 
     /// One-screen-pixel lines on document pixel boundaries, over the image only.
@@ -1838,7 +1944,14 @@ final class CanvasView: NSView {
             return
         }
         if session.filterEdit?.drawingCameraRawGeometryGuide == true, !spaceHeld, let document = session.document {
-            session.beginCameraRawGeometryGuide(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            let documentPoint = session.viewport.documentPoint(from: point, documentSize: document.size)
+            // Endpoint dragging takes priority over starting a new guide.
+            if session.filterEdit?.cameraRawGuideDraft == nil,
+               session.cameraRawHitGuideEndpoint(at: documentPoint, zoom: session.viewport.zoom) != nil {
+                session.beginCameraRawGuideEndpointDrag(at: documentPoint, zoom: session.viewport.zoom)
+                return
+            }
+            session.beginCameraRawGeometryGuide(at: documentPoint)
             return
         }
         if (session.filterEdit?.targetsCameraRawCurve == true || session.filterEdit?.targetsCameraRawMixer == true),
@@ -1936,6 +2049,11 @@ final class CanvasView: NSView {
                                                  flags: event.modifierFlags))
         } else if session.tool == .crop {
             beginCropDrag(at: point)
+        } else if session.tool == .reshape, let document = session.document {
+            let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
+            meshDragging = session.meshWarpBeginDrag(at: pixel, viewRadius: 10,
+                                                     viewportScale: session.viewport.pointsPerPixel)
+            synchronizeDisplay()
         } else if session.tool == .move {
             // Double-click live text to edit it, without switching to the Type tool first.
             if event.clickCount >= 2, beginLiveTextEdit(at: point) { return }
@@ -1949,9 +2067,13 @@ final class CanvasView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard session.document != nil else { return }
         let point = convert(event.locationInWindow, from: nil)
-        if session.filterEdit?.drawingCameraRawGeometryGuide == true, session.filterEdit?.cameraRawGuideDraft != nil,
-           let document = session.document {
-            session.continueCameraRawGeometryGuide(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+        if session.filterEdit?.drawingCameraRawGeometryGuide == true, let document = session.document {
+            // Endpoint drag takes priority over creating a new guide.
+            if session.filterEdit?.cameraRawDraggingGuideIndex != nil {
+                session.continueCameraRawGuideEndpointDrag(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            } else if session.filterEdit?.cameraRawGuideDraft != nil {
+                session.continueCameraRawGeometryGuide(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            }
             return
         }
         if session.filterEdit?.cameraRawDrag != nil, let document = session.document {
@@ -2047,6 +2169,12 @@ final class CanvasView: NSView {
                 pixel = Self.snapped(pixel, around: handle == .start ? edit.end : edit.start)
             }
             session.moveGradient(start: handle == .start ? pixel : nil, end: handle == .end ? pixel : nil)
+            synchronizeDisplay()
+            return
+        }
+        if meshDragging, session.tool == .reshape, let document = session.document {
+            let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
+            session.meshWarpDrag(to: pixel)
             synchronizeDisplay()
             return
         }
@@ -2201,6 +2329,10 @@ final class CanvasView: NSView {
         if session.filterEdit?.cameraRawGuideDraft != nil {
             session.commitCameraRawGeometryGuide()
         }
+        if session.filterEdit?.cameraRawDraggingGuideIndex != nil {
+            session.filterEdit?.cameraRawDraggingGuideIndex = nil
+            session.filterEdit?.cameraRawDraggingEndpoint = false
+        }
         session.filterEdit?.cameraRawDrag = nil
         if textBoxAnchor != nil { finishTextGesture(); return }
         stopMarqueeAutoscroll()
@@ -2226,6 +2358,11 @@ final class CanvasView: NSView {
             sampleRing.isHidden = true
             if session.colorPicker != nil { ColorPickerPanelController.refocus() }
             return
+        }
+        if meshDragging {
+            meshDragging = false
+            session.meshWarpEndDrag()
+            synchronizeDisplay()
         }
         if session.brushStroke != nil || session.warpStroke != nil, !session.isProjectBusy {
             if let document = session.document {
@@ -2352,9 +2489,21 @@ final class CanvasView: NSView {
         } else if session.tool == .crop, [36, 76].contains(event.keyCode) {
             cropDrag = nil
             Task { await session.commitCrop() }
+        } else if session.meshWarpEdit != nil, event.keyCode == 53 {
+            meshDragging = false
+            session.cancelMeshWarp()
+            session.selectTool(.move)
+            synchronizeDisplay()
+        } else if session.meshWarpEdit != nil, [36, 76].contains(event.keyCode) {
+            meshDragging = false
+            session.applyMeshWarp()
+            session.selectTool(.move)
+            synchronizeDisplay()
         } else if event.keyCode == 53, session.guideDrag != nil {
             session.cancelGuideDrag()
             guideDragging = false
+        } else if event.keyCode == 53, session.filterEdit?.cameraRawDraggingGuideIndex != nil {
+            session.cancelCameraRawGuideEndpointDrag()
         } else if event.keyCode == 53, session.transformEdit != nil {
             transformDrag = nil
             session.cancelTransform()
@@ -3187,6 +3336,20 @@ extension CanvasView {
                 guard var placed = shown else { unsupported = true; return nil }
                 if let mask = layer.mask?.clipImage(placement: layer.maskTransform, over: canvas, width: warp.width, height: warp.height, limit: 2048) {
                     guard let placedMask = placement.place(mask, transform: canvas, mask: true) else { unsupported = true; return nil }
+                    placed = GPUBlend.masked(placed, by: placedMask)
+                }
+                return GPUBlend.faded(placed, opacity)
+            }
+            if let edit = session.meshWarpEdit, edit.layerID == layer.id {
+                let shown: CIImage?
+                if let live = edit.previewCIImage {
+                    shown = placement.place(live: live, width: edit.width, height: edit.height, transform: edit.transform)
+                } else {
+                    shown = placement.place(transient: edit.displayedImage, transform: edit.transform)
+                }
+                guard var placed = shown else { unsupported = true; return nil }
+                if let mask = session.displayedLayer(for: layer).mask?.enabledImage,
+                   let placedMask = placement.place(mask, transform: edit.transform, mask: true) {
                     placed = GPUBlend.masked(placed, by: placedMask)
                 }
                 return GPUBlend.faded(placed, opacity)

@@ -18,7 +18,15 @@ nonisolated extension CameraRawSettings {
     /// These settings with `group` back to its defaults, choices and midpoints included; the other sections unchanged.
     func resetting(_ group: CameraRawGroup) -> Self {
         var result = self
-        Self.copy(group, from: CameraRawSettings(), to: &result)
+        if group == .geometry {
+            let focal = result.geometry.focalLengthMm
+            let sensor = result.geometry.sensorWidthMm
+            Self.copy(group, from: CameraRawSettings(), to: &result)
+            result.geometry.focalLengthMm = focal
+            result.geometry.sensorWidthMm = sensor
+        } else {
+            Self.copy(group, from: CameraRawSettings(), to: &result)
+        }
         return result
     }
 
@@ -30,7 +38,16 @@ nonisolated extension CameraRawSettings {
     }
 
     /// Whether `group` is as new settings have it, so there is nothing to reset.
-    func isDefault(_ group: CameraRawGroup) -> Bool { keeping(group) == CameraRawSettings() }
+    /// Geometry ignores EXIF focal / sensor, which Reset Geometry keeps for Volume Auto.
+    func isDefault(_ group: CameraRawGroup) -> Bool {
+        if group == .geometry {
+            var kept = keeping(.geometry)
+            kept.geometry.focalLengthMm = 0
+            kept.geometry.sensorWidthMm = 0
+            return kept == CameraRawSettings()
+        }
+        return keeping(group) == CameraRawSettings()
+    }
 
     private static func copy(_ group: CameraRawGroup, from source: Self, to target: inout Self) {
         switch group {
@@ -70,7 +87,12 @@ nonisolated extension CameraRawSettings {
         case .grading: target.grading = source.grading
         case .detail: target.detail = source.detail
         case .optics: target.optics = source.optics
-        case .geometry: target.geometry = source.geometry
+        case .geometry:
+            target.geometry = source.geometry
+            target.horizon = source.horizon
+            target.perspectiveTools = source.perspectiveTools
+            target.miniature = source.miniature
+            target.automaticHorizonAngle = source.automaticHorizonAngle
         case .calibration: target.calibration = source.calibration
         }
     }
@@ -118,7 +140,12 @@ extension EditorSession {
         settings.cameraRaw = settings.cameraRaw.resetting(group)
         edit.setShows(group, true)
         if group == .mixer { edit.cameraRawPointIndex = 0 }
-        if group == .geometry { edit.cameraRawGuideDraft = nil }
+        if group == .geometry {
+            edit.cameraRawGuideDraft = nil
+            edit.drawingCameraRawGeometryGuide = false
+            edit.cameraRawUprightDetectionAttempted = false
+            edit.cameraRawManualGuides = nil
+        }
         updateFilter(settings, preview: edit.preview)
     }
 }

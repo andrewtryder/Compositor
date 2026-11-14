@@ -340,6 +340,11 @@ nonisolated enum PixelFilter {
     }
 
     static func run(_ job: FilterJob) throws -> CGImage {
+        try runResult(job).image
+    }
+
+    /// Filter pixels plus optional Camera Raw Expand to Fit placement metadata.
+    static func runResult(_ job: FilterJob) throws -> (image: CGImage, geometryExpansion: CameraRawGeometryExpansion?) {
         let settings = job.settings.normalized
         let width = job.image.width, height = job.image.height
         let extent = CGRect(x: 0, y: 0, width: width, height: height)
@@ -347,15 +352,22 @@ nonisolated enum PixelFilter {
         // smearing the border outwards and stopping at it.
         let edges = CIImage(cgImage: job.image)
         let image: CGImage
+        var geometryExpansion: CameraRawGeometryExpansion?
         switch job.kind {
         case .curves: image = try settings.curves.apply(job.image)
         case .exposure: image = try settings.exposure.apply(job.image)
         case .gradientMap: image = try settings.gradientMap.apply(job.image)
         case .blackWhite: image = try settings.blackWhite.apply(job.image)
         case .colorBalance: image = try settings.colorBalance.apply(job.image)
-        case .cameraRaw: image = try settings.cameraRaw.apply(job.image, clipping: job.cameraRawClipping, scale: job.scale, seed: job.seed,
-                                                                visualizePointColor: job.visualizesPointColor, sharpenMask: job.showsSharpenMask,
-                                                                brightness: job.cameraRawBrightness, usesGPU: job.cameraRawUsesGPU)
+        case .cameraRaw:
+            // Selection blend needs a matching footprint; Expand to Fit applies only to the full layer.
+            var rawSettings = settings.cameraRaw
+            if job.selection != nil { rawSettings.geometry.framingMode = .keepOriginalSize }
+            let raw = try rawSettings.applyResult(job.image, clipping: job.cameraRawClipping, scale: job.scale, seed: job.seed,
+                                                  visualizePointColor: job.visualizesPointColor, sharpenMask: job.showsSharpenMask,
+                                                  brightness: job.cameraRawBrightness, usesGPU: job.cameraRawUsesGPU)
+            image = raw.image
+            geometryExpansion = job.selection == nil ? raw.expansion : nil
         // Grain sits in layer pixels; the job's seed gives each application its own pattern.
         case .grain: image = try settings.grain.apply(job.image, unitsPerPixel: 1 / job.scale, seed: job.seed)
         case .dither: image = try settings.dither.apply(job.image)
@@ -469,9 +481,10 @@ nonisolated enum PixelFilter {
             guard let corrected = destination.makeImage() else { throw ExportError.render }
             image = corrected
         }
-        guard let selection = job.selection else { return image }
-        return try PixelAdjust.blend(image, over: job.image, through: selection, pixelToDocument: job.mapping, isMask: false,
-                                     sixteenBit: job.sixteenBit)
+        guard let selection = job.selection else { return (image, geometryExpansion) }
+        let blended = try PixelAdjust.blend(image, over: job.image, through: selection, pixelToDocument: job.mapping, isMask: false,
+                                            sixteenBit: job.sixteenBit)
+        return (blended, nil)
     }
 
     /// A filter's preview on an HDR layer's pixels (`hdr`, at the preview's size), made the way OK makes the result: the
@@ -600,9 +613,19 @@ final class FilterEdit {
     var samplesWhiteBalance = false
     /// Defringe eyedropper, armed from Optics. Sets purple or green hue range from the clicked fringe.
     var samplesDefringe = false
-    /// Guided Upright: drag lines on the preview.
-    var drawingCameraRawGeometryGuide = false
-    var cameraRawGuideDraft: (start: CGPoint, end: CGPoint)?
+/// Guided Upright: drag lines on the preview.
+var drawingCameraRawGeometryGuide = false
+var cameraRawGuideDraft: (start: CGPoint, end: CGPoint)?
+/// When endpoint dragging is in progress: the index of the guide in `geometry.guides`, and whether
+/// the endpoint being dragged is the end (true) or the start (false).
+var cameraRawDraggingGuideIndex: Int?
+var cameraRawDraggingEndpoint: Bool = false
+/// The original guide coordinates captured when an endpoint drag begins, so Escape can restore them exactly.
+var cameraRawDragOriginalGuide: CameraRawGeometryGuide?
+    /// Guided lines set aside while Auto is searching, so a miss or a return to Guided does not lose them.
+    var cameraRawManualGuides: [CameraRawGeometryGuide]?
+    /// True after Auto upright has searched the preview, so the panel can say when nothing was found.
+    var cameraRawUprightDetectionAttempted = false
     /// Set while Option is held on Exposure, Highlights, Shadows, Whites, or Blacks.
     var cameraRawClipping: CameraRawClipping?
     /// Set while Option is held on Sharpening Masking.
@@ -620,6 +643,8 @@ final class FilterEdit {
     /// The layer had no pixels yet (an empty layer); the filter started it from clear ones.
     @ObservationIgnored var startedEmpty = false
     @ObservationIgnored var preparedPreview: CGImage?
+    /// Target correction-stack node ID for Camera Raw Full / Geometry editing.
+    var cameraRawTargetNodeID: UUID? = nil
     /// Where `preparedPreview` goes: the grown layer it was made from, or nil for the layer's own place. A blur grows
     /// the layer as it gets bigger; the last preview stays up where it belongs until the next one replaces it.
     @ObservationIgnored var preparedTransform: LayerTransform?
@@ -782,6 +807,11 @@ final class FilterEdit {
                                                         showsMixer: showsCameraRawMixer, showsGrading: showsCameraRawGrading,
                                                         showsDetail: showsCameraRawDetail, showsOptics: showsCameraRawOptics,
                                                         showsGeometry: showsCameraRawGeometry, showsCalibration: showsCameraRawCalibration)
+            // Never silently expand a 16-bit/HDR layer through an 8-bit surface.
+            if !CameraRawGeometrySettings.supportsExpandToFit(on: original),
+               value.cameraRaw.geometry.framingMode == .expandToFit {
+                value.cameraRaw.geometry.framingMode = .keepOriginalSize
+            }
         }
         return value
     }
@@ -817,6 +847,11 @@ extension EditorSession {
         }
         commitTransform(); cancelCrop(); cancelLasso()
         guard var layer = activeLayer, let document else { return }
+        // Destructive filters (Camera Raw included) refuse editable ReShape; bake is explicit.
+        if let message = reshapeDestructiveRefusal(for: layer) {
+            brushError = message
+            return
+        }
         pauseGIFForEditing(for: layer.id)
         layer = pixelEditingLayer(for: layer)
         do {
@@ -828,6 +863,11 @@ extension EditorSession {
                 layer.asset = ImportedImage(image: clear, thumbnail: try PixelAdjust.thumbnail(of: clear), name: layer.name)
             }
             var settings = filterSettings
+            // RAW import seeds focal / sensor onto the asset for Camera Raw volume Auto.
+            if kind == .cameraRaw, !repeating, let asset = layer.asset {
+                if asset.focalLengthMm > 0 { settings.cameraRaw.geometry.focalLengthMm = asset.focalLengthMm }
+                if asset.sensorWidthMm > 0 { settings.cameraRaw.geometry.sensorWidthMm = asset.sensorWidthMm }
+            }
             // Progressive Blur starts sharp at the top of the layer's visible part, blurring to its foot; Last Filter
             // keeps the line it had.
             if kind == .progressiveBlur, !repeating {
@@ -949,6 +989,12 @@ extension EditorSession {
         if edit.waitsForDepth, settings.normalized == edit.settings, preview == edit.preview { return }
         edit.settings = settings.normalized
         edit.preview = preview
+        if edit.kind == .cameraRaw,
+           !CameraRawGeometrySettings.supportsExpandToFit(on: edit.original),
+           edit.settings.cameraRaw.geometry.framingMode == .expandToFit {
+            edit.settings.cameraRaw.geometry.framingMode = .keepOriginalSize
+            edit.previewError = CameraRawGeometrySettings.expandUnsupportedOnDeepLayersMessage
+        }
         // A bigger blur needs more room around the layer than it was given.
         if FilterEdit.blurMargin(edit.kind, edit.settings) > edit.grownMargin {
             do { try edit.growForBlur() }
@@ -974,10 +1020,12 @@ extension EditorSession {
         let placement = edit.pendingTransform
         let sourceVersion = edit.previewSourceVersion
         let hdrSource = edit.kind.isAutomatic ? nil : edit.hdrPreviewSource
+        let baseTransform = edit.transform
         edit.preparing = true
         edit.previewError = nil
         edit.previewTask = Task { @MainActor [weak self, weak edit] in
-            let result = await Task.detached(priority: .userInitiated) { () -> (CGImage?, CameraRawScope?, String?, CameraRawTables.Brightness?) in
+            let result = await Task.detached(priority: .userInitiated) {
+                () -> (CGImage?, CameraRawScope?, String?, CameraRawTables.Brightness?, LayerTransform?) in
                 var run = job
                 // Measure once on the worker, then reuse it for every slider update in this session.
                 if run.kind == .cameraRaw, run.cameraRawBrightness == nil {
@@ -988,15 +1036,16 @@ extension EditorSession {
                     if let hdrSource {
                         let made = try PixelFilter.previewHDR(run, from: hdrSource)
                         let scope = run.kind == .cameraRaw ? try CameraRawScope.preview(run).scope : nil
-                        return (try DeepLayer.dithered(made), scope, nil, run.cameraRawBrightness)
+                        return (try DeepLayer.dithered(made), scope, nil, run.cameraRawBrightness, placement)
                     }
                     if run.kind == .cameraRaw {
-                        let made = try CameraRawScope.preview(run)
-                        return (made.image, made.scope, nil, run.cameraRawBrightness)
+                        let made = try CameraRawScope.previewResult(run)
+                        let placed = made.geometryExpansion?.layerTransform(from: baseTransform) ?? placement
+                        return (made.image, made.scope, nil, run.cameraRawBrightness, placed)
                     }
-                    return (try PixelFilter.run(run), nil, nil, run.cameraRawBrightness)
+                    return (try PixelFilter.run(run), nil, nil, run.cameraRawBrightness, placement)
                 } catch {
-                    return (nil, nil, error.localizedDescription, run.cameraRawBrightness)
+                    return (nil, nil, error.localizedDescription, run.cameraRawBrightness, placement)
                 }
             }.value
             guard let self, let edit, self.filterEdit === edit, !Task.isCancelled else {
@@ -1013,7 +1062,7 @@ extension EditorSession {
             if let scope = result.1 { edit.cameraRawScope = scope }
             if (edit.preview || edit.kind.isAutomatic), current || !edit.kind.isAutomatic {
                 edit.preparedPreview = result.0
-                edit.preparedTransform = placement
+                edit.preparedTransform = result.4
                 edit.preparedSettings = current ? job.settings : nil
                 self.brushRevision += 1
             }
@@ -1030,6 +1079,12 @@ extension EditorSession {
         if case .dither = colorPicker?.target { closeColorPicker(commit: false) }
         if finishAdjustmentEditing(commit: false) { return }
         guard let edit = filterEdit, !edit.committing else { return }
+        // A Camera Raw correction-stack node edit is cancelled without touching
+        // the node or the document.
+        if edit.kind == .cameraRaw, edit.cameraRawTargetNodeID != nil {
+            cancelCameraRawNodeEdit()
+            return
+        }
         edit.previewTask?.cancel()
         if edit.kind == .cameraRaw, edit.previewJob.cameraRawUsesGPU {
             Task.detached(priority: .utility) { MetalCameraRawLookup.shared?.discardBuffers() }
@@ -1045,6 +1100,15 @@ extension EditorSession {
         if case .dither = colorPicker?.target { closeColorPicker(commit: true) }
         if finishAdjustmentEditing(commit: true) { return }
         guard let edit = filterEdit, !edit.committing else { return }
+
+        // A Camera Raw correction-stack node edit commits back to the node
+        // (one undo entry) rather than painting the layer destructively.
+        if edit.kind == .cameraRaw, edit.cameraRawTargetNodeID != nil {
+            let committed = commitCameraRawNodeEdit()
+            if !committed { brushError = "Could not commit the Camera Raw correction." }
+            return
+        }
+
         if edit.kind.isAutomatic {
             await edit.previewTask?.value
             guard filterEdit === edit, !edit.committing, edit.preparedPreview != nil, edit.previewError == nil else { return }
@@ -1094,6 +1158,7 @@ extension EditorSession {
         job.canvas = edit.canvas
         job.canvasSides = edit.canvasSides
         let cached = edit.kind.isAutomatic && edit.preparedSettings == edit.settings ? edit.preparedPreview : nil
+        let baseTransform = edit.transform
         do {
             let grown = keepsOutline ? nil : edit.grownTransform
             let spreads = edit.kind == .gaussianBlur || edit.kind == .motionBlur || edit.kind == .progressiveBlur || edit.kind == .bloomGlow
@@ -1126,16 +1191,28 @@ extension EditorSession {
                     return (try DeepLayer.asset(result, name: job.kind.rawValue), grown)
                 }
                 if let deep {
+                    // Expand on 16-bit/HDR is refused (renderSettings already coerces Keep Original Size). Preserve
+                    // precision through DeepLayer.run; never commit an 8-bit expanded substitute.
+                    var keepSettings = job.settings
+                    if job.kind == .cameraRaw, keepSettings.cameraRaw.geometry.framingMode == .expandToFit {
+                        keepSettings.cameraRaw.geometry.framingMode = .keepOriginalSize
+                    }
+                    var runJob = FilterJob(kind: job.kind, image: job.image, settings: keepSettings, scale: job.scale,
+                                           selection: job.selection, mapping: job.mapping, seed: job.seed)
+                    runJob.canvas = job.canvas
+                    runJob.canvasSides = job.canvasSides
+                    runJob.cameraRawBrightness = job.cameraRawBrightness
+                    runJob.cameraRawUsesGPU = job.cameraRawUsesGPU
                     let input = try deepGrid.map { try DeepLayer.padded(deep, to: $0.size, inside: $0.inside) } ?? deep
                     var result: CGImage
-                    if job.kind.runsAtSixteenBits {
-                        var run = job
+                    if runJob.kind.runsAtSixteenBits {
+                        var run = runJob
                         run.image = input
                         run.sixteenBit = true
                         result = try PixelFilter.run(run)
                     } else {
-                        result = try DeepLayer.run(input, mixesChannels: job.kind.mixesChannels) { half in
-                            var run = job
+                        result = try DeepLayer.run(input, mixesChannels: runJob.kind.mixesChannels) { half in
+                            var run = runJob
                             run.image = half
                             return try PixelFilter.run(run)
                         }
@@ -1146,10 +1223,12 @@ extension EditorSession {
                         placed = PixelFilter.trimmedTransform(grown, crop: crop, width: result.width, height: result.height)
                         result = cropped
                     }
-                    return (try DeepLayer.asset(result, name: job.kind.rawValue), placed)
+                    return (try DeepLayer.asset(result, name: runJob.kind.rawValue), placed)
                 }
-                var image = try cached ?? PixelFilter.run(job)
-                var placed = grown
+                let rendered = try cached.map { (image: $0, geometryExpansion: nil as CameraRawGeometryExpansion?) }
+                    ?? PixelFilter.runResult(job)
+                var image = rendered.image
+                var placed = rendered.geometryExpansion?.layerTransform(from: baseTransform) ?? grown
                 if spreads, let grown {
                     let trimmed = try PixelFilter.trimmed(image, placed: grown)
                     image = trimmed.image
@@ -1162,17 +1241,19 @@ extension EditorSession {
                   let current = document?.layers[index],
                   displayedAsset(for: current)?.image === edit.original.image || (edit.startedEmpty && current.asset == nil),
                   pixelEditTransformMatches(current, transform: edit.transform) else { return }
-            // A grown layer's mask (covering the old grid) is carried onto the new one, its edge tone past the old edge.
+            // A grown / expanded layer's mask (covering the old grid) is carried onto the new one.
             var mask = current.mask
-            if current.gifAnimation == nil, let grown, let owned = current.mask, owned.placement == nil,
+            let placedTransform = made.transform ?? current.transform
+            if current.gifAnimation == nil, placedTransform != current.transform,
+               let owned = current.mask, owned.placement == nil,
                owned.asset.image.width > 1 || owned.asset.image.height > 1 {
                 var enabled = owned
                 enabled.isEnabled = true
-                guard let carried = enabled.clipImage(placement: current.transform, over: grown,
+                guard let carried = enabled.clipImage(placement: current.transform, over: placedTransform,
                                                       width: asset.image.width, height: asset.image.height) else { throw ExportError.render }
                 mask = owned.replacing(try LayerMask.asset(from: carried))
             }
-            let edited = try layerByEditingPixels(current, asset: asset, transform: made.transform ?? current.transform, mask: mask)
+            let edited = try layerByEditingPixels(current, asset: asset, transform: placedTransform, mask: mask)
             beginEdit(edit.kind.rawValue)
             document?.layers[index] = edited
             endEdit()

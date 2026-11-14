@@ -1,0 +1,1135 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project Compositor.xcodeproj -scheme Compositor -destination platform=macOS -configuration Debug test "-only-testing:CompositorTests" -resultBundlePath /tmp/final_regression.xcresult
+
+Resolve Package Graph
+
+
+Resolved source packages:
+  Sparkle: https://github.com/sparkle-project/Sparkle @ 2.10.0
+
+Writing result bundle at path:
+	/tmp/final_regression.xcresult
+
+ComputePackagePrebuildTargetDependencyGraph
+
+Prepare packages
+
+CreateBuildRequest
+
+SendProjectDescription
+
+CreateBuildOperation
+
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+note: Target dependency graph (3 targets)
+    Target 'CompositorTests' in project 'Compositor'
+        ➜ Explicit dependency on target 'Compositor' in project 'Compositor'
+    Target 'Compositor' in project 'Compositor'
+        ➜ Explicit dependency on target 'Sparkle-product' in project 'Sparkle'
+    Target 'Sparkle-product' in project 'Sparkle' (no dependencies)
+
+GatherProvisioningInputs
+
+CreateBuildDescription
+
+ClangStatCache /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk /Users/atr/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/macosx27.2-26B118-a7ff82d74745d5ef33555b35c4238456.sdkstatcache
+    cd /Users/atr/code/Compositor/Compositor.xcodeproj
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -o /Users/atr/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/macosx27.2-26B118-a7ff82d74745d5ef33555b35c4238456.sdkstatcache
+
+MkDir /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest (in target 'CompositorTests' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    /bin/mkdir -p /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest
+
+MkDir /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents (in target 'CompositorTests' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    /bin/mkdir -p /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents
+
+MkDir /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/MacOS (in target 'CompositorTests' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    /bin/mkdir -p /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/MacOS
+
+MkDir /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns (in target 'Compositor' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    /bin/mkdir -p /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns
+
+ProcessProductPackaging /Users/atr/code/Compositor/Config/Compositor.entitlements /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/Compositor.build/Compositor.app.xcent (in target 'Compositor' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    
+    Entitlements:
+    
+    {
+    "com.apple.security.app-sandbox" = 1;
+    "com.apple.security.files.user-selected.read-write" = 1;
+    "com.apple.security.get-task-allow" = 1;
+    "com.apple.security.network.client" = 1;
+    "com.apple.security.temporary-exception.mach-lookup.global-name" =     (
+        "com.wonderassembly.compositor-spks",
+        "com.wonderassembly.compositor-spki"
+    );
+}
+    
+    builtin-productPackagingUtility /Users/atr/code/Compositor/Config/Compositor.entitlements -entitlements -format xml -o /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/Compositor.build/Compositor.app.xcent
+
+ProcessProductPackagingDER /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/Compositor.build/Compositor.app.xcent /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/Compositor.build/Compositor.app.xcent.der (in target 'Compositor' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    /usr/bin/derq query -f xml -i /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/Compositor.build/Compositor.app.xcent -o /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/Compositor.build/Compositor.app.xcent.der --raw
+
+ProcessInfoPlistFile /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/Info.plist /Users/atr/code/Compositor/Config/Info.plist (in target 'Compositor' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    builtin-infoPlistUtility /Users/atr/code/Compositor/Config/Info.plist -producttype com.apple.product-type.application -genpkginfo /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PkgInfo -expandbuildsettings -platform macosx -additionalcontentfile /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/Compositor.build/assetcatalog_generated_info.plist -scanforprivacyfile /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/Frameworks/Sparkle.framework -o /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/Info.plist
+
+CopySwiftLibs /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app (in target 'Compositor' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    builtin-swiftStdLibTool --copy --verbose --sign - --scan-executable /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/MacOS/Compositor.debug.dylib --scan-folder /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/Frameworks --scan-folder /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns --scan-folder /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/Library/SystemExtensions --scan-folder /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/Extensions --platform macosx --toolchain /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --destination /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/Frameworks --strip-bitcode --strip-bitcode-tool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip --emit-dependency-info /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/Compositor.build/SwiftStdLibToolInputDependencies.dep --filter-for-swift-os
+
+ProcessInfoPlistFile /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/Info.plist /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/empty-CompositorTests.plist (in target 'CompositorTests' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    builtin-infoPlistUtility /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/empty-CompositorTests.plist -producttype com.apple.product-type.bundle.unit-test -expandbuildsettings -platform macosx -o /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/Info.plist
+
+Ld /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/MacOS/CompositorTests normal (in target 'CompositorTests' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-macos26.0 -bundle -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -O0 -Xlinker -no_warn_duplicate_libraries -L/Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/EagerLinkingTBDs/Debug -L/Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug -L/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib -F/Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/EagerLinkingTBDs/Debug -F/Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug -iframework /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks -filelist /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/Objects-normal/arm64/CompositorTests.LinkFileList -Xlinker -rpath -Xlinker @loader_path/../Frameworks -Xlinker -rpath -Xlinker @executable_path/../Frameworks -Xlinker -dead_strip -bundle_loader /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/MacOS/Compositor -Xlinker -object_path_lto -Xlinker /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/Objects-normal/arm64/CompositorTests_lto.o -rdynamic -Xlinker -no_deduplicate -Xlinker -debug_variant -Xlinker -dependency_info -Xlinker /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/Objects-normal/arm64/CompositorTests_dependency_info.dat -fobjc-link-runtime -fprofile-instr-generate -L/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx -L/usr/lib/swift -Xlinker -add_ast_path -Xlinker /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/Objects-normal/arm64/CompositorTests.swiftmodule -Xlinker -needed_framework -Xlinker XCTest -framework XCTest -Xlinker -needed-lXCTestSwiftSupport -lXCTestSwiftSupport /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/MacOS/Compositor.debug.dylib -Xlinker -no_adhoc_codesign -o /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/MacOS/CompositorTests
+
+CopySwiftLibs /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest (in target 'CompositorTests' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    builtin-swiftStdLibTool --copy --verbose --sign - --scan-executable /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/MacOS/CompositorTests --scan-folder /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/Frameworks --scan-folder /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/PlugIns --scan-folder /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/Library/SystemExtensions --scan-folder /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/Extensions --platform macosx --toolchain /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --destination /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/Frameworks --strip-bitcode --scan-executable /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib/libXCTestSwiftSupport.dylib --strip-bitcode-tool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip --emit-dependency-info /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/SwiftStdLibToolInputDependencies.dep --filter-for-swift-os
+
+ExtractAppIntentsMetadata (in target 'CompositorTests' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsmetadataprocessor --toolchain-dir /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --module-name CompositorTests --sdk-root /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk --xcode-version 27B52 --platform-family macOS --deployment-target 26.0 --bundle-identifier com.wonderassembly.compositor.tests --output /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/Resources --target-triple arm64-apple-macos26.0 --binary-file /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest/Contents/MacOS/CompositorTests --dependency-file /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/Objects-normal/arm64/CompositorTests_dependency_info.dat --stringsdata-file /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/Objects-normal/arm64/ExtractedAppShortcutsMetadata.stringsdata --source-file-list /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/Objects-normal/arm64/CompositorTests.SwiftFileList --metadata-file-list /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/CompositorTests.DependencyMetadataFileList --static-metadata-file-list /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/CompositorTests.DependencyStaticMetadataFileList --swift-const-vals-list /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/CompositorTests.build/Objects-normal/arm64/CompositorTests.SwiftConstValuesFileList --compile-time-extraction --deployment-aware-processing --no-app-shortcuts-localization
+2026-11-13 22:36:53.200 appintentsmetadataprocessor[31180:25890306] Starting App Intents metadata extraction
+2026-11-13 22:36:53.210 appintentsmetadataprocessor[31180:25890306] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+
+CodeSign /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest (in target 'CompositorTests' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    
+    Signing Identity:     "Sign to Run Locally"
+    
+    /usr/bin/codesign --force --sign - --timestamp\=none --generate-entitlement-der --strip-disallowed-xattrs /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest
+
+RegisterExecutionPolicyException /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest (in target 'CompositorTests' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    builtin-RegisterExecutionPolicyException /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest
+
+Touch /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest (in target 'CompositorTests' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    /usr/bin/touch -c /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/PlugIns/CompositorTests.xctest
+
+CodeSign /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/MacOS/Compositor.debug.dylib (in target 'Compositor' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    
+    Signing Identity:     "Sign to Run Locally"
+    
+    /usr/bin/codesign --force --sign - --timestamp\=none --generate-entitlement-der --strip-disallowed-xattrs /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/MacOS/Compositor.debug.dylib
+/Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/MacOS/Compositor.debug.dylib: replacing existing signature
+
+CodeSign /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/MacOS/__preview.dylib (in target 'Compositor' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    
+    Signing Identity:     "Sign to Run Locally"
+    
+    /usr/bin/codesign --force --sign - --timestamp\=none --generate-entitlement-der --strip-disallowed-xattrs /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/MacOS/__preview.dylib
+/Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app/Contents/MacOS/__preview.dylib: replacing existing signature
+
+CodeSign /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app (in target 'Compositor' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    
+    Signing Identity:     "Sign to Run Locally"
+    
+    /usr/bin/codesign --force --sign - --entitlements /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/Compositor.build/Debug/Compositor.build/Compositor.app.xcent --timestamp\=none --generate-entitlement-der --strip-disallowed-xattrs /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app
+/Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app: replacing existing signature
+
+Validate /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app (in target 'Compositor' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    builtin-validationUtility /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app -no-validate-extension -infoplist-subpath Contents/Info.plist
+
+RegisterWithLaunchServices /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app (in target 'Compositor' from project 'Compositor')
+    cd /Users/atr/code/Compositor
+    builtin-lsregisterurl --record-path /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/XCBuildData/registered-launchservices.txt -- /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Debug/Compositor.app
+
+PruneExplicitPrecompiledModules /Users/atr/Library/Developer/Xcode/DerivedData/SDKExplicitPrecompiledModules
+
+PruneExplicitPrecompiledModules /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+
+PruneExplicitPrecompiledModules /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Intermediates.noindex/ExplicitPrecompiledModules
+
+note: Disabling hardened runtime with ad-hoc codesigning. (in target 'Compositor' from project 'Compositor')
+Testing started
+Test suite 'FilterLayerTests' started on 'My Mac - Compositor (31209)'
+Test suite 'TitleBarDragTests' started on 'My Mac - Compositor (31209)'
+Test suite 'RasterSnapshotTests' started on 'My Mac - Compositor (31209)'
+Test suite 'RawDevelopmentGUITests' started on 'My Mac - Compositor (31209)'
+Test suite 'JPEGExportTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CommandPaletteTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawGPUPerformanceTests' started on 'My Mac - Compositor (31209)'
+Test suite 'LiveMaskTests' started on 'My Mac - Compositor (31209)'
+Test suite 'NewCanvasUnitTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CursorTests' started on 'My Mac - Compositor (31209)'
+Test suite 'KeyboardShortcutTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CanvasRotationTests' started on 'My Mac - Compositor (31209)'
+Test suite 'AdjustmentLayerTests' started on 'My Mac - Compositor (31209)'
+Test suite 'NativeResolutionPaintTests' started on 'My Mac - Compositor (31209)'
+Test suite 'TransformTests' started on 'My Mac - Compositor (31209)'
+Test suite 'SelectionEditTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawUprightTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawScopePerformanceTests' started on 'My Mac - Compositor (31209)'
+Test suite 'LevelsTests' started on 'My Mac - Compositor (31209)'
+Test suite 'SpotHealingTests' started on 'My Mac - Compositor (31209)'
+Test suite 'RimLightTests' started on 'My Mac - Compositor (31209)'
+Test suite 'LayerDistancesTests' started on 'My Mac - Compositor (31209)'
+Test suite 'HueSaturationTests' started on 'My Mac - Compositor (31209)'
+Test suite 'MetalWarpTests' started on 'My Mac - Compositor (31209)'
+Test suite 'LayerExportTests' started on 'My Mac - Compositor (31209)'
+Test suite 'FinishingFilterTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CanvasThumbnailTests' started on 'My Mac - Compositor (31209)'
+Test suite 'MeshWarpPerformanceTests' started on 'My Mac - Compositor (31209)'
+Test suite 'SelectionFeatherTests' started on 'My Mac - Compositor (31209)'
+Test suite 'TiledLayerTests' started on 'My Mac - Compositor (31209)'
+Test suite 'BrushRecoveryTests' started on 'My Mac - Compositor (31209)'
+Test suite 'DownsampleTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ColorOverlayTests' started on 'My Mac - Compositor (31209)'
+Test suite 'MaskAloneBadgeHitTests' started on 'My Mac - Compositor (31209)'
+Test suite 'PDFImportTests' started on 'My Mac - Compositor (31209)'
+Test suite 'HistoryTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ColorPickerTests' started on 'My Mac - Compositor (31209)'
+Test suite 'GIFLayerTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ImageSizeTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CanvasSizeTests' started on 'My Mac - Compositor (31209)'
+Test suite 'SmartEditTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ImageAdjustmentTests' started on 'My Mac - Compositor (31209)'
+Test suite 'PSDAdjustmentTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ProjectWorkspaceTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawResetTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ImageSourceTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawGeometryGuideTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawGPUTests' started on 'My Mac - Compositor (31209)'
+Test suite 'NavigatorTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ImageImportTests' started on 'My Mac - Compositor (31209)'
+Test suite 'SelectionTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawSliderTests' started on 'My Mac - Compositor (31209)'
+Test suite 'MaskAloneTests' started on 'My Mac - Compositor (31209)'
+Test suite 'MeshWarpLocalGeometryTests' started on 'My Mac - Compositor (31209)'
+Test suite 'AdjustmentPerformanceTests' started on 'My Mac - Compositor (31209)'
+Test suite 'DistortTests' started on 'My Mac - Compositor (31209)'
+Test suite 'MeshWarpTests' started on 'My Mac - Compositor (31209)'
+Test suite 'UpdateCheckTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ScanlinesTests' started on 'My Mac - Compositor (31209)'
+Test suite 'BrushIntersectionTests' started on 'My Mac - Compositor (31209)'
+Test suite 'GradientTests' started on 'My Mac - Compositor (31209)'
+Test suite 'LayerAlignTests' started on 'My Mac - Compositor (31209)'
+Test suite 'AdjustmentCacheTests' started on 'My Mac - Compositor (31209)'
+Test suite 'PSDRoundTripTests' started on 'My Mac - Compositor (31209)'
+Test suite 'UnifiedGeometryPerformanceTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CloneStampTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ShapeToolTests' started on 'My Mac - Compositor (31209)'
+Test suite 'PSDArtboardTests' started on 'My Mac - Compositor (31209)'
+Test suite 'BlurBrushTests' started on 'My Mac - Compositor (31209)'
+Test suite 'MeshWarpAdvancedTests' started on 'My Mac - Compositor (31209)'
+Test suite 'FloatingPanelTests' started on 'My Mac - Compositor (31209)'
+Test suite 'LayersFooterTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawGeometrySafetyTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CanvasEntryTests' started on 'My Mac - Compositor (31209)'
+Test suite 'LensEffectsTests' started on 'My Mac - Compositor (31209)'
+Test suite 'BlendShortcutTests' started on 'My Mac - Compositor (31209)'
+Test suite 'LargeCanvasBrushTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ReduceNoiseTests' started on 'My Mac - Compositor (31209)'
+Test suite 'GIFPreviewPlaybackTests' started on 'My Mac - Compositor (31209)'
+Test suite 'LayerAppearanceTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CMYKTests' started on 'My Mac - Compositor (31209)'
+Test suite 'AdjustmentEditorTests' started on 'My Mac - Compositor (31209)'
+Test suite 'GroupingSelectionTests' started on 'My Mac - Compositor (31209)'
+Test suite 'BrushTests' started on 'My Mac - Compositor (31209)'
+Test suite 'NonDestructiveGeometryPerformanceTests' started on 'My Mac - Compositor (31209)'
+Test suite 'InnerGlowTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CropTests' started on 'My Mac - Compositor (31209)'
+Test suite 'OuterGlowTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ProgressiveBlurTests' started on 'My Mac - Compositor (31209)'
+Test suite 'TypeToolTests' started on 'My Mac - Compositor (31209)'
+Test suite 'TransformPressTests' started on 'My Mac - Compositor (31209)'
+Test suite 'MagicWandTests' started on 'My Mac - Compositor (31209)'
+Test suite 'MeshWarpTopologyTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CropToCanvasImportTests' started on 'My Mac - Compositor (31209)'
+Test suite 'GPUCanvasTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawUprightComparisonTests' started on 'My Mac - Compositor (31209)'
+Test suite 'VolumetricLightTests' started on 'My Mac - Compositor (31209)'
+Test suite 'GuideTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawGeometryBackendTests' started on 'My Mac - Compositor (31209)'
+Test suite 'LayerMaskTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ToolRailTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ExternalChangeTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CompositorTests' started on 'My Mac - Compositor (31209)'
+Test suite 'DeepLayerTests' started on 'My Mac - Compositor (31209)'
+Test suite 'RawDevelopmentIntegrationTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ExportTests' started on 'My Mac - Compositor (31209)'
+Test suite 'NonDestructiveGeometryStackTests' started on 'My Mac - Compositor (31209)'
+Test suite 'LayerTests' started on 'My Mac - Compositor (31209)'
+Test suite 'StrokeEffectTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ImageTrimTests' started on 'My Mac - Compositor (31209)'
+Test suite 'UnifiedGeometryBackendTests' started on 'My Mac - Compositor (31209)'
+Test suite 'RawDevelopmentPersistenceTests' started on 'My Mac - Compositor (31209)'
+Test suite 'RawDitherTests' started on 'My Mac - Compositor (31209)'
+Test suite 'PSBImportTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawPerspectiveIntensityFramingTests' started on 'My Mac - Compositor (31209)'
+Test suite 'FilterTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ResizeSnapTests' started on 'My Mac - Compositor (31209)'
+Test suite 'MiddleButtonTests' started on 'My Mac - Compositor (31209)'
+Test suite 'MeshWarpPersistenceTests' started on 'My Mac - Compositor (31209)'
+Test suite 'BrushPerformanceTests' started on 'My Mac - Compositor (31209)'
+Test suite 'SelectionClipboardTests' started on 'My Mac - Compositor (31209)'
+Test suite 'GroupTests' started on 'My Mac - Compositor (31209)'
+Test suite 'MaskTransformTests' started on 'My Mac - Compositor (31209)'
+Test suite 'PenPressureTests' started on 'My Mac - Compositor (31209)'
+Test suite 'FontMenuFacesTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ProjectTests' started on 'My Mac - Compositor (31209)'
+Test suite 'NonDestructiveCameraRawTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ProjectTabLayoutTests' started on 'My Mac - Compositor (31209)'
+Test suite 'LayerEffectsSurviveTests' started on 'My Mac - Compositor (31209)'
+Test suite 'ChannelPackTests' started on 'My Mac - Compositor (31209)'
+Test suite 'CameraRawVolumeGPUTests' started on 'My Mac - Compositor (31209)'
+Test case 'RawDevelopmentGUITests/sixteenBitRAWLayerRejectsCorrectionStack()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentGUITests/sixteenBitRAWPrecisionPreserved()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentGUITests/plainRasterLayerDoesNotExposeRawDevelopment()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentGUITests/sliderChangesRemainDraftOnly()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'RawDevelopmentGUITests/cancelLeavesDocumentUnchanged()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'RawDevelopmentGUITests/deletingLayerClearsActiveDraft()' passed on 'My Mac - Compositor (31209)' (0.002 seconds)
+Test case 'RawDevelopmentGUITests/addFirstCorrectionNodeWithoutExistingStack()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'RawDevelopmentGUITests/rawBackedLayerExposesEditRawDevelopment()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentGUITests/correctionStackRowHasAccessibilityIdentifiers()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentGUITests/reshapeRestoresPersistedMesh()' passed on 'My Mac - Compositor (31209)' (0.002 seconds)
+Test case 'RawDevelopmentGUITests/resetToAsShotDistinctFromCancel()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'RawDevelopmentGUITests/toggleNodeEnabledState()' passed on 'My Mac - Compositor (31209)' (0.002 seconds)
+Test case 'RawDevelopmentGUITests/existingSettingsPopulateEditor()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentGUITests/invalidNodeReorderRejected()' passed on 'My Mac - Compositor (31209)' (0.003 seconds)
+Test case 'RawDevelopmentGUITests/reorderCorrectionVisibleErrors()' passed on 'My Mac - Compositor (31209)' (0.004 seconds)
+Test case 'RimLightTests/aRemovedLightCanStillBeAskedForWithoutReachingPastTheList()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentGUITests/reshapeOpensSavedMeshAndPreservesNodeIdentity()' passed on 'My Mac - Compositor (31209)' (0.003 seconds)
+Test case 'RawDevelopmentGUITests/correctionStackNodeOrder()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'LayerDistancesTests/twoLayersApartShowTheGapBetweenThem()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'LayerDistancesTests/aMovedLayerMeasuresToTheNearestLayerLevelWithIt()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'LayerDistancesTests/aMovedLayerMeasuresToTheCanvasEdges()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'LayerDistancesTests/aLayerInsideAnotherShowsEachSidesInset()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ColorOverlayTests/overlayOpacityMixesWithTheLayersOwnColor()' passed on 'My Mac - Compositor (31209)' (0.384 seconds)
+Test case 'ColorOverlayTests/overlayLeavesTheShadowBeneathTranslucentPixels()' passed on 'My Mac - Compositor (31209)' (0.422 seconds)
+Test case 'ColorOverlayTests/overlayRecolorsTranslucentPixelsAndKeepsTheirAlpha()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'PSDAdjustmentTests/maskPatchSitsWhereItIsOnTheCanvas()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'PSDAdjustmentTests/hueSaturationReadsMasterAndEachRange()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'PSDAdjustmentTests/levelsGammaIsInHundredths()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'UpdateCheckTests/theTestHostKnowsItRunsTests()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ScanlinesTests/dotsBeadTheLinesBelowTheirLevel()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ScanlinesTests/displaceLiftsLinesWhereThePictureIsBright()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'ScanlinesTests/aLiftedLineHidesTheLinesBehindIt()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ScanlinesTests/glowLightsBetweenTheLines()' passed on 'My Mac - Compositor (31209)' (0.044 seconds)
+Test case 'ScanlinesTests/thresholdDarkensWhatsBelowIt()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ScanlinesTests/scanlinesAreLinesOfLightThatBloomWithBrightness()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ScanlinesTests/linesShowOnSolidWhiteAndBlack()' passed on 'My Mac - Compositor (31209)' (0.045 seconds)
+Test case 'CameraRawGeometrySafetyTests/horizonDoesNotDoubleWithAutoLevelGuides()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometrySafetyTests/expandUnsupportedOnDeepAsset()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ScanlinesTests/wobbleMovesLinesSideways()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometrySafetyTests/expandThenCropFootprintConsistent()' passed on 'My Mac - Compositor (31209)' (0.005 seconds)
+Test case 'CameraRawGeometrySafetyTests/miniatureImpulseKeepsCenterSharp()' passed on 'My Mac - Compositor (31209)' (0.012 seconds)
+Test case 'CameraRawGeometrySafetyTests/cropPlanOpaqueInscribed()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'CameraRawGeometrySafetyTests/perspectiveToolVerticalGuidesWarpPixels()' passed on 'My Mac - Compositor (31209)' (0.008 seconds)
+Test case 'CameraRawGeometrySafetyTests/horizonComposedBeforeExpandChangesFootprint()' passed on 'My Mac - Compositor (31209)' (0.012 seconds)
+Test case 'CameraRawGeometrySafetyTests/markerPointSurvivesExpandPlacement()' passed on 'My Mac - Compositor (31209)' (0.005 seconds)
+Test case 'CameraRawGeometrySafetyTests/hvRatioMatchesAspectPolish()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometrySafetyTests/cameraRawApplyRunsHorizonAndMiniature()' passed on 'My Mac - Compositor (31209)' (0.022 seconds)
+Test case 'CameraRawGeometrySafetyTests/croppedExpansionTransformMatchesCoverageNotUnion()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometrySafetyTests/deepExpandCommitKeepsSixteenBitPrecision()' passed on 'My Mac - Compositor (31209)' (0.074 seconds)
+Test case 'LensEffectsTests/ovalBokehIsTallerThanWide()' passed on 'My Mac - Compositor (31209)' (0.087 seconds)
+Test case 'LensEffectsTests/anamorphicThresholdDecidesWhichLightsFlare()' passed on 'My Mac - Compositor (31209)' (0.346 seconds)
+Test case 'LensEffectsTests/prismFringeSplitsTheCopysColorsOrKeepsThemCrisp()' passed on 'My Mac - Compositor (31209)' (0.299 seconds)
+Test case 'LensEffectsTests/bokehOpensTheLightIntoABrightDisc()' passed on 'My Mac - Compositor (31209)' (0.016 seconds)
+Test case 'LensEffectsTests/prismGhostsASharpCopy()' passed on 'My Mac - Compositor (31209)' (0.013 seconds)
+Test case 'LensEffectsTests/mistGlowsAroundTheLightWithoutBrighteningThePicture()' passed on 'My Mac - Compositor (31209)' (0.043 seconds)
+Test case 'LensEffectsTests/prismCopiesEchoFartherOut()' passed on 'My Mac - Compositor (31209)' (0.048 seconds)
+Test case 'LensEffectsTests/anamorphicFlareStreaksSidewaysInBlue()' passed on 'My Mac - Compositor (31209)' (0.017 seconds)
+Test case 'LensEffectsTests/noAmountIsNothingToDo()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'LensEffectsTests/anamorphicFlareKeepsTheLightsColorWithoutBlue()' passed on 'My Mac - Compositor (31209)' (0.057 seconds)
+Test case 'LensEffectsTests/starburstSpikesAlongItsAngle()' passed on 'My Mac - Compositor (31209)' (0.118 seconds)
+Test case 'LensEffectsTests/prismWithoutOffsetStillApplies()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'LensEffectsTests/prismBothWaysEchoesOnEachSide()' passed on 'My Mac - Compositor (31209)' (0.099 seconds)
+Test case 'ReduceNoiseTests/itKeepsEdges()' passed on 'My Mac - Compositor (31209)' (0.095 seconds)
+Test case 'ReduceNoiseTests/itSmoothsTheNoise()' passed on 'My Mac - Compositor (31209)' (0.243 seconds)
+Test case 'CMYKTests/layeredCMYKPhotoshopFilesOpen()' passed on 'My Mac - Compositor (31209)' (0.010 seconds)
+Test case 'ReduceNoiseTests/moreStrengthSmoothsMore()' passed on 'My Mac - Compositor (31209)' (0.238 seconds)
+Test case 'InnerGlowTests/innerGlowDefaultsAndValidation()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ProgressiveBlurTests/radialIsSharpInTheMiddleAndBlurredOutside()' passed on 'My Mac - Compositor (31209)' (0.012 seconds)
+Test case 'InnerGlowTests/innerGlowRendersInsideSourceWithoutBoundsExpansion()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CMYKTests/proofDullsWhatInkCantPrint()' passed on 'My Mac - Compositor (31209)' (0.113 seconds)
+Test case 'InnerGlowTests/innerGlowRendersAroundTextGlyphs()' passed on 'My Mac - Compositor (31209)' (0.008 seconds)
+Test case 'ProgressiveBlurTests/linearIsSharpAtTheStartAndBlurredAtTheEnd()' passed on 'My Mac - Compositor (31209)' (0.006 seconds)
+Test case 'InnerGlowTests/innerGlowCodableRoundTrip()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'InnerGlowTests/innerGlowCPUAndMetalParity()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'InnerGlowTests/layerEffectsIntegration()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ProgressiveBlurTests/fromAndToSetTheBlurAtEachEnd()' passed on 'My Mac - Compositor (31209)' (0.006 seconds)
+Test case 'VolumetricLightTests/renderSamples()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'VolumetricLightTests/theLightStartsInTheBiggestBrightArea()' passed on 'My Mac - Compositor (31209)' (0.027 seconds)
+Test case 'InnerGlowTests/innerGlowBackwardCompatibility()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'VolumetricLightTests/depthThinsTheHazeWhereThingsAreNear()' passed on 'My Mac - Compositor (31209)' (0.101 seconds)
+Test case 'VolumetricLightTests/keepSubjectClearHoldsTheSubjectNear()' passed on 'My Mac - Compositor (31209)' (0.093 seconds)
+Test case 'VolumetricLightTests/theLightStartsOnTheBrightestSpot()' passed on 'My Mac - Compositor (31209)' (0.030 seconds)
+Test case 'VolumetricLightTests/zeroIntensityAndHazeLeaveTheImage()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'VolumetricLightTests/onlyNarrowGapsAreTakenOut()' passed on 'My Mac - Compositor (31209)' (0.078 seconds)
+Test case 'VolumetricLightTests/depthContrastSpreadsBunchedDepths()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'VolumetricLightTests/timeHazeChanges()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometryBackendTests/keepOriginalSizeRemainsBackwardCompatible()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'CameraRawGeometryBackendTests/horizonZeroAmountIsIdentity()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometryBackendTests/expansionLayerTransformPreservesCenterMapping()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometryBackendTests/expandApplyResultReturnsLargerImageAndPlacement()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'CameraRawGeometryBackendTests/perspectiveToolsRectangleProducesFourGuides()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometryBackendTests/expandCoverageMatchesExpandedFrame()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometryBackendTests/hvRatioMapsToAspect()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometryBackendTests/horizonHomographyMatchesManualRotateCorners()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometryBackendTests/miniatureAppliesFiniteBlur()' passed on 'My Mac - Compositor (31209)' (0.004 seconds)
+Test case 'CameraRawGeometryBackendTests/backendApplyRunsPerspectiveAndMiniature()' passed on 'My Mac - Compositor (31209)' (0.005 seconds)
+Test case 'CameraRawGeometryBackendTests/backendSerializationDefaults()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometryBackendTests/horizonHorizontalReferenceLevels()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawGeometryBackendTests/miniatureZeroStrengthIsIdentity()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentIntegrationTests/bakeIsUndoable()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentIntegrationTests/realRawFixtureSmokePreview()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentIntegrationTests/duplicateLayerRetainsSourceOwnership()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentIntegrationTests/cancelRawDevelopmentEditDoesNotMutatePersistedState()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'RawDevelopmentIntegrationTests/rawSourceBytesSurviveRoundTripThroughSnapshot()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'RawDevelopmentIntegrationTests/legacyVersionsLoadWithoutRAWFields()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentIntegrationTests/bakeRawDevelopmentDiscardsEditableOwnership()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentIntegrationTests/exposureChangeDevelopsFromOriginalNotRendered()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentIntegrationTests/whiteBalanceChangeIsTracked()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentIntegrationTests/rawAndCorrectionStackAreDistinct()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentIntegrationTests/realRawFixtureEndToEnd()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDitherTests/ditherIsFineAndRepeatable()' passed on 'My Mac - Compositor (31209)' (0.029 seconds)
+Test case 'RawDitherTests/ditheredGradientFollowsTheTonesNotTheSteps()' passed on 'My Mac - Compositor (31209)' (0.046 seconds)
+Test case 'RawDevelopmentPersistenceTests/rawDevelopmentPersistentStateEncodeDecode()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentPersistenceTests/isAsShotDetectsUnchangedSettings()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentPersistenceTests/invalidSettingsAreRejected()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentPersistenceTests/settingsDefaultValuesAreValid()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentPersistenceTests/projectManifestCurrentIs25()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentPersistenceTests/settingsEncodeDecodeRoundTrip()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentPersistenceTests/sixteenBitPrecisionIsPreserved()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentPersistenceTests/rawSourceAssetEncodeDecodeRoundTrip()' passed on 'My Mac - Compositor (31209)' (0.001 seconds)
+Test case 'RawDevelopmentPersistenceTests/duplicateLayersShareSourceIDWithoutByteDuplication()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'RawDevelopmentPersistenceTests/asShotResetRestoresCameraDefaults()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/amountLeavesVolumeAspectScaleOffsetIndependent()' passed on 'My Mac - Compositor (31209)' (0.003 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/expandedFrameForRotatedRectangle()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/perspectiveAmountZeroIsIdentity()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/expandRejectsNonFiniteAndHugeBounds()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/expandedFrameIdentityPreservesSize()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/manualKeystoneRespectsAmount()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/autoAndGuidedModesAcceptAmount()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/blendIsInvariantToHomographyScale()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/constrainCropStaysIndependentOfFraming()' passed on 'My Mac - Compositor (31209)' (0.006 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/renderedZeroAmountLeavesPixelsUnchanged()' passed on 'My Mac - Compositor (31209)' (0.006 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/expandToFitProducesLargerFiniteImage()' passed on 'My Mac - Compositor (31209)' (0.005 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/decodingOmitsAmountAndFramingDefaultsToFullStrength()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/intermediateAmountsStayBetweenIdentityAndFull()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/degenerateHomographyBlendIsRejected()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'CameraRawPerspectiveIntensityFramingTests/perspectiveAmountHundredMatchesExistingPath()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'VolumetricLightTests/beamsLightTheRoomAndTheBarCastsAShaftOfShadow()' passed on 'My Mac - Compositor (31209)' (0.292 seconds)
+Test case 'CMYKTests/pdfExportsInInks()' passed on 'My Mac - Compositor (31209)' (0.561 seconds)
+Test case 'RimLightTests/theSubjectIsFoundOnceAndKept()' passed on 'My Mac - Compositor (31209)' (1.967 seconds)
+Test case 'CameraRawGPUPerformanceTests/pairedCPUAndGPUPreviewLatency()' passed on 'My Mac - Compositor (31209)' (1.972 seconds)
+Test case 'NativeResolutionPaintTests/cloneStampCopiesTheLayersOwnDetail()' passed on 'My Mac - Compositor (31209)' (1.973 seconds)
+Test case 'NativeResolutionPaintTests/blurKeepsTheLayersResolution()' passed on 'My Mac - Compositor (31209)' (1.973 seconds)
+Test case 'NativeResolutionPaintTests/erasingAScaledDownImageKeepsItsResolution()' passed on 'My Mac - Compositor (31209)' (1.974 seconds)
+Test case 'NativeResolutionPaintTests/paintingABlankLayerThatWasScaledDownPaintsAtDocumentResolution()' passed on 'My Mac - Compositor (31209)' (1.974 seconds)
+Test case 'CameraRawScopePerformanceTests/pairedScopeAndPreviewLatency()' passed on 'My Mac - Compositor (31209)' (1.973 seconds)
+Test case 'LevelsTests/identityAndChannelSelectionAreExactNoOps()' passed on 'My Mac - Compositor (31209)' (1.990 seconds)
+Test case 'LevelsTests/panelPreview()' passed on 'My Mac - Compositor (31209)' (1.990 seconds)
+Test case 'HueSaturationTests/targetedAdjustmentPicksTheRangeUnderTheCursor()' passed on 'My Mac - Compositor (31209)' (1.991 seconds)
+Test case 'HueSaturationTests/eyedroppersRecenterWidenAndNarrowTheBand()' passed on 'My Mac - Compositor (31209)' (1.991 seconds)
+Test case 'HueSaturationTests/defaultsAreAnExactNoOp()' passed on 'My Mac - Compositor (31209)' (1.991 seconds)
+Test case 'BrushRecoveryTests/paintingFarPastAScaledDownLayerPaintsItAtItsDisplayedSize()' passed on 'My Mac - Compositor (31209)' (1.990 seconds)
+Test case 'BrushRecoveryTests/aStrokeThatLeavesAScaledDownLayerPartwayIsPaintedWhole()' passed on 'My Mac - Compositor (31209)' (1.994 seconds)
+Test case 'ProjectTabLayoutTests/everythingFitsShowsAllTabsWithNoPill()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ProjectTabLayoutTests/unmeasuredWidthShowsEverythingRatherThanGuessing()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ProjectTabLayoutTests/aWiderSelectedTabStillFits()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ProjectTabLayoutTests/selectedTabInTheHiddenSetIsPinnedRightOfThePill()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ProjectTabLayoutTests/overflowLabelIsSingularForOneTab()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'ProjectTabLayoutTests/overflowHidesTheLeftmostTabsAndPillsThem()' passed on 'My Mac - Compositor (31209)' (0.000 seconds)
+Test case 'BrushRecoveryTests/aStrokeTheGPUFailsIsPaintedOnTheCPU()' passed on 'My Mac - Compositor (31209)' (1.995 seconds)
+Test case 'BrushRecoveryTests/paintingWithinAScaledDownLayerKeepsItsResolution()' passed on 'My Mac - Compositor (31209)' (1.995 seconds)
+Test case 'RimLightTests/chokeHoldsTheLightFurtherIn()' passed on 'My Mac - Compositor (31209)' (2.173 seconds)
+Test case 'InnerGlowTests/innerGlowPreservedInExport()' passed on 'My Mac - Compositor (31209)' (0.706 seconds)
+Test case 'CMYKTests/jpegAndTIFFExportInInks()' passed on 'My Mac - Compositor (31209)' (0.723 seconds)
+Test case 'RawDevelopmentGUITests/cameraRawNodeEditLoadsActualSettings()' passed on 'My Mac - Compositor (31209)' (2.276 seconds)
+Test case 'RawDevelopmentGUITests/cameraRawEditingTargetsCorrectNode()' passed on 'My Mac - Compositor (31209)' (2.279 seconds)
+Test case 'RawDevelopmentGUITests/cameraRawNodeEditAppliesToCorrectNode()' passed on 'My Mac - Compositor (31209)' (2.279 seconds)
+Test case 'ProjectWorkspaceTests/aLayerDraggedIntoANewTabSizesTheCanvasToIt()' passed on 'My Mac - Compositor (31209)' (1.854 seconds)
+Test case 'ProjectWorkspaceTests/quittingCancelsAnOpenDialog()' passed on 'My Mac - Compositor (31209)' (1.855 seconds)
+Test case 'ProjectWorkspaceTests/quitAsksAboutTheActiveTabFirst()' passed on 'My Mac - Compositor (31209)' (1.856 seconds)
+Test case 'ProjectWorkspaceTests/crossProjectCopyRemapsIdentityAndHasIndependentUndo()' passed on 'My Mac - Compositor (31209)' (1.865 seconds)
+Test case 'ImageImportTests/folderWithoutImagesSaysSo()' passed on 'My Mac - Compositor (31209)' (1.870 seconds)
+Test case 'ProjectWorkspaceTests/untitledNumbersStayLowAndTheBlankTabStays()' passed on 'My Mac - Compositor (31209)' (1.886 seconds)
+Test case 'AdjustmentPerformanceTests/adjustmentLayerPanTimes()' passed on 'My Mac - Compositor (31209)' (2.152 seconds)
+Test case 'RimLightTests/glowLightsTheAirBesideTheLitEdgeAndLeavesTheSubject()' passed on 'My Mac - Compositor (31209)' (2.963 seconds)
+Test case 'RimLightTests/aLightFromTheLeftCatchesTheLeftEdgeOnly()' passed on 'My Mac - Compositor (31209)' (3.034 seconds)
+Test case 'RimLightTests/glowWrapsALittleWayInAcrossTheLitEdge()' passed on 'My Mac - Compositor (31209)' (3.048 seconds)
+Test case 'RimLightTests/eachLightWrapsAsFarAsItsOwnWidth()' passed on 'My Mac - Compositor (31209)' (3.126 seconds)
+Test case 'BrushIntersectionTests/exportCrossingExample()' passed on 'My Mac - Compositor (31209)' (202.801 seconds)
+Test case 'GradientTests/cancelUndoAndClicksLeaveDocumentUntouched()' passed on 'My Mac - Compositor (31209)' (202.844 seconds)
+Test case 'GIFPreviewPlaybackTests/pausedTimelineDoesNotDecodeFrames()' passed on 'My Mac - Compositor (31209)' (202.693 seconds)
+Test case 'GIFPreviewPlaybackTests/emptySingleFrameAndInvalidTimingDoNotStartPlayback()' passed on 'My Mac - Compositor (31209)' (202.696 seconds)
+Test case 'BrushTests/softBrushProducesPartialAlphaAndCancelPreservesDocument()' passed on 'My Mac - Compositor (31209)' (202.391 seconds)
+Test case 'GPUCanvasTests/softEdgedLayersBlendTheSame(mode:)' passed on 'My Mac - Compositor (31209)' (202.719 seconds)
+Test case 'GPUCanvasTests/softEdgedLayersBlendTheSame(mode:)' passed on 'My Mac - Compositor (31209)' (203.241 seconds)
+Test case 'GPUCanvasTests/softEdgedLayersBlendTheSame(mode:)' passed on 'My Mac - Compositor (31209)' (203.763 seconds)
+Test case 'GPUCanvasTests/softEdgedLayersBlendTheSame(mode:)' passed on 'My Mac - Compositor (31209)' (204.296 seconds)
+Test case 'DeepLayerTests/theScreenIsDitheredNotRounded()' passed on 'My Mac - Compositor (31209)' (204.701 seconds)
+Test case 'DeepLayerTests/gpuAdjustmentsKeepHighlights()' passed on 'My Mac - Compositor (31209)' (204.718 seconds)
+Test case 'CanvasRotationTests/clockwiseTurnsThePixelsExactly()' passed on 'My Mac - Compositor (31209)' (206.553 seconds)
+Test case 'CanvasRotationTests/counterclockwiseTurnsThePixelsExactly()' passed on 'My Mac - Compositor (31209)' (206.553 seconds)
+Test case 'SelectionFeatherTests/featherSoftensTheSelectionAndWhatItClips()' passed on 'My Mac - Compositor (31209)' (206.555 seconds)
+Test case 'BrushPerformanceTests/fourKInteractiveStroke()' passed on 'My Mac - Compositor (31209)' (204.562 seconds)
+Test case 'HistoryTests/historyBoundsEntriesAndUniqueRetainedPixels()' passed on 'My Mac - Compositor (31209)' (206.141 seconds)
+Test case 'SelectionEditTests/brushPaintsOnlyInsideTheSelection()' passed on 'My Mac - Compositor (31209)' (206.567 seconds)
+Test case 'SelectionEditTests/maskFromSelectionLinesUpOnScaledLayers()' passed on 'My Mac - Compositor (31209)' (206.567 seconds)
+Test case 'SelectionEditTests/emptySelectionEditsNothing()' passed on 'My Mac - Compositor (31209)' (206.567 seconds)
+Test case 'SpotHealingTests/healsTheBlemishUnderTheBrushAndNothingElse(mode:)' passed on 'My Mac - Compositor (31209)' (206.567 seconds)
+Test case 'AdjustmentLayerTests/curvesIdentityAndImageCommandPreserveAlpha()' passed on 'My Mac - Compositor (31209)' (206.572 seconds)
+Test case 'SpotHealingTests/healsTheBlemishUnderTheBrushAndNothingElse(mode:)' passed on 'My Mac - Compositor (31209)' (206.569 seconds)
+Test case 'SpotHealingTests/healsTheBlemishUnderTheBrushAndNothingElse(mode:)' passed on 'My Mac - Compositor (31209)' (206.570 seconds)
+Test case 'CameraRawTests/hiddenGroupStaysOutOfTheNextOpen()' passed on 'My Mac - Compositor (31209)' (206.207 seconds)
+Test case 'ImageAdjustmentTests/resettingAColoredFilterSliderRestoresTheDefault()' passed on 'My Mac - Compositor (31209)' (206.207 seconds)
+Test case 'ImageAdjustmentTests/imageMenuExposureChangesTheLayerInOneStep()' passed on 'My Mac - Compositor (31209)' (206.208 seconds)
+Test case 'CameraRawTests/hiddenGroupIsLeftOutAndOkIsOneUndoOrNone()' passed on 'My Mac - Compositor (31209)' (206.208 seconds)
+Test case 'TitleBarDragTests/emptySpaceBesideOneTabIsOutsideTheDragArea()' passed on 'My Mac - Compositor (31209)' (206.723 seconds)
+Test case 'ProjectWorkspaceTests/quittingAppliesAPendingGradient()' passed on 'My Mac - Compositor (31209)' (206.296 seconds)
+Test case 'ProjectWorkspaceTests/layerDropProviderCopiesIntoANewProject()' passed on 'My Mac - Compositor (31209)' (206.296 seconds)
+Test case 'SmartEditTests/visionRequestRunsOnAnImage()' passed on 'My Mac - Compositor (31209)' (206.298 seconds)
+Test case 'ImageImportTests/sixteenBitImagesAreDitheredNotBanded()' passed on 'My Mac - Compositor (31209)' (206.301 seconds)
+Test case 'ImageImportTests/ditheredSixteenBitKeepsColorWithinAlpha()' passed on 'My Mac - Compositor (31209)' (206.311 seconds)
+Test case 'ImageImportTests/supportedFormats(type:)' passed on 'My Mac - Compositor (31209)' (206.311 seconds)
+Test case 'ImageImportTests/orientationAndColorConversion()' passed on 'My Mac - Compositor (31209)' (206.311 seconds)
+Test case 'ImageImportTests/supportedFormats(type:)' passed on 'My Mac - Compositor (31209)' (206.311 seconds)
+Test case 'ImageImportTests/pngPreservesTransparency()' passed on 'My Mac - Compositor (31209)' (206.311 seconds)
+Test case 'ImageImportTests/supportedFormats(type:)' passed on 'My Mac - Compositor (31209)' (206.311 seconds)
+Test case 'ImageImportTests/supportedFormats(type:)' passed on 'My Mac - Compositor (31209)' (206.312 seconds)
+Test case 'DistortTests/distortedLayerIsTrimmedToItsVisiblePixels()' passed on 'My Mac - Compositor (31209)' (206.312 seconds)
+Test case 'DistortTests/distortingWarpsTheLayerIntoTheShapeAsOneUndoStep()' passed on 'My Mac - Compositor (31209)' (206.312 seconds)
+Test case 'ShapeToolTests/dashedLinesBreakWhereThePatternSays()' passed on 'My Mac - Compositor (31209)' (206.313 seconds)
+Test case 'ShapeToolTests/ellipseLeavesItsCornersClearWithShiftCircleAndOptionFromCenter()' passed on 'My Mac - Compositor (31209)' (206.270 seconds)
+Test case 'ShapeToolTests/aScaledLineStretchesInsteadOfKeepingItsWidth()' passed on 'My Mac - Compositor (31209)' (206.270 seconds)
+Test case 'ShapeToolTests/roundedRectanglesFollowTheRadiusAndClampToAPill()' passed on 'My Mac - Compositor (31209)' (206.270 seconds)
+Test case 'ShapeToolTests/squareCapsReachTheirCorners()' passed on 'My Mac - Compositor (31209)' (206.272 seconds)
+Test case 'ShapeToolTests/thinLinesStayOnThePixelGrid(cap:)' passed on 'My Mac - Compositor (31209)' (206.272 seconds)
+Test case 'ShapeToolTests/thinLinesStayOnThePixelGrid(cap:)' passed on 'My Mac - Compositor (31209)' (206.272 seconds)
+Test case 'ShapeToolTests/rectangleFillsANewLayerWithTheForegroundColorAsOneUndoStep()' passed on 'My Mac - Compositor (31209)' (206.272 seconds)
+Test case 'OuterGlowTests/outerGlowPreservedInExport()' passed on 'My Mac - Compositor (31209)' (205.400 seconds)
+Test case 'BrushTests/brushStaysCircularOnNonuniformRotatedFlippedLayer()' passed on 'My Mac - Compositor (31209)' (205.401 seconds)
+Test case 'BrushTests/sparseMouseSamplesFollowACurveInsteadOfStraightChords()' passed on 'My Mac - Compositor (31209)' (205.308 seconds)
+Test case 'BrushTests/maskedImagePaintingUsesCoverageAndOpacityOnlyOnce()' passed on 'My Mac - Compositor (31209)' (205.316 seconds)
+Test case 'BrushTests/continuousStrokeCrossesTilesAndCommitsOneUndo()' passed on 'My Mac - Compositor (31209)' (205.299 seconds)
+Test case 'BrushTests/liveStrokeReachesNewestSampleAndTailIsReplacedExactly()' passed on 'My Mac - Compositor (31209)' (205.295 seconds)
+Test case 'BrushTests/opacityAppliesToMaskPainting()' passed on 'My Mac - Compositor (31209)' (205.292 seconds)
+Test case 'ProgressiveBlurTests/theLineStartsOnTheLayerAndMoves()' passed on 'My Mac - Compositor (31209)' (205.300 seconds)
+Test case 'BrushTests/opacityCapsTheWholeStrokeEvenWhereItOverlapsItself()' passed on 'My Mac - Compositor (31209)' (205.299 seconds)
+Test case 'GPUCanvasTests/softLightMatchesPhotoshop()' passed on 'My Mac - Compositor (31209)' (205.054 seconds)
+Test case 'GPUCanvasTests/clippingStacksBlendInTheirBasesMode(mode:)' passed on 'My Mac - Compositor (31209)' (205.530 seconds)
+Test case 'GPUCanvasTests/clippingStacksBlendInTheirBasesMode(mode:)' passed on 'My Mac - Compositor (31209)' (206.010 seconds)
+Test case 'GPUCanvasTests/clippingStacksBlendInTheirBasesMode(mode:)' passed on 'My Mac - Compositor (31209)' (206.487 seconds)
+Test case 'CompositorTests/imageSizeKeepsTheZoom()' passed on 'My Mac - Compositor (31209)' (206.482 seconds)
+Test case 'CompositorTests/canvasSizeKeepsTheZoom()' passed on 'My Mac - Compositor (31209)' (206.481 seconds)
+Test case 'ExportTests/pdfIsOnePageAtThePrintedSizeWithLosslessPixels()' passed on 'My Mac - Compositor (31209)' (206.471 seconds)
+Test case 'RawDevelopmentIntegrationTests/rawReloadWorksWithoutExternalFile()' passed on 'My Mac - Compositor (31209)' (206.486 seconds)
+Test case 'TypeToolTests/clippingToTextExportsColoredGlyphsOnTransparency()' passed on 'My Mac - Compositor (31209)' (206.493 seconds)
+Test case 'DeepLayerTests/blankLayersConvertToSixteenBitsForSmoothGradients()' passed on 'My Mac - Compositor (31209)' (206.490 seconds)
+Test case 'FilterTests/gaussianBlurCanPreserveTransparency()' passed on 'My Mac - Compositor (31209)' (206.416 seconds)
+Test case 'FilterTests/blurSpreadsOnlyWhereTheLayerIsInsideTheCanvas()' passed on 'My Mac - Compositor (31209)' (206.416 seconds)
+Test case 'FilterTests/gaussianBlurSoftensAHardEdgeAndSpreadsPastTheLayerEdgeAsOneUndoStep()' passed on 'My Mac - Compositor (31209)' (206.412 seconds)
+Test case 'FilterTests/preservedBlurStaysInsideTheSelection()' passed on 'My Mac - Compositor (31209)' (206.417 seconds)
+Test case 'PenPressureTests/pressureSetsTheSizeWhenAsked()' passed on 'My Mac - Compositor (31209)' (206.392 seconds)
+Test case 'PenPressureTests/theReleaseKeepsTheLastPressure()' passed on 'My Mac - Compositor (31209)' (206.402 seconds)
+Test case 'LayerEffectsSurviveTests/invertKeepsEffects()' passed on 'My Mac - Compositor (31209)' (206.403 seconds)
+Test case 'LayerEffectsSurviveTests/cropKeepsEffectsTextAndShapes()' passed on 'My Mac - Compositor (31209)' (206.435 seconds)
+Test case 'LayerEffectsSurviveTests/transformingASelectionKeepsEffects()' passed on 'My Mac - Compositor (31209)' (206.518 seconds)
+Test case 'LayerEffectsSurviveTests/canvasSizeKeepsEffectsTextAndShapes()' passed on 'My Mac - Compositor (31209)' (206.518 seconds)
+Test case 'LayerEffectsSurviveTests/levelsKeepsEffects()' passed on 'My Mac - Compositor (31209)' (206.518 seconds)
+Test case 'LayerEffectsSurviveTests/resolutionOnlyImageSizeKeepsEffectsTextAndShapes()' passed on 'My Mac - Compositor (31209)' (206.518 seconds)
+Test case 'LayerEffectsSurviveTests/imageSizeKeepsEffectsScaledWithTheImage()' passed on 'My Mac - Compositor (31209)' (206.518 seconds)
+Test case 'LiveMaskTests/movingSourceChangesCoverageAndChainsMultiply()' passed on 'My Mac - Compositor (31209)' (208.396 seconds)
+Test case 'AdjustmentLayerTests/adjustmentBlendAndSoftMaskPreserveCoverage()' passed on 'My Mac - Compositor (31209)' (208.396 seconds)
+Test case 'AdjustmentLayerTests/clippedCurveChangesOnlyItsBaseAndCopyMergedMatchesExport()' passed on 'My Mac - Compositor (31209)' (208.856 seconds)
+Test case 'SelectionEditTests/gradientStaysInsideTheSelection()' passed on 'My Mac - Compositor (31209)' (211.519 seconds)
+Test case 'SelectionEditTests/clipFollowsScaledLayersAndSoftensEdges()' passed on 'My Mac - Compositor (31209)' (211.521 seconds)
+Test case 'ChannelPackTests/blackWhiteAndHiddenLayersAtAnotherSize()' passed on 'My Mac - Compositor (31209)' (209.526 seconds)
+Test case 'ChannelPackTests/splitChannelsMakesLayersChannelPackPacksBack()' passed on 'My Mac - Compositor (31209)' (209.526 seconds)
+Test case 'ChannelPackTests/layersNamedForChannelsPackIntoThemAndKeepColorUnderTransparency()' passed on 'My Mac - Compositor (31209)' (209.526 seconds)
+Test case 'SpotHealingTests/contentAwareCarriesACurvedEdgeThroughTheSpot()' passed on 'My Mac - Compositor (31209)' (310.677 seconds)
+Test case 'CameraRawTests/autoWhiteBalanceNeutralizesAfterTheScan()' passed on 'My Mac - Compositor (31209)' (310.251 seconds)
+Test case 'ImageAdjustmentTests/newAdjustmentLayersStartFromThePaletteRenderAndEditInThePanel()' passed on 'My Mac - Compositor (31209)' (310.289 seconds)
+Test case 'ImageImportTests/limitsAndInvalidFiles()' passed on 'My Mac - Compositor (31209)' (310.334 seconds)
+Test case 'GradientTests/redraggingReplacesPendingLineWithoutAccumulating()' passed on 'My Mac - Compositor (31209)' (328.360 seconds)
+Test case 'GradientTests/foregroundToBackgroundFillsCanvasAndCommitsOneUndo()' passed on 'My Mac - Compositor (31209)' (328.359 seconds)
+Test case 'GradientTests/radialSpreadsFromStartToRimInEveryDirection()' passed on 'My Mac - Compositor (31209)' (328.325 seconds)
+Test case 'GradientTests/reverseOpacityAndDirectionFollowSettings()' passed on 'My Mac - Compositor (31209)' (328.325 seconds)
+Test case 'GIFPreviewPlaybackTests/slowDecodingSkipsExpiredIntervalsAndOnceEndsOnTheLastFrame(delay:)' passed on 'My Mac - Compositor (31209)' (331.007 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.440 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.440 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.440 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.441 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.441 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.442 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.442 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.443 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.444 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.445 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.446 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.446 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.445 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.446 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.455 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (342.456 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (343.013 seconds)
+Test case 'AdjustmentEditorTests/sharedEditorsKeepPixelsDynamicAndSupportCancel(_:)' passed on 'My Mac - Compositor (31209)' (343.016 seconds)
+Test case 'BrushTests/paintedBoundsTrimTilePaddingAndKeepSoftEdges()' passed on 'My Mac - Compositor (31209)' (343.020 seconds)
+Test case 'MagicWandTests/clickingInsideASelectionMakesANewWandSelectionRatherThanDeselecting()' passed on 'My Mac - Compositor (31209)' (357.199 seconds)
+Test case 'CommandPaletteTests/realMenuBarRunsItsCommands()' passed on 'My Mac - Compositor (31209)' (358.690 seconds)
+Test case 'GuideTests/canvasAndImageSizeMoveGuides()' passed on 'My Mac - Compositor (31209)' (465.834 seconds)
+Test case 'ExportTests/orderVisibilityClippingAndAtomicOverwrite()' passed on 'My Mac - Compositor (31209)' (471.237 seconds)
+Test case 'RawDevelopmentIntegrationTests/missingRAWRawDataIsRejected()' passed on 'My Mac - Compositor (31209)' (471.278 seconds)
+Test case 'TypeToolTests/selectedFontSurvivesReopening()' passed on 'My Mac - Compositor (31209)' (471.452 seconds)
+Test case 'TypeToolTests/saveReopenAndRasterize()' passed on 'My Mac - Compositor (31209)' (471.567 seconds)
+Test case 'ImageTrimTests/sessionTrimIntegrationAndUndo()' passed on 'My Mac - Compositor (31209)' (472.089 seconds)
+Test case 'FilterTests/blurKeepsAPictureFillingTheCanvasSolidAtItsEdges()' passed on 'My Mac - Compositor (31209)' (472.058 seconds)
+Test case 'FilterLayerTests/theCanvasDrawsTheLaterKindsOnTheGPU()' passed on 'My Mac - Compositor (31209)' (473.913 seconds)
+Test case 'PenPressureTests/pressureSetsTheOpacityAndTheStrokeNeverPassesItsFirmestPress()' passed on 'My Mac - Compositor (31209)' (472.040 seconds)
+Test case 'FilterLayerTests/theCanvasDrawsThemOnTheGPU()' passed on 'My Mac - Compositor (31209)' (473.913 seconds)
+Test case 'FilterLayerTests/dispersionInCoreImageFollowsItsCoordinates()' passed on 'My Mac - Compositor (31209)' (473.913 seconds)
+Test case 'CursorTests/emptyCanvasLeavesTheScrubberCursorAloneAndRestoresTrackingForADocument()' passed on 'My Mac - Compositor (31209)' (473.913 seconds)
+Test case 'LayerEffectsSurviveTests/trimKeepsEffectsTextAndShapes()' passed on 'My Mac - Compositor (31209)' (472.063 seconds)
+Test case 'GIFLayerTests/oneDelayForEveryFrameOrTheGIFsOwn()' passed on 'My Mac - Compositor (31209)' (473.507 seconds)
+Test case 'LiveMaskTests/clippingColorPreservesSoftBaseAlphaWithoutBlackFringe()' passed on 'My Mac - Compositor (31209)' (473.938 seconds)
+Test case 'JPEGExportTests/transparencyUsesChosenMatteAndProducesOpaqueSRGB()' passed on 'My Mac - Compositor (31209)' (473.938 seconds)
+Test case 'LiveMaskTests/hiddenBlackSourceSuppliesAlphaAndRasterMasksMultiply()' passed on 'My Mac - Compositor (31209)' (473.938 seconds)
+Test case 'NewCanvasUnitTests/unitsRoundTripAndCycle()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'NewCanvasUnitTests/backgroundFillsTheFirstLayer()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'JPEGExportTests/qualityChangesBytesAndDecodedPixels()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'FilterLayerTests/vignetteAndTonalContrastMatchOnTheGPU()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'LiveMaskTests/menuClipsAndReleasesEverySelectedLayer()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'FilterLayerTests/lensEffectsLayerSizesByTheDocument()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'LiveMaskTests/optionClickCreatesSharedStackAndDragOutReleases()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'RasterSnapshotTests/mouseUpAndNextStrokeNeverFlattenTheDocument()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'CommandPaletteTests/rankingPutsTheBestAndEnabledFirst()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'AdjustmentLayerTests/hueOpacityAndMaskPreserveOriginalPixels()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'RasterSnapshotTests/softwareFallbackKeepsTheSoftStrokeContinuous()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'NewCanvasUnitTests/newProjectKeepsItsResolution()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'CommandPaletteTests/typedWordsStartingWords()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'RasterSnapshotTests/eightHundredPixelSoftStrokeHasNoPeriodicRidges()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'CommandPaletteTests/wholeWordsBeatScatteredLetters()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'CommandPaletteTests/lettersInOrderMatchAndWordStartsCount()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'NewCanvasUnitTests/printSizesBecomePixelsAtTheDPI()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'KeyboardShortcutTests/aClearedShortcutHasNoKey()' passed on 'My Mac - Compositor (31209)' (473.940 seconds)
+Test case 'RasterSnapshotTests/maskMouseUpIsImmediateAndPreservesTheImage()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'NativeResolutionPaintTests/erasingWithoutMetalKeepsItsResolution(rotated:)' passed on 'My Mac - Compositor (31209)' (473.939 seconds)
+Test case 'NativeResolutionPaintTests/erasingWithoutMetalKeepsItsResolution(rotated:)' passed on 'My Mac - Compositor (31209)' (473.940 seconds)
+Test case 'NativeResolutionPaintTests/layersPanelSaysHowFarALayerIsScaled()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'KeyboardShortcutTests/savedShortcutsForCommandsThatNoLongerExistAreIgnored()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'KeyboardShortcutTests/aRefusedSavedShortcutDropsAlone()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'CanvasRotationTests/guidesAndSelectionTurnWithTheCanvas()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'KeyboardShortcutTests/aClearedCanvasKeyDoesNothing()' passed on 'My Mac - Compositor (31209)' (473.941 seconds)
+Test case 'KeyboardShortcutTests/aKeyWithNoCharactersPassesThrough()' passed on 'My Mac - Compositor (31209)' (473.939 seconds)
+Test case 'GIFLayerTests/aGIFImportsAsOneTaggedLayerWithItsFramesAndTiming()' passed on 'My Mac - Compositor (31209)' (473.516 seconds)
+Test case 'SelectionEditTests/maskButtonAddsWhiteMaskOrRevealsTheSelection()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'NativeResolutionPaintTests/canvasShowsTheErasedEdgeSmoothlyAfterScalingBackUp()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'KeyboardShortcutTests/cmykItemsStartWithoutAKeyAndTakeOne()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'KeyboardShortcutTests/deleteKeyMenuShortcutsFindTheirEntries()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'KeyboardShortcutTests/nonLatinLayoutsReachTheShortcutsOnTheSameKeys()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'SelectionEditTests/deletingWithTheMaskTargetedRemovesOnlyTheMask()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'LevelsTests/channelsCoexistAndUseDocumentedOrder()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/previewCommitCancelAndUndoPreserveSources()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'LevelsTests/histogramExcludesTransparencyAndWeightsSelection()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'LevelsTests/inputClippingGammaOutputInversionAndAlpha()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/documentMappingAndRotatedHitTesting()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'LevelsTests/eyedropperSamplesOriginalAndRejectsTransparentPixels()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/noOpInvalidValuesAndSwitchingTools()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'LevelsTests/autoAlgorithmsAndEyedropperCalibration()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/autoSelectCanBeDisabledAndCommandClickOverridesIt()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/moveRotateAndShiftConstraints()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/duplicateTransformPreservesOriginalAndSupportsUndoAndCancel()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/hoverRegionsMatchRotatedEdgesCornersAndRotationHandle()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/scalePercentSetsBothSidesAboutTheCenter()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/blankLayersHaveNoTransformHandlesOrEditing()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/autoSelectPicksForegroundLayerStackedOnSelectedBackground()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'LevelsTests/histogramDisplayKeepsDistributionVisibleBesideClippingSpikes()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'HueSaturationTests/positiveSaturationMatchesPhotoshop()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/layerListToolKeysAndTransformNudge()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/renderingRotatesScalesAndFlipsWithoutReplacingPixels()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'HueSaturationTests/bandWeightsRampThroughFalloffAndWrapAround()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'CanvasThumbnailTests/layerPixelsSitWhereTheyAreOnTheCanvas()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'TransformTests/rotatedResizeKeepsOppositeAnchorAtEveryHandle()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'MetalWarpTests/liquifyStaysSharp()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'CanvasThumbnailTests/masksFillTheCanvasWithTheirEdgeTone()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'HueSaturationTests/slidersEditTheSelectedRangeAndTheAfterBarFollowsHueShifts()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'HueSaturationTests/samplingNeedsAColorRangeAndAColorfulPixel()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'MetalWarpTests/smudgeLeavesOneFadingTrail(gpu:)' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'FinishingFilterTests/tonalContrastIncreasesMidtoneDetailWithoutChangingAlpha()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'MetalWarpTests/smudgeLeavesOneFadingTrail(gpu:)' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'FinishingFilterTests/bloomSpreadsLightFromBrightPixels()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'CanvasThumbnailTests/thumbnailsTakeTheCanvasShape()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'DownsampleTests/fineStripesAverageToFlatGrayWithoutShimmer()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'MetalWarpTests/matchesTheCPU(mode:)' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'DownsampleTests/translucentEdgesStayValidAndMasksStayGray()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'FinishingFilterTests/vignetteDarkensCornersWhileKeepingCenterAndAlpha()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'SelectionEditTests/hidingMasksUseTheSelection()' passed on 'My Mac - Compositor (31209)' (473.943 seconds)
+Test case 'FinishingFilterTests/vignetteBlendsSelectedColorOnlyAtEdges()' passed on 'My Mac - Compositor (31209)' (473.942 seconds)
+Test case 'HistoryTests/undoStopsAtWhatStartedTheDocument()' passed on 'My Mac - Compositor (31209)' (473.517 seconds)
+Test case 'ProjectTests/layerEffectsAreRenderedInExport()' passed on 'My Mac - Compositor (31209)' (471.947 seconds)
+Test case 'MeshWarpPerformanceTests/warmMediansAtThreeResolutions()' passed on 'My Mac - Compositor (31209)' (474.098 seconds)
+Test case 'DownsampleTests/aHardEdgeStaysSharpShrunkEightTimes()' passed on 'My Mac - Compositor (31209)' (474.098 seconds)
+Test case 'TiledLayerTests/maskStrokesDrawLikeOneMask(scale:rotation:)' passed on 'My Mac - Compositor (31209)' (474.098 seconds)
+Test case 'SelectionFeatherTests/featherAddsUpEachTimeItIsApplied()' passed on 'My Mac - Compositor (31209)' (474.098 seconds)
+Test case 'TiledLayerTests/translucentStrokesDrawLikeOneImage(scale:rotation:)' passed on 'My Mac - Compositor (31209)' (474.097 seconds)
+Test case 'DownsampleTests/halvingsAreReusedAndOnlyUsedForLargeReductions()' passed on 'My Mac - Compositor (31209)' (474.097 seconds)
+Test case 'TiledLayerTests/translucentStrokesDrawLikeOneImage(scale:rotation:)' passed on 'My Mac - Compositor (31209)' (474.097 seconds)
+Test case 'TiledLayerTests/paintingAtTheLayersEdgeDoesNotChangeIt(zoom:)' passed on 'My Mac - Compositor (31209)' (474.097 seconds)
+Test case 'TiledLayerTests/tiledLayersDrawLikeOneImage(scale:rotation:)' passed on 'My Mac - Compositor (31209)' (474.097 seconds)
+Test case 'TiledLayerTests/maskStrokesDrawLikeOneMask(scale:rotation:)' passed on 'My Mac - Compositor (31209)' (474.098 seconds)
+Test case 'TiledLayerTests/paintingAScaledDownLayerDoesNotShiftItsPixels()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'SelectionFeatherTests/theStatusBarsFeatherFollowsTheSelection()' passed on 'My Mac - Compositor (31209)' (474.097 seconds)
+Test case 'TiledLayerTests/maskStrokesDrawLikeOneMask(scale:rotation:)' passed on 'My Mac - Compositor (31209)' (474.098 seconds)
+Test case 'TiledLayerTests/paintingAtTheLayersEdgeDoesNotChangeIt(zoom:)' passed on 'My Mac - Compositor (31209)' (474.098 seconds)
+Test case 'CameraRawUprightTests/nonSquareFrameStillClassifiesInPixels()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'TiledLayerTests/paintingAScaledDownLayersMaskDoesNotShiftItsPixels()' passed on 'My Mac - Compositor (31209)' (474.097 seconds)
+Test case 'CameraRawUprightTests/autoDetectionPerformanceBaseline()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'LayerExportTests/layerNamesBecomeFileNames()' passed on 'My Mac - Compositor (31209)' (474.097 seconds)
+Test case 'TiledLayerTests/tiledLayersDrawLikeOneImage(scale:rotation:)' passed on 'My Mac - Compositor (31209)' (474.097 seconds)
+Test case 'CameraRawUprightTests/autoFullKeepsAStrongRectangleAndFallsBackWhenItDoesNotPay()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'TiledLayerTests/tiledLayersDrawLikeOneImage(scale:rotation:)' passed on 'My Mac - Compositor (31209)' (474.097 seconds)
+Test case 'CameraRawUprightTests/autoFullUsesBothFamiliesAndFallsBack()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'CameraRawUprightTests/staleDetectionIsNotApplied()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'ColorPickerTests/hsbRoundTripsEightBitColors()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'CameraRawUprightTests/nearlyParallelLinesStayARoll()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'ColorPickerTests/pickerReopensWhereItWasLastLeft()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'CameraRawUprightTests/windowWallAutoFullPrefersTheVerticalCorrection()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'MaskAloneBadgeHitTests/clicksOnTheBadgeReachItNotTheCanvas()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'CameraRawUprightTests/vanishingFitIgnoresOutliersAndReversedEnds()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'CameraRawUprightTests/autoVerticalStraightensConvergingWalls()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'CameraRawUprightTests/noiseAndDiagonalsDoNotInventAWarp()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'HistoryTests/navigationNoOpsAndSaveRevisionPreserveHistory()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'ColorPickerTests/canvasSamplingReadsCompositeAndCommitsOnlyOnOK()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'ColorPickerTests/graysAndBlackKeepPreviousHueAndSaturation()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'CameraRawTests/distortionRunsBeforePerspectiveWithoutDoubleApplying()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'HistoryTests/replacementCanvasAndNestedTransactionsUndoAsOne()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'CameraRawUprightTests/autoLevelRollsWithoutKeystone()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'ColorPickerTests/hexParsesFullShorthandAndRejectsInvalid()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'HistoryTests/historyBlockedDuringImportsAndDialogs()' passed on 'My Mac - Compositor (31209)' (473.675 seconds)
+Test case 'CameraRawTests/colorNoiseReductionRemovesColorGrainNotBrightness()' passed on 'My Mac - Compositor (31209)' (473.679 seconds)
+Test case 'CameraRawTests/autoUprightOnABlankPictureDoesNotInventGuides()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'HistoryTests/everyLayerEditRoundTripsWithSelection()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/vignetteDarkensCornersAndHighlightsOnlyWhileDarkening()' passed on 'My Mac - Compositor (31209)' (473.679 seconds)
+Test case 'CameraRawTests/curveDeepensColorLikePhotoshop()' passed on 'My Mac - Compositor (31209)' (473.679 seconds)
+Test case 'CameraRawTests/guidedUprightFollowsADrawnLineAndLeavesAnUnguidedPicture()' passed on 'My Mac - Compositor (31209)' (473.679 seconds)
+Test case 'CameraRawTests/constrainCropDropsTransparentCorners()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/shadowsAdaptsToThePictureAsPhotoshopDoes()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/histogramFollowsTheGradeAndClippingPaintStaysOffTheResult()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/curveMixerAndGradingChangeOnlyTheirOwnTones()' passed on 'My Mac - Compositor (31209)' (473.679 seconds)
+Test case 'CameraRawTests/parametricCurveIsSmooth()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/eyedropperAndAutoNeutralizeAWarmPixel()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/colorNoiseReductionIgnoresWhatClearPixelsHeld()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/defaultsLeavePixelsAndAlphaAlone()' passed on 'My Mac - Compositor (31209)' (473.679 seconds)
+Test case 'CameraRawTests/volumeDeformIdentityAndNonIdentity()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/shadowsAndHighlightsKeepTonesInOrder()' passed on 'My Mac - Compositor (31209)' (473.679 seconds)
+Test case 'CameraRawTests/tonalSlidersMoveTheEndTheyName()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/opticsDistortionDefringeAndDetailEye()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/textureAndClaritySharpenAnEdgeAndLeaveAFlatField()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/distortionIsNotAppliedTwiceAndStaysLateWithoutGeometry()' passed on 'My Mac - Compositor (31209)' (473.679 seconds)
+Test case 'CameraRawTests/dehazeDeepensOrLiftsAndKeepsAlpha()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/exposureAndContrastMatchPhotoshop()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/geometryPerformanceBaseline()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/mixerCalibrationCurveAndVignettesMatchPhotoshop()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/whiteBalanceAndVibranceMatchPhotoshop()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/vibranceFavorsDullColorsAndProtectsSkinWhileSaturationDoesNot()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'FinishingFilterTests/eachFilterCommitsAsOneUndoStepAndKeepsLayerEffects()' passed on 'My Mac - Compositor (31209)' (474.103 seconds)
+Test case 'CameraRawTests/computeAnamorphosisAndVolumeModes()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/geometryWarpAndCalibrationPrimaries()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'ProjectTests/openedLayersAreInThePaintingLayout()' passed on 'My Mac - Compositor (31209)' (472.109 seconds)
+Test case 'CameraRawTests/grainIsStableAndTheEffectsEyeDropsTheWholeGroup()' passed on 'My Mac - Compositor (31209)' (473.678 seconds)
+Test case 'CameraRawTests/parametricCurveMatchesPhotoshop()' passed on 'My Mac - Compositor (31209)' (473.679 seconds)
+Test case 'CameraRawTests/glowIsIdleAtZeroAndHalationFringeIsRedderThanDiffusion()' passed on 'My Mac - Compositor (31209)' (473.690 seconds)
+Test case 'CameraRawTests/detailSharpeningNoiseAndMaskingPreview()' passed on 'My Mac - Compositor (31209)' (473.690 seconds)
+Test case 'CameraRawTests/volumeStaysMonotonicSymmetricAndPremultiplied()' passed on 'My Mac - Compositor (31209)' (473.690 seconds)
+Test case 'CameraRawTests/temperatureWarmsAndTintMovesTowardMagenta()' passed on 'My Mac - Compositor (31209)' (473.690 seconds)
+Test case 'RasterSnapshotTests/snapshotsStayImmutableAndDisplayMatchesExportAcrossSuccessiveStrokes()' passed on 'My Mac - Compositor (31209)' (474.120 seconds)
+Test case 'SmartEditTests/cancelAndNoSourceLeaveOriginalUntouched()' passed on 'My Mac - Compositor (31209)' (473.695 seconds)
+Test case 'CameraRawTests/perspectiveHomographyPathsAndKeystoneIsolation()' passed on 'My Mac - Compositor (31209)' (473.690 seconds)
+Test case 'ImageAdjustmentTests/grainIsFixedInDocumentSpaceAndLeavesTransparencyAlone()' passed on 'My Mac - Compositor (31209)' (473.695 seconds)
+Test case 'ImageAdjustmentTests/gradientMapColorsUseTheAppColorPicker()' passed on 'My Mac - Compositor (31209)' (473.695 seconds)
+Test case 'ImageSizeTests/lockedScrubRespectsBothSurfaceAndSideLimits()' passed on 'My Mac - Compositor (31209)' (473.695 seconds)
+Test case 'CameraRawTests/scopeSamplingChangesAtFourMegapixelsWithoutChangingColors()' passed on 'My Mac - Compositor (31209)' (473.695 seconds)
+Test case 'CameraRawTests/guideDirectionAndVanishingPointStayBounded()' passed on 'My Mac - Compositor (31209)' (473.695 seconds)
+Test case 'ImageAdjustmentTests/settingsSaveAndOlderAdjustmentsStillOpen()' passed on 'My Mac - Compositor (31209)' (473.696 seconds)
+Test case 'PDFImportTests/aDamagedPDFIsReported()' passed on 'My Mac - Compositor (31209)' (473.695 seconds)
+Test case 'ImageAdjustmentTests/grainSizeControlsParticleScaleEvenWithRoughness()' passed on 'My Mac - Compositor (31209)' (473.695 seconds)
+Test case 'ImageAdjustmentTests/exposureWorksInLinearLightWithOffsetAndGamma()' passed on 'My Mac - Compositor (31209)' (473.696 seconds)
+Test case 'ImageSizeTests/unlockedScrubReachesSizesAboveOneHundredMegapixels()' passed on 'My Mac - Compositor (31209)' (473.695 seconds)
+Test case 'ProjectWorkspaceTests/tabsKeepIndependentDocumentsAndUndo()' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'ProjectWorkspaceTests/moveTabReordersWithoutTouchingSelectionOrDocuments()' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'CameraRawResetTests/geometryResetKeepsFocalAndSensor()' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'ImageAdjustmentTests/gradientMapColorsByBrightnessAndReverses()' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'ProjectWorkspaceTests/newCanvasOpensAnEmptyTabWithoutAModal()' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'CanvasSizeTests/relativeRatioAndUnitsUseFinalDimensions()' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'CameraRawResetTests/resetInThePanelShowsTheSectionAgain()' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'CameraRawResetTests/resettingASectionLeavesTheOthers(_:)' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'CameraRawResetTests/resettingASectionLeavesTheOthers(_:)' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'CameraRawResetTests/resettingASectionLeavesTheOthers(_:)' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'CameraRawResetTests/resettingASectionLeavesTheOthers(_:)' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'CameraRawResetTests/resettingASectionLeavesTheOthers(_:)' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'CameraRawResetTests/effectsResetIncludesTheirChoicesAndMidpoints()' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'CameraRawResetTests/resettingASectionLeavesTheOthers(_:)' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'CameraRawResetTests/resettingASectionLeavesTheOthers(_:)' passed on 'My Mac - Compositor (31209)' (473.773 seconds)
+Test case 'CameraRawResetTests/resettingASectionLeavesTheOthers(_:)' passed on 'My Mac - Compositor (31209)' (473.773 seconds)
+Test case 'CameraRawResetTests/resettingASectionLeavesTheOthers(_:)' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'ImageSourceTests/exportStartsWithTheImagesNameAndFormat()' passed on 'My Mac - Compositor (31209)' (473.773 seconds)
+Test case 'CameraRawResetTests/resettingASectionLeavesTheOthers(_:)' passed on 'My Mac - Compositor (31209)' (473.773 seconds)
+Test case 'PDFImportTests/everyPageIsALayerOnANewCanvasAt300DPI()' passed on 'My Mac - Compositor (31209)' (473.775 seconds)
+Test case 'CameraRawResetTests/resettingEverySectionGivesNewSettings()' passed on 'My Mac - Compositor (31209)' (473.774 seconds)
+Test case 'NavigatorTests/hugeDocumentsWithAdjustmentsStillShow()' passed on 'My Mac - Compositor (31209)' (473.775 seconds)
+Test case 'NavigatorTests/blursShrinkWithThePicture()' passed on 'My Mac - Compositor (31209)' (473.775 seconds)
+Test case 'PDFImportTests/intoACanvasEachPageIsFittedToIt()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'NavigatorTests/visibleRectFollowsZoomAndPan()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'NavigatorTests/centeringKeepsZoomAndStopsFollowingFit()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'NavigatorTests/pictureFitsTheLongerSideAndShowsTheComposite()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'CameraRawSliderTests/colorBalanceTracksRunFromEachColorToItsOpposite()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'CameraRawSliderTests/theFillFollowsTheKnobAndReachesBothEnds()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'NavigatorTests/minimapFitsTheDocument()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'CameraRawSliderTests/aPointOnTheTrackStandsForTheValueUnderIt()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'NavigatorTests/selectionChangesDoNotRedrawThePicture()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'MeshWarpLocalGeometryTests/subdivisionGrowthLocalityMatrix()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'CameraRawSliderTests/colorTracksRunFromTheCoolOrMutedEndToTheWarmOrStrongEnd()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'NavigatorTests/documentFitsTheBoxCentered()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'MaskAloneTests/aLayerWithoutAMaskHasNothingToShow()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'NavigatorTests/smallDocumentsAreNotEnlarged()' passed on 'My Mac - Compositor (31209)' (473.776 seconds)
+Test case 'TitleBarDragTests/overflowingTabsStillLeaveTheRestOfTheTitleBarDraggable()' passed on 'My Mac - Compositor (31209)' (267.487 seconds)
+Test case 'CameraRawGPUTests/composedLookupMatchesEveryOpaqueEightBitColorExactly()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'AdjustmentCacheTests/cachedFramesMatchWorkedOutOnes()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'AdjustmentPerformanceTests/adjustmentLayerFrameTimes()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'LayerAlignTests/aSelectedFolderMovesAsOne()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'AdjustmentCacheTests/aChangeUnderneathIsShownAndOneAboveKeepsTheCache()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'MaskAloneTests/theCanvasShowsTheMaskInGrayInsteadOfTheImage()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'LayerAlignTests/distributeSpreadsMiddlesOrGapsEvenly()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'CameraRawGeometryGuideTests/draggingAnEndpointMovesOnlyThatEndpoint()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'LayerAlignTests/oneLayerAlignsToTheCanvasAndTheSelectionComesFirst()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'MeshWarpTests/identityCopiesBytes(preset:)' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'MaskAloneTests/optionClickTogglesTheMaskViewAndTargetingPixelsEndsIt()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'CameraRawGeometryGuideTests/endpointDragIsCanceledByEscape()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'CameraRawGeometryGuideTests/guideCreationRespectsTheFourGuideLimit()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'DistortTests/perspectiveMappingHitsTheCornersAndDegenerateShapesAreRefused()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'CameraRawGeometryGuideTests/allFiveUprightModesAreDistinctAndHonest()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'CameraRawGeometryGuideTests/guideSettingsSurviveJSONRoundTrip()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'CameraRawGeometryGuideTests/perspectiveRecalculatesWhenEndpointMoves()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'LayerAlignTests/severalLayersAlignToEachOther()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'CameraRawGeometryGuideTests/guideCoordinatesStayWithinImageBounds()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'CameraRawGeometryGuideTests/normalizedGuideMapsThroughPreviewMapping()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'CameraRawGeometryGuideTests/endpointHitTestToleranceScalesWithZoom()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'CameraRawGeometryGuideTests/endpointDragOppositeEndpointStaysFixed()' passed on 'My Mac - Compositor (31209)' (473.781 seconds)
+Test case 'CameraRawGeometryGuideTests/endpointHitTestSelectsCorrectEndpoint()' passed on 'My Mac - Compositor (31209)' (473.782 seconds)
+Test case 'LayerAlignTests/distributeNeedsThreeAndMovesWholePixels()' passed on 'My Mac - Compositor (31209)' (473.782 seconds)
+Test case 'CameraRawGeometryGuideTests/guideSettingsSurviveUndoAndRedoCycle()' passed on 'My Mac - Compositor (31209)' (473.782 seconds)
+Test case 'CameraRawGeometryGuideTests/endpointHitTestWithNoGuidesReturnsNil()' passed on 'My Mac - Compositor (31209)' (473.782 seconds)
+Test case 'CameraRawGeometryGuideTests/endpointDragEscapeRestoresMovedEndpoint()' passed on 'My Mac - Compositor (31209)' (473.782 seconds)
+Test case 'CameraRawGeometryGuideTests/zeroLengthGuideIsRefused()' passed on 'My Mac - Compositor (31209)' (473.782 seconds)
+Test case 'CameraRawGeometryGuideTests/existingGuidesCanBeCleared()' passed on 'My Mac - Compositor (31209)' (473.782 seconds)
+Test case 'BrushIntersectionTests/accumulationDependsOnDistanceNotEventCount()' passed on 'My Mac - Compositor (31209)' (473.782 seconds)
+Test case 'GradientTests/paletteChangesUpdatePendingPreview()' passed on 'My Mac - Compositor (31209)' (473.782 seconds)
+Test case 'CloneStampTests/cloneStampKeepsItsOwnSoftBrushTip()' passed on 'My Mac - Compositor (31209)' (473.738 seconds)
+Test case 'BlurBrushTests/radiusSetsHowFarItSoftens()' passed on 'My Mac - Compositor (31209)' (473.738 seconds)
+Test case 'SelectionTests/hiddenEdgesKeepTheSelectionAndAnyNewOneShows()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'GradientTests/maskGradientWritesCoverageInsideLayerBounds()' passed on 'My Mac - Compositor (31209)' (473.738 seconds)
+Test case 'ShapeToolTests/aClickEscapeOrToolSwitchMakesNoLayer()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'CloneStampTests/copiesTheSourceUnderTheBrushKeepingAlignmentUntilItIsTurnedOff()' passed on 'My Mac - Compositor (31209)' (473.738 seconds)
+Test case 'SelectionTests/cuttingAwayAtACornerLeavesNoOutlineOverTheCut()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'SelectionTests/shiftStartsAnAddAndOnlyAFreshShiftSquaresTheMarquee()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'BrushIntersectionTests/softCrossingsRespectStrokeOpacityAndFlushIsIdempotent()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'ShapeToolTests/whatsBeingDraggedOutShowsItsSize()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'ShapeToolTests/smoothingUsesSixtyPercentCornersAndStaysInsideTheBox()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'SelectionTests/clickDeselectsAndSelectionStepsUndo()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'SelectionTests/marqueeShiftMakesSquaresAndCenteredDragsGrowFromTheAnchor()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'SelectionTests/expandStaysOnCanvasAndContractCanEmptyTheSelection()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'ShapeToolTests/onePixelDotsKeepTheirColor()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'SelectionTests/arrowNudgesAndMoveIsOnlyForNewModeOnARealSelection()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'BrushIntersectionTests/selfCrossingsBlendInsteadOfTakingTheStrongestEdge()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'SelectionTests/repeatedContractAndExpandKeepARectangleARectangle()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'MeshWarpAdvancedTests/propagationWeightMatchesRecoveredFormula()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'SelectionTests/marqueeDrawsWholePixelRectanglesInAnyDirection()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'SelectionTests/inverseOfEverythingDeselects()' passed on 'My Mac - Compositor (31209)' (473.737 seconds)
+Test case 'PSDRoundTripTests/roundTripLayersOrderVisibilityOpacityAndBlend()' passed on 'My Mac - Compositor (31209)' (473.732 seconds)
+Test case 'SelectionTests/draggingMovesTheOutlineInWholePixelsAsOneUndo()' passed on 'My Mac - Compositor (31209)' (473.725 seconds)
+Test case 'SelectionTests/contractingARoundedRectangleByItsRadiusKeepsItsCorners()' passed on 'My Mac - Compositor (31209)' (473.725 seconds)
+Test case 'SelectionTests/selectionSizeFollowsTheMarqueeAndStaysOnTheCanvas()' passed on 'My Mac - Compositor (31209)' (473.725 seconds)
+Test case 'SelectionTests/marqueeEllipseSelectsAnOvalInItsBoxAndShiftMakesACircle()' passed on 'My Mac - Compositor (31209)' (473.725 seconds)
+Test case 'SelectionTests/selectAllInverseAndToolSwitchCancelsDraft()' passed on 'My Mac - Compositor (31209)' (473.724 seconds)
+Test case 'SelectionTests/optionDraggingTheMarqueeSubtractsWithoutDrawingFromTheCenter()' passed on 'My Mac - Compositor (31209)' (473.724 seconds)
+Test case 'SelectionTests/cmdClickingAMaskSelectsItsBlackAreas()' passed on 'My Mac - Compositor (31209)' (473.724 seconds)
+Test case 'SelectionTests/maskSelectionFollowsTheLayerTransformAndIgnoresAllWhiteMasks()' passed on 'My Mac - Compositor (31209)' (473.724 seconds)
+Test case 'SelectionTests/cursorBadgeFollowsModifiersButKeepsAnOutlinesStartingMode()' passed on 'My Mac - Compositor (31209)' (473.724 seconds)
+Test case 'SelectionTests/extrasHideTheOutlineAndGuidesTogether()' passed on 'My Mac - Compositor (31209)' (473.724 seconds)
+Test case 'CanvasEntryTests/commandZoomUpdatesOnKeyDownAndRepeat()' passed on 'My Mac - Compositor (31209)' (473.707 seconds)
+Test case 'SelectionTests/antialiasingControlsEdgeCoverage()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'SelectionTests/cmdClickingALayerSelectsItsOpaquePixels()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'SelectionTests/lKeyChoosesTheLassoAndKeepsTheModeLastSet()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'SelectionTests/polygonalCornersCanBeRemovedAndClosed()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'CanvasEntryTests/selectAllInTheLayersPanelSelectsTheCanvas()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'CanvasEntryTests/eyedropperShortcutSelectsTool()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'SelectionTests/movingOffCanvasAndBackKeepsTheWholeShape()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'CanvasEntryTests/clipboardSuggestsImagePixelsAndIgnoresText()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'SelectionTests/mKeyChoosesTheMarqueeAndKeepsTheShapeLastSet()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'SelectionTests/replaceAddAndSubtractCombineOutlines()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'SelectionTests/expandAndContractGrowAndShrinkTheOutline()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'SelectionTests/emptySelectionIsDistinctFromNoSelection()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'SelectionTests/modifiersPickModeAndSelectionIsClippedToCanvas()' passed on 'My Mac - Compositor (31209)' (473.684 seconds)
+Test case 'ImageImportTests/cameraHEIFFilesImport(ext:)' passed on 'My Mac - Compositor (31209)' (473.785 seconds)
+Test case 'ImageImportTests/dropPositionUsesDocumentCoordinates()' passed on 'My Mac - Compositor (31209)' (473.786 seconds)
+Test case 'ImageImportTests/cameraHEIFFilesImport(ext:)' passed on 'My Mac - Compositor (31209)' (473.799 seconds)
+Test case 'GIFPreviewPlaybackTests/cancelingDuringDecodeDoesNotRequestAnotherFrame()' passed on 'My Mac - Compositor (31209)' (473.341 seconds)
+Test case 'GIFPreviewPlaybackTests/decodingDoesNotAccumulateDelayAtAnyPlaybackSpeed(speed:)' passed on 'My Mac - Compositor (31209)' (473.284 seconds)
+Test case 'SelectionTests/movingTheMarqueeAnchorMovesTheBoxWithoutResizingIt()' passed on 'My Mac - Compositor (31209)' (473.198 seconds)
+Test case 'GIFPreviewPlaybackTests/decodingDoesNotAccumulateDelayAtAnyPlaybackSpeed(speed:)' passed on 'My Mac - Compositor (31209)' (473.284 seconds)
+Test case 'GIFPreviewPlaybackTests/decodingDoesNotAccumulateDelayAtAnyPlaybackSpeed(speed:)' passed on 'My Mac - Compositor (31209)' (473.284 seconds)
+Test case 'LayersFooterTests/theFooterFitsThePanelAtItsNarrowest()' passed on 'My Mac - Compositor (31209)' (473.198 seconds)
+Test case 'LargeCanvasBrushTests/largestBrushCommits(mode:)' passed on 'My Mac - Compositor (31209)' (473.198 seconds)
+Test case 'BlendShortcutTests/shiftPlusAndMinusStepTheActiveLayersBlendModeWhereverFocusIsExceptTextFields()' passed on 'My Mac - Compositor (31209)' (473.185 seconds)
+Test case 'LargeCanvasBrushTests/largestBrushCommits(mode:)' passed on 'My Mac - Compositor (31209)' (473.198 seconds)
+Test case 'LayerAppearanceTests/hoverPreviewIsTemporaryAndNeverChangesSavedState()' passed on 'My Mac - Compositor (31209)' (473.090 seconds)
+Test case 'GIFPreviewPlaybackTests/slowDecodingSkipsExpiredIntervalsAndOnceEndsOnTheLastFrame(delay:)' passed on 'My Mac - Compositor (31209)' (473.198 seconds)
+Test case 'LargeCanvasBrushTests/largestBrushCommits(mode:)' passed on 'My Mac - Compositor (31209)' (473.198 seconds)
+Test case 'OuterGlowTests/outerGlowDefaultsAndValidation()' passed on 'My Mac - Compositor (31209)' (472.956 seconds)
+Test case 'LargeCanvasBrushTests/blurPiecesMatchTheWhole()' passed on 'My Mac - Compositor (31209)' (472.956 seconds)
+Test case 'NonDestructiveGeometryPerformanceTests/capture1024()' passed on 'My Mac - Compositor (31209)' (472.956 seconds)
+Test case 'LayerAppearanceTests/selectionToolNumberKeysSetSelectedLayersOpacity(tool:)' passed on 'My Mac - Compositor (31209)' (472.946 seconds)
+Test case 'GroupingSelectionTests/multipleSelectionPreservesOrderAndSelectedFolderDescendants()' passed on 'My Mac - Compositor (31209)' (472.946 seconds)
+Test case 'LayerAppearanceTests/opacityDragIsOneUndoAndKeepsSources()' passed on 'My Mac - Compositor (31209)' (472.956 seconds)
+Test case 'OuterGlowTests/outerGlowCodableRoundTrip()' passed on 'My Mac - Compositor (31209)' (472.946 seconds)
+Test case 'GroupingSelectionTests/itemsFromDifferentFoldersUseCommonParentAndEmptySelectionCreatesEmptyGroup()' passed on 'My Mac - Compositor (31209)' (472.955 seconds)
+Test case 'GroupingSelectionTests/singleLayerAndFolderAreWrappedRatherThanCreatingAChildFolder()' passed on 'My Mac - Compositor (31209)' (472.946 seconds)
+Test case 'OuterGlowTests/outerGlowCombinedWithStrokeAndDropShadow()' passed on 'My Mac - Compositor (31209)' (472.946 seconds)
+Test case 'LayerAppearanceTests/selectionToolNumberKeysSetSelectedLayersOpacity(tool:)' passed on 'My Mac - Compositor (31209)' (472.946 seconds)
+Test case 'LayerAppearanceTests/selectionToolNumberKeysSetSelectedLayersOpacity(tool:)' passed on 'My Mac - Compositor (31209)' (472.946 seconds)
+Test case 'AdjustmentEditorTests/legacyHSVStillDecodesAndRenders()' passed on 'My Mac - Compositor (31209)' (472.947 seconds)
+Test case 'LayerAppearanceTests/moveToolNumberKeysSetSelectedLayersOpacityAsOneUndo()' passed on 'My Mac - Compositor (31209)' (472.945 seconds)
+Test case 'BrushTests/foldersHiddenLayersAndDisabledMasksRejectPainting()' passed on 'My Mac - Compositor (31209)' (472.854 seconds)
+Test case 'OuterGlowTests/outerGlowSizeAndOpacityVariations()' passed on 'My Mac - Compositor (31209)' (472.946 seconds)
+Test case 'CropTests/customRatioResizesTheFrameAndPreservesTheExistingChoices()' passed on 'My Mac - Compositor (31209)' (473.254 seconds)
+Test case 'CropTests/customRatiosAcceptPositiveNumbersAndRejectInvalidInput()' passed on 'My Mac - Compositor (31209)' (473.254 seconds)
+Test case 'AdjustmentEditorTests/invertAppliesWithoutAnEditor()' passed on 'My Mac - Compositor (31209)' (473.254 seconds)
+Test case 'FloatingPanelTests/hueSaturationPanelSurvivesALayoutPass()' passed on 'My Mac - Compositor (31209)' (474.150 seconds)
+Test case 'OuterGlowTests/layerEffectsIntegration()' passed on 'My Mac - Compositor (31209)' (473.261 seconds)
+Test case 'OuterGlowTests/layerEffectsCodableBackwardCompatibility()' passed on 'My Mac - Compositor (31209)' (473.261 seconds)
+Test case 'OuterGlowTests/outerGlowRendersOmnidirectionally()' passed on 'My Mac - Compositor (31209)' (473.258 seconds)
+Test case 'CropTests/cropEdgesSnapToNearbyEdges()' passed on 'My Mac - Compositor (31209)' (473.240 seconds)
+Test case 'BrushTests/largeBlankCanvasOnlyAllocatesTouchedTilesUntilCommit()' passed on 'My Mac - Compositor (31209)' (473.240 seconds)
+Test case 'BrushTests/bracketKeysReachTheBrushWhereverFocusIsExceptTextFields()' passed on 'My Mac - Compositor (31209)' (473.258 seconds)
+Test case 'BrushTests/spacedDabsLeaveNoVisibleRippleAlongTheStroke()' passed on 'My Mac - Compositor (31209)' (473.258 seconds)
+Test case 'CropTests/cancellationAndViewportMappingDoNotEditDocument()' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'BrushTests/numberKeysSetBrushAndGradientOpacity()' passed on 'My Mac - Compositor (31209)' (473.258 seconds)
+Test case 'OuterGlowTests/outerGlowRendersAroundTextGlyphs()' passed on 'My Mac - Compositor (31209)' (473.258 seconds)
+Test case 'CropTests/cropDraggingRedrawsOnlyTheOverlay()' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'CropTests/snapTargetsAreTheCanvasAndLayerBounds()' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'OuterGlowTests/outerGlowCPUAndMetalParity()' passed on 'My Mac - Compositor (31209)' (473.260 seconds)
+Test case 'MagicWandTests/sampleSizeAveragesThePixelsAroundTheClick()' passed on 'My Mac - Compositor (31209)' (473.234 seconds)
+Test case 'CropTests/dragGeometrySupportsReverseRatioMoveAndEveryHandle()' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'MagicWandTests/toleranceAppliesToEveryChannelIncludingAlpha()' passed on 'My Mac - Compositor (31209)' (473.233 seconds)
+Test case 'BrushTests/shiftBracketsStepHardnessByQuarters()' passed on 'My Mac - Compositor (31209)' (473.258 seconds)
+Test case 'MagicWandTests/outlinesReproduceTheirPixelsWithHolesAndCornerTouches()' passed on 'My Mac - Compositor (31209)' (473.233 seconds)
+Test case 'CropTests/sameSizeOffsetCropAndExpansionUseExactBounds()' passed on 'My Mac - Compositor (31209)' (473.234 seconds)
+Test case 'TransformPressTests/optionDraggingOutsideTheLayerDuplicatesIt()' passed on 'My Mac - Compositor (31209)' (473.234 seconds)
+Test case 'MeshWarpTopologyTests/regularGridTopologyMatchesLegacyTriangleCount()' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'TransformPressTests/draggingOutsideTheLayerMovesIt()' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'BrushTests/shiftBracketsStepHardnessFromTheCanvas()' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'BrushTests/softStrokeBuildsCoverageWhileKeepingItsFeatheredRim()' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'CropToCanvasImportTests/fittingDocumentKeepsOversizedLayerPixels()' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'TransformPressTests/commandShiftClickAddsALayerWithAutoSelectOn()' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'CropToCanvasImportTests/overBudgetDocumentCropsImageAndMaskToCanvas()' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'GPUCanvasTests/matchesALiveMaskOutsideAClippingStack()' passed on 'My Mac - Compositor (31209)' (473.006 seconds)
+Test case 'GPUCanvasTests/patternsStayWithTheDocument(kind:)' passed on 'My Mac - Compositor (31209)' (473.006 seconds)
+Test case 'MagicWandTests/contiguousStopsAtOtherColorsWhileNonContiguousFindsEveryMatch()' passed on 'My Mac - Compositor (31209)' (473.115 seconds)
+Test case 'TransformPressTests/commandFlipsAutoSelectWhileHeld(autoSelect:)' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'GPUCanvasTests/matchesWhileSmudging()' passed on 'My Mac - Compositor (31209)' (473.006 seconds)
+Test case 'GPUCanvasTests/zoomedOutKeepsOnlyTheReductions()' passed on 'My Mac - Compositor (31209)' (473.006 seconds)
+Test case 'GPUCanvasTests/matchesCoreGraphicsCanvas(zoom:)' passed on 'My Mac - Compositor (31209)' (473.006 seconds)
+Test case 'GPUCanvasTests/matchesAdjustmentsInABlendMode(mode:)' passed on 'My Mac - Compositor (31209)' (473.006 seconds)
+Test case 'CropToCanvasImportTests/channelCropsMatchFullDecodes()' passed on 'My Mac - Compositor (31209)' (473.233 seconds)
+Test case 'GPUCanvasTests/matchesAdjustmentsInABlendMode(mode:)' passed on 'My Mac - Compositor (31209)' (473.006 seconds)
+Test case 'GPUCanvasTests/patternsStayWithTheDocument(kind:)' passed on 'My Mac - Compositor (31209)' (473.006 seconds)
+Test case 'CropToCanvasImportTests/offCanvasLayerIsKeptWithoutPixelsWhenCropping()' passed on 'My Mac - Compositor (31209)' (473.234 seconds)
+Test case 'GPUCanvasTests/matchesAMaskShownAlone()' passed on 'My Mac - Compositor (31209)' (472.989 seconds)
+Test case 'CropToCanvasImportTests/croppedDocumentStillOverBudgetIsRejected()' passed on 'My Mac - Compositor (31209)' (472.989 seconds)
+Test case 'GPUCanvasTests/matchesAdjustmentsInABlendMode(mode:)' passed on 'My Mac - Compositor (31209)' (472.989 seconds)
+Test case 'GPUCanvasTests/matchesCoreGraphicsCanvas(zoom:)' passed on 'My Mac - Compositor (31209)' (472.989 seconds)
+Test case 'GPUCanvasTests/matchesAdjustmentsInABlendMode(mode:)' passed on 'My Mac - Compositor (31209)' (472.989 seconds)
+Test case 'TransformPressTests/commandFlipsAutoSelectWhileHeld(autoSelect:)' passed on 'My Mac - Compositor (31209)' (473.235 seconds)
+Test case 'GPUCanvasTests/matchesCoreGraphicsCanvas(zoom:)' passed on 'My Mac - Compositor (31209)' (473.006 seconds)
+Test case 'GPUCanvasTests/matchesCoreGraphicsCanvas(zoom:)' passed on 'My Mac - Compositor (31209)' (472.989 seconds)
+Test case 'GPUCanvasTests/matchesWhileDraggingAGradient(shape:)' passed on 'My Mac - Compositor (31209)' (472.988 seconds)
+Test case 'GPUCanvasTests/paintingALensLayersMaskKeepsItsEffect()' passed on 'My Mac - Compositor (31209)' (472.988 seconds)
+Test case 'GPUCanvasTests/matchesWhilePainting(masked:paintingMask:)' passed on 'My Mac - Compositor (31209)' (472.988 seconds)
+Test case 'GPUCanvasTests/lensEffectsAnglesMatch(_:)' passed on 'My Mac - Compositor (31209)' (472.988 seconds)
+Test case 'GPUCanvasTests/matchesWhileDraggingAGradient(shape:)' passed on 'My Mac - Compositor (31209)' (472.988 seconds)
+Test case 'GPUCanvasTests/lensEffectsAnglesMatch(_:)' passed on 'My Mac - Compositor (31209)' (472.988 seconds)
+Test case 'GPUCanvasTests/matchesWhileEditingLayersWithEffectsAndMasks(edit:)' passed on 'My Mac - Compositor (31209)' (472.986 seconds)
+Test case 'GPUCanvasTests/matchesWhileEditingLayersWithEffectsAndMasks(edit:)' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'GPUCanvasTests/matchesWhileDrawingAShape()' passed on 'My Mac - Compositor (31209)' (472.986 seconds)
+Test case 'GPUCanvasTests/matchesWhilePainting(masked:paintingMask:)' passed on 'My Mac - Compositor (31209)' (472.988 seconds)
+Test case 'GPUCanvasTests/matchesWhileEditingLayersWithEffectsAndMasks(edit:)' passed on 'My Mac - Compositor (31209)' (472.990 seconds)
+Test case 'GPUCanvasTests/matchesWhileDistorting(folded:)' passed on 'My Mac - Compositor (31209)' (472.986 seconds)
+Test case 'GPUCanvasTests/matchesWhilePainting(masked:paintingMask:)' passed on 'My Mac - Compositor (31209)' (472.988 seconds)
+Test case 'GPUCanvasTests/matchesWhileEditingLayersWithEffectsAndMasks(edit:)' passed on 'My Mac - Compositor (31209)' (472.986 seconds)
+Test case 'GPUCanvasTests/matchesEveryAdjustment(kind:)' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'GPUCanvasTests/matchesEveryAdjustment(kind:)' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'GPUCanvasTests/matchesWhileEditingLayersWithEffectsAndMasks(edit:)' passed on 'My Mac - Compositor (31209)' (472.986 seconds)
+Test case 'GPUCanvasTests/matchesWhileEditingLayersWithEffectsAndMasks(edit:)' passed on 'My Mac - Compositor (31209)' (472.986 seconds)
+Test case 'GPUCanvasTests/matchesEveryAdjustment(kind:)' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'GPUCanvasTests/matchesWhileMovingPixels(duplicate:)' passed on 'My Mac - Compositor (31209)' (472.986 seconds)
+Test case 'GPUCanvasTests/matchesWhileDistorting(folded:)' passed on 'My Mac - Compositor (31209)' (472.986 seconds)
+Test case 'GPUCanvasTests/matchesWhileMovingPixels(duplicate:)' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'ToolRailTests/railIsAsWideAsItsColumnsAndShorterInTwo()' passed on 'My Mac - Compositor (31209)' (472.986 seconds)
+Test case 'GPUCanvasTests/matchesEveryAdjustment(kind:)' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'GPUCanvasTests/matchesEveryAdjustment(kind:)' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'GPUCanvasTests/matchesEveryAdjustment(kind:)' passed on 'My Mac - Compositor (31209)' (472.986 seconds)
+Test case 'GPUCanvasTests/matchesEveryAdjustment(kind:)' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'GPUCanvasTests/matchesEveryAdjustment(kind:)' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'GPUCanvasTests/matchesEveryAdjustment(kind:)' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'GPUCanvasTests/matchesEveryAdjustment(kind:)' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'GPUCanvasTests/zoomedOutLensDocumentLandsInPlace()' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'GPUCanvasTests/lensEffectsIgnoreTheCanvasNearestSampling()' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'CompositorTests/keyboardZoomRoundTripDoesNotDriftAfterTenSteps()' passed on 'My Mac - Compositor (31209)' (472.993 seconds)
+Test case 'ToolRailTests/widthsForOneAndTwoColumns()' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'GPUCanvasTests/matchesWhileTyping(existing:)' passed on 'My Mac - Compositor (31209)' (472.993 seconds)
+Test case 'ToolRailTests/railTakesTwoColumnsWhenOneDoesntFit()' passed on 'My Mac - Compositor (31209)' (472.985 seconds)
+Test case 'CameraRawUprightComparisonTests/renderPhotographicModes()' passed on 'My Mac - Compositor (31209)' (472.993 seconds)
+Test case 'ToolRailTests/rowsKeepTheOrderAndFillLeftToRight()' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'GPUCanvasTests/aNewMaskRevealsTheWholeLayer(rotation:)' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'CompositorTests/openingStopsAtActualPixelsButFitFillsTheWindow()' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'GPUCanvasTests/aNewMaskRevealsTheWholeLayer(rotation:)' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'CompositorTests/fitAndResizeModes()' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'CompositorTests/keyboardZoomUsesStableStopsAndClampsAtTheEnds()' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'GuideTests/layoutGridLinesIncludeMajorsAndSubdivisions()' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'LayerMaskTests/canvasShowsAFolderMaskWhileItIsBeingPainted()' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'GPUCanvasTests/matchesWhileTyping(existing:)' passed on 'My Mac - Compositor (31209)' (472.993 seconds)
+Test case 'LayerMaskTests/addDisableDeleteUndoAndTargetSelection()' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'CompositorTests/keyboardZoomKeepsSmallCanvasCentered()' passed on 'My Mac - Compositor (31209)' (472.994 seconds)
+Test case 'CompositorTests/keyboardZoomKeepsPannedViewportCenterFixed()' passed on 'My Mac - Compositor (31209)' (472.994 seconds)
+Test case 'CompositorTests/keyboardZoomFromFitUsesNextStopAndLeavesFitMode()' passed on 'My Mac - Compositor (31209)' (472.994 seconds)
+Test case 'TypeToolTests/createEditCancelAndUndo()' passed on 'My Mac - Compositor (31209)' (472.994 seconds)
+Test case 'GuideTests/moveToolDragsAGuideAndRulerDropDeletesIt()' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'TypeToolTests/emptyNewParagraphIsDiscarded()' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'GuideTests/flipCanvasMirrorsGuides()' passed on 'My Mac - Compositor (31209)' (472.994 seconds)
+Test case 'CameraRawUprightComparisonTests/renderComparisonCorpus()' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'GuideTests/gridAppearanceColorsAndStyles()' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'SelectionTests/subtractingAlongAnEdgeLeavesNoHairline(box:to:cut:cutTo:)' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'SelectionTests/subtractingAlongAnEdgeLeavesNoHairline(box:to:cut:cutTo:)' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'SelectionTests/subtractingAlongAnEdgeLeavesNoHairline(box:to:cut:cutTo:)' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'TypeToolTests/paragraphBoxAndToolSwitchCommitEditableText()' passed on 'My Mac - Compositor (31209)' (472.991 seconds)
+Test case 'CompositorTests/dimensionValidation()' passed on 'My Mac - Compositor (31209)' (472.991 seconds)
+Test case 'TypeToolTests/cancelingPickerRestoresSelectionColors()' passed on 'My Mac - Compositor (31209)' (473.017 seconds)
+Test case 'SelectionTests/subtractingAlongAnEdgeLeavesNoHairline(box:to:cut:cutTo:)' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'SelectionTests/subtractingAlongAnEdgeLeavesNoHairline(box:to:cut:cutTo:)' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'TypeToolTests/textColorPickerPreviewsAndRestoresDraft()' passed on 'My Mac - Compositor (31209)' (473.017 seconds)
+Test case 'SelectionTests/subtractingAlongAnEdgeLeavesNoHairline(box:to:cut:cutTo:)' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'GuideTests/newGuidesUndoAndClear()' passed on 'My Mac - Compositor (31209)' (473.017 seconds)
+Test case 'GuideTests/gridSnapFollowsTheGridSettings()' passed on 'My Mac - Compositor (31209)' (473.017 seconds)
+Test case 'GuideTests/drawnPointsSnapToTheSnapToTargets()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'SelectionTests/subtractingAlongAnEdgeLeavesNoHairline(box:to:cut:cutTo:)' passed on 'My Mac - Compositor (31209)' (472.992 seconds)
+Test case 'TypeToolTests/fontAppliesToTheSelectionOnly()' passed on 'My Mac - Compositor (31209)' (473.017 seconds)
+Test case 'CompositorTests/actualPixelsAndRoundTrip(backing:)' passed on 'My Mac - Compositor (31209)' (472.994 seconds)
+Test case 'CompositorTests/actualPixelsAndRoundTrip(backing:)' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'GuideTests/rulerStepUsesNicePixelIntervals()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'CompositorTests/limitsAndNewDocumentReset()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'TypeToolTests/textLooksTheSameWhileEditingAndOnceCommitted(zoom:)' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'TypeToolTests/textLooksTheSameWhileEditingAndOnceCommitted(zoom:)' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'GuideTests/snapTargetsFollowViewMenu()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'GuideTests/layoutGridTakesItsSpacingAndSubdivisions()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'CompositorTests/zoomKeepsCursorPixelFixed()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'TypeToolTests/rasterHasTransparentBackgroundAndColoredGlyphs()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'LayerMaskTests/folderMaskCanBePaintedInvertedAndLoadedAsASelection()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'GuideTests/lockPreventsCreatingAndMoving()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'GuideTests/layoutGridKeepsToItsLimits()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'TypeToolTests/colorAppliesToSelectionAndFollowsEdits()' passed on 'My Mac - Compositor (31209)' (473.005 seconds)
+Test case 'ExportTests/pngPreservesDimensionsAlphaOrientationAndTransforms()' passed on 'My Mac - Compositor (31209)' (473.005 seconds)
+Test case 'TypeToolTests/invalidColorRunsAreRejected()' passed on 'My Mac - Compositor (31209)' (473.005 seconds)
+Test case 'LayerTests/testContextMenuShowsCreateOrReleaseClippingAction()' passed on 'My Mac - Compositor (31209)' (473.005 seconds)
+Test case 'TypeToolTests/transformsDuplicatesAndClippingKeepTextEditable()' passed on 'My Mac - Compositor (31209)' (473.006 seconds)
+Test case 'LayerTests/deletionPreservesCanvasAndChoosesNeighbor()' passed on 'My Mac - Compositor (31209)' (473.005 seconds)
+Test case 'LayerTests/newCanvasStartsWithOneSelectedEmptyLayer()' passed on 'My Mac - Compositor (31209)' (473.005 seconds)
+Test case 'LayerTests/unavailableActionsDoNotChangeDocument()' passed on 'My Mac - Compositor (31209)' (473.005 seconds)
+Test case 'StrokeEffectTests/aSquaresCorners()' passed on 'My Mac - Compositor (31209)' (473.004 seconds)
+Test case 'LayerTests/renameAndVisibilityKeepIdentity()' passed on 'My Mac - Compositor (31209)' (473.004 seconds)
+Test case 'TypeToolTests/theCursorFollowsThePointerWhileEditingText()' passed on 'My Mac - Compositor (31209)' (473.004 seconds)
+Test case 'TypeToolTests/invalidAndStaleDraftsDoNotChangeDocument()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'LayerTests/selectionAndRenameDoNotInvalidateCanvasButPixelChangesDo()' passed on 'My Mac - Compositor (31209)' (473.004 seconds)
+Test case 'StrokeEffectTests/aCirclesStrokeIsEvenAllTheWayRound(inside:)' passed on 'My Mac - Compositor (31209)' (473.004 seconds)
+Test case 'LayerTests/nativeSelectionDoesNotReloadRowsAndReorderKeepsIdentity()' passed on 'My Mac - Compositor (31209)' (473.005 seconds)
+Test case 'LayerTests/testRightClickOnUnselectedLayerSelectsIt()' passed on 'My Mac - Compositor (31209)' (473.004 seconds)
+Test case 'StrokeEffectTests/aCirclesStrokeIsEvenAllTheWayRound(inside:)' passed on 'My Mac - Compositor (31209)' (473.004 seconds)
+Test case 'StrokeEffectTests/theCPUFallbackMatches(inside:)' passed on 'My Mac - Compositor (31209)' (473.002 seconds)
+Test case 'LayerTests/testContextMenuUsesExistingMergeTitleAndAction()' passed on 'My Mac - Compositor (31209)' (473.004 seconds)
+Test case 'LayerTests/reorderTranslatesVisibleOrderAndKeepsSelection()' passed on 'My Mac - Compositor (31209)' (473.002 seconds)
+Test case 'LayerTests/testContextMenuDuplicateUsesExistingDuplicateOperation()' passed on 'My Mac - Compositor (31209)' (473.005 seconds)
+Test case 'LayerTests/testContextMenuDuplicateFolderPreservesHierarchy()' passed on 'My Mac - Compositor (31209)' (473.002 seconds)
+Test case 'LayerTests/compositingHonorsVisibilityOrderAndBlankLayers()' passed on 'My Mac - Compositor (31209)' (473.001 seconds)
+Test case 'StrokeEffectTests/theCPUFallbackMatches(inside:)' passed on 'My Mac - Compositor (31209)' (473.002 seconds)
+Test case 'NonDestructiveGeometryStackTests/identityStackRendersSource()' passed on 'My Mac - Compositor (31209)' (473.004 seconds)
+Test case 'LayerTests/testRightClickInsideMultiSelectionPreservesSelection()' passed on 'My Mac - Compositor (31209)' (473.002 seconds)
+Test case 'DeepLayerTests/distortKeepsSixteenBits()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'GuideTests/projectRoundTripAndLegacyRejection()' passed on 'My Mac - Compositor (31209)' (473.016 seconds)
+Test case 'DeepLayerTests/hdrLayersConvertToSixteenBits()' passed on 'My Mac - Compositor (31209)' (473.006 seconds)
+Test case 'DeepLayerTests/hdrLayersReachTheCanvasWithTheirHighlights()' passed on 'My Mac - Compositor (31209)' (473.008 seconds)
+Test case 'DeepLayerTests/eightBitLayersConvertToSixteenBits()' passed on 'My Mac - Compositor (31209)' (473.013 seconds)
+Test case 'LayerTests/duplicatingALayerByDraggingPlacesTheCopyAsOneStep()' passed on 'My Mac - Compositor (31209)' (473.012 seconds)
+Test case 'LayerTests/testContextMenuContainsCoreLayerActions()' passed on 'My Mac - Compositor (31209)' (473.012 seconds)
+Test case 'TypeToolTests/closeButtonShouldCloseWindowWhileEditingText()' passed on 'My Mac - Compositor (31209)' (473.017 seconds)
+Test case 'LayerTests/hideAndShowApplyToEverySelectedLayer()' passed on 'My Mac - Compositor (31209)' (473.012 seconds)
+Test case 'LayerTests/testContextMenuMaskActionsFollowLayerState()' passed on 'My Mac - Compositor (31209)' (473.013 seconds)
+Test case 'DeepLayerTests/convertingSeveralLayersConvertsThemAllInOneStep()' passed on 'My Mac - Compositor (31209)' (473.012 seconds)
+Test case 'LayerTests/deletingAMultiSelectionRemovesEveryLayerInOneStep()' passed on 'My Mac - Compositor (31209)' (473.012 seconds)
+Test case 'LayerTests/blankLayersAreTransparentAndInsertedAboveSelection()' passed on 'My Mac - Compositor (31209)' (473.012 seconds)
+Test case 'DeepLayerTests/cameraRawSaturationStaysSmooth()' passed on 'My Mac - Compositor (31209)' (473.012 seconds)
+Test case 'LayerTests/testRightClickOutsideRowsReturnsNoMenu()' passed on 'My Mac - Compositor (31209)' (473.013 seconds)
+Test case 'LayerTests/testContextMenuActionsPreserveUndoRedo()' passed on 'My Mac - Compositor (31209)' (473.012 seconds)
+Test case 'DeepLayerTests/sixteenBitLayersReachTheCanvasAtSixteenBits()' passed on 'My Mac - Compositor (31209)' (473.014 seconds)
+Test case 'ImageTrimTests/uniformImageReturnsNil()' passed on 'My Mac - Compositor (31209)' (473.012 seconds)
+Test case 'ImageTrimTests/trimImageDirectly()' passed on 'My Mac - Compositor (31209)' (472.937 seconds)
+Test case 'ImageTrimTests/calculateTrimRectBottomRightPixelColor()' passed on 'My Mac - Compositor (31209)' (472.937 seconds)
+Test case 'ImageTrimTests/calculateTrimRectTransparentPixels()' passed on 'My Mac - Compositor (31209)' (473.012 seconds)
+Test case 'ResizeSnapTests/aTurnedLayerDoesntSnap()' passed on 'My Mac - Compositor (31209)' (472.937 seconds)
+Test case 'ResizeSnapTests/aProportionalCornerSnapsItsNearerEdgeAndKeepsTheRatio()' passed on 'My Mac - Compositor (31209)' (472.937 seconds)
+Test case 'ImageTrimTests/calculateTrimRectTopLeftPixelColor()' passed on 'My Mac - Compositor (31209)' (472.937 seconds)
+Test case 'FilterTests/removeDistortionBendsAboutTheCenterAndOnlyPincushionCorrectionOpensTheCorners()' passed on 'My Mac - Compositor (31209)' (472.937 seconds)
+Test case 'ResizeSnapTests/aSideHandleSnapsItsEdge()' passed on 'My Mac - Compositor (31209)' (472.937 seconds)
+Test case 'FilterTests/addNoiseChangesColorButNeverAlphaAndMonochromaticKeepsGrays()' passed on 'My Mac - Compositor (31209)' (472.936 seconds)
+Test case 'UnifiedGeometryBackendTests/cameraRawOnNormalEightBitLayer()' passed on 'My Mac - Compositor (31209)' (472.937 seconds)
+Test case 'FilterTests/motionBlurStreaksAlongItsAngleCounterclockwiseFromHorizontal()' passed on 'My Mac - Compositor (31209)' (472.931 seconds)
+Test case 'MaskTransformTests/unlinkedTheLayerMovesAloneAndItsMaskStaysOnTheCanvas()' passed on 'My Mac - Compositor (31209)' (472.913 seconds)
+Test case 'MiddleButtonTests/dragUpZoomsInAndDownZoomsOut(_:)' passed on 'My Mac - Compositor (31209)' (472.913 seconds)
+Test case 'MaskTransformTests/unlinkedTheMaskMovesAloneAndRelinkedTheyMoveTogether()' passed on 'My Mac - Compositor (31209)' (472.913 seconds)
+Test case 'GroupTests/ungroupLayersRestoresChildrenAtTheFoldersSpotAndUndoes()' passed on 'My Mac - Compositor (31209)' (472.912 seconds)
+Test case 'GroupTests/nestedGroupsMoveOutCollapseAndDeleteUndo()' passed on 'My Mac - Compositor (31209)' (472.912 seconds)
+Test case 'GroupTests/ungroupingReleasesClippingThatNoLongerMakesSense()' passed on 'My Mac - Compositor (31209)' (472.913 seconds)
+Test case 'MaskTransformTests/placementAndLinkAreSavedAndPaintingFollowsThePlacement()' passed on 'My Mac - Compositor (31209)' (472.912 seconds)
+Test case 'FilterTests/rgbSplitSpreadsASpectrumAlongItsAngle()' passed on 'My Mac - Compositor (31209)' (472.932 seconds)
+Test case 'GroupTests/panelSearchAndTypeFilterNarrowTheRows()' passed on 'My Mac - Compositor (31209)' (472.912 seconds)
+Test case 'MaskTransformTests/aLinkedMaskMovesWithItsLayerWhicheverThumbnailIsSelected()' passed on 'My Mac - Compositor (31209)' (472.912 seconds)
+Test case 'DeepLayerTests/exrWithinWhiteComesInAsSixteenBits()' passed on 'My Mac - Compositor (31209)' (473.013 seconds)
+Test case 'GroupTests/ungroupPreservesClippingBetweenTwoOfAFoldersOwnChildren()' passed on 'My Mac - Compositor (31209)' (472.912 seconds)
+Test case 'GroupTests/malformedParentLinksAndCyclesAreRejected()' passed on 'My Mac - Compositor (31209)' (472.913 seconds)
+Test case 'PenPressureTests/theSoftwareBrushFollowsThePressureToo()' passed on 'My Mac - Compositor (31209)' (472.912 seconds)
+Test case 'MaskTransformTests/aMovedHideAllMaskKeepsHidingPastItsPixels()' passed on 'My Mac - Compositor (31209)' (472.911 seconds)
+Test case 'MeshWarpPersistenceTests/identityMeshSerializationRoundTrip()' passed on 'My Mac - Compositor (31209)' (472.911 seconds)
+Test case 'PenPressureTests/theCanvasReadsPressureFromATabletOnly()' passed on 'My Mac - Compositor (31209)' (472.912 seconds)
+Test case 'DeepLayerTests/flippingAndRotatingKeepSixteenBits()' passed on 'My Mac - Compositor (31209)' (473.013 seconds)
+Test case 'DeepLayerTests/blurToolModesKeepSixteenBits(mode:)' passed on 'My Mac - Compositor (31209)' (473.091 seconds)
+Test case 'DeepLayerTests/blurToolModesKeepSixteenBits(mode:)' passed on 'My Mac - Compositor (31209)' (473.112 seconds)
+Test case 'DeepLayerTests/blurToolModesKeepSixteenBits(mode:)' passed on 'My Mac - Compositor (31209)' (473.121 seconds)
+Test case 'DeepLayerTests/sixteenBitImportsBecomeSixteenBitLayers()' passed on 'My Mac - Compositor (31209)' (473.122 seconds)
+Test case 'DeepLayerTests/exrHighlightsComeInAsAnHDRLayer()' passed on 'My Mac - Compositor (31209)' (473.122 seconds)
+Test case 'DeepLayerTests/mergingKeepsSixteenBits()' passed on 'My Mac - Compositor (31209)' (473.125 seconds)
+Test case 'PSBImportTests/PSBLargeAdditionalInfoBlockDoesNotHideUnicodeName()' passed on 'My Mac - Compositor (31209)' (473.024 seconds)
+Test case 'NonDestructiveCameraRawTests/fullSettingsRoundTrip()' passed on 'My Mac - Compositor (31209)' (473.024 seconds)
+Test case 'PSBImportTests/PSBRoundTripMatchesPSDLayerContent()' passed on 'My Mac - Compositor (31209)' (473.024 seconds)
+Test case 'PSBImportTests/PSBExceedingCanvasLimitIsRejected()' passed on 'My Mac - Compositor (31209)' (473.024 seconds)
+Test case 'FontMenuFacesTests/aFamilyMacOSDoesNotListStillOffersItsFaces()' passed on 'My Mac - Compositor (31209)' (473.024 seconds)
+Test case 'PenPressureTests/aMouseOrTheButtonsOffPaintAsBefore()' passed on 'My Mac - Compositor (31209)' (473.025 seconds)
+Test case 'FontMenuFacesTests/aFaceInUseBringsItsFamily()' passed on 'My Mac - Compositor (31209)' (473.025 seconds)
+Test case 'FontMenuFacesTests/searchMatchesEveryWordInAnyCase()' passed on 'My Mac - Compositor (31209)' (473.025 seconds)
+Test case 'FontMenuFacesTests/listsTheReportedFacesSortedWithTheOneInUse()' passed on 'My Mac - Compositor (31209)' (473.025 seconds)
+Test case 'FontMenuFacesTests/searchFindsAFamilyByItsTypedName()'

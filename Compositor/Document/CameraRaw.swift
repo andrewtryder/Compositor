@@ -93,6 +93,14 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     var optics = CameraRawOpticsSettings()
     var geometry = CameraRawGeometrySettings()
     var calibration = CameraRawCalibrationSettings()
+    /// Dedicated Horizon correction. Defaults off; composed into geometry corners before framing.
+    var horizon = CameraRawHorizonSettings()
+    /// Typed perspective-tool state. Defaults leave `geometry.guides` / manual keystone alone.
+    var perspectiveTools = CameraRawPerspectiveToolState()
+    /// Miniature / tilt-shift. Defaults identity; runs after geometry, before the color grade.
+    var miniature = CameraRawMiniatureSettings()
+    /// Optional automatic horizon angle from the last Auto Level observation (degrees). Not persisted.
+    var automaticHorizonAngle: Double? = nil
 
     var adjustsLight: Bool {
         exposure != 0 || contrast != 0 || highlights != 0 || shadows != 0 || whites != 0 || blacks != 0
@@ -108,7 +116,8 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     var adjustsGrading: Bool { grading.adjusts }
     var adjustsDetail: Bool { detail.adjusts }
     var adjustsOptics: Bool { optics.adjusts }
-    var adjustsGeometry: Bool { geometry.adjusts }
+    var adjustsGeometry: Bool { geometry.adjusts || !horizon.isIdentity || !miniature.isIdentity
+        || perspectiveTools.kind != .automatic }
     var adjustsCalibration: Bool { calibration.adjusts }
     var isIdentity: Bool {
         !adjustsLight && !adjustsColor && !adjustsEffects && !adjustsCurve && !adjustsMixer && !adjustsGrading
@@ -158,6 +167,8 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         result.optics = optics.normalized
         result.geometry = geometry.normalized
         result.calibration = calibration.normalized
+        result.horizon = horizon.normalized
+        result.miniature = miniature.normalized
         return result
     }
 
@@ -193,7 +204,13 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         if !showsGrading { result.grading = CameraRawGradingSettings() }
         if !showsDetail { result.detail = CameraRawDetailSettings() }
         if !showsOptics { result.optics = CameraRawOpticsSettings() }
-        if !showsGeometry { result.geometry = CameraRawGeometrySettings() }
+        if !showsGeometry {
+            result.geometry = CameraRawGeometrySettings()
+            result.horizon = CameraRawHorizonSettings()
+            result.perspectiveTools = CameraRawPerspectiveToolState()
+            result.miniature = CameraRawMiniatureSettings()
+            result.automaticHorizonAngle = nil
+        }
         if !showsCalibration { result.calibration = CameraRawCalibrationSettings() }
         return result
     }
@@ -207,8 +224,18 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     /// measured once for the session); nil measures it here.
     func apply(_ image: CGImage, clipping: CameraRawClipping? = nil, scale: CGFloat = 1, seed: UInt32 = 0, visualizePointColor: Int = -1,
                sharpenMask: Bool = false, brightness known: CameraRawTables.Brightness? = nil, usesGPU: Bool = false) throws -> CGImage {
+        try applyResult(image, clipping: clipping, scale: scale, seed: seed, visualizePointColor: visualizePointColor,
+                        sharpenMask: sharpenMask, brightness: known, usesGPU: usesGPU).image
+    }
+
+    /// Same as `apply`, plus Expand to Fit placement metadata for FilterEdit / commit.
+    func applyResult(_ image: CGImage, clipping: CameraRawClipping? = nil, scale: CGFloat = 1, seed: UInt32 = 0,
+                     visualizePointColor: Int = -1, sharpenMask: Bool = false,
+                     brightness known: CameraRawTables.Brightness? = nil, usesGPU: Bool = false) throws -> CameraRawGeometryResult {
         let settings = normalized
-        if settings.isIdentity && clipping == nil && visualizePointColor < 0 && !sharpenMask { return image }
+        if settings.isIdentity && clipping == nil && visualizePointColor < 0 && !sharpenMask {
+            return CameraRawGeometryResult(image: image, expansion: nil)
+        }
         guard settings.isValid else { throw ProjectError.invalid }
         let mode = clipping?.rawValue ?? 0
         let pixelScale = scale > 0 ? Double(scale) : 1
@@ -221,8 +248,30 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         let paintEffects = clipping == nil && !sharpenMask && settings.adjustsEffects
         let paintDetailOptics = clipping == nil && (settings.adjustsDetail || settings.adjustsOptics || sharpenMask)
         var source = image
+        var geometryExpansion: CameraRawGeometryExpansion?
+        // Distortion → volume → perspective → crop, then the grade. Distortion moves early only when
+        // geometry runs, so an optics-only grade keeps its previous order. The late pass skips distortion
+        // when this already applied it, including a lens profile's share of the same k.
+        var earlyDistortion = false
         if clipping == nil && !sharpenMask && visualizePointColor < 0 && settings.adjustsGeometry {
-            source = try settings.geometry.apply(source)
+            let distortionK = settings.optics.distortionK(profileStrength: PixelFilter.lensStrength)
+            if distortionK != 0 {
+                source = try Self.applyLensDistort(source, k: distortionK)
+                earlyDistortion = true
+            }
+            let geometry = CameraRawPerspectiveTools.applying(settings.perspectiveTools, to: settings.geometry)
+            let backend = CameraRawGeometryBackendSettings(
+                geometry: geometry, horizon: settings.horizon, perspectiveTools: settings.perspectiveTools,
+                miniature: settings.miniature)
+            let horizonDegrees = CameraRawGeometryBackend.horizonDegrees(
+                settings: backend, width: source.width, height: source.height,
+                automaticAngle: settings.automaticHorizonAngle)
+            let geometryResult = try geometry.applyResult(source, horizonDegrees: horizonDegrees)
+            source = geometryResult.image
+            geometryExpansion = geometryResult.expansion
+            if !settings.miniature.isIdentity {
+                source = try CameraRawMiniature.apply(source, settings: settings.miniature, scale: CGFloat(pixelScale))
+            }
         }
         func applyTable(_ table: [Float]?, pixels: UnsafeMutablePointer<UInt8>, width: Int, height: Int, stride: Int, clipping: Int32) {
             if usesGPU, clipping == 0, let table,
@@ -230,7 +279,7 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
                                                  table: table, grid: CameraRawTables.grid) == true { return }
             adjust_camera_raw(pixels, width, height, stride, table, Int32(CameraRawTables.grid), clipping)
         }
-        return try ImageAdjustmentPixels.run(source) { pixels, width, height, stride in
+        let graded = try ImageAdjustmentPixels.run(source) { pixels, width, height, stride in
             let adaptive = settings.contrast != 0 || settings.highlights != 0
             let brightness = adaptive
                 ? known ?? CameraRawTables.brightness(pixels, width: width, height: height, stride: stride) : CameraRawTables.Brightness()
@@ -270,9 +319,25 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
             }
             if paintDetailOptics {
                 settings.applyDetailOptics(pixels: pixels, width: width, height: height, stride: stride, scale: pixelScale,
-                                           profileStrength: PixelFilter.lensStrength, sharpenMask: sharpenMask)
+                                           profileStrength: PixelFilter.lensStrength, sharpenMask: sharpenMask,
+                                           skipDistortion: earlyDistortion)
             }
         }
+        return CameraRawGeometryResult(image: graded, expansion: geometryExpansion)
+    }
+
+    /// Premultiplied RGBA lens distortion matching `lens_distort` / the Lens Correction filter.
+    static func applyLensDistort(_ image: CGImage, k: Double) throws -> CGImage {
+        guard k != 0 else { return image }
+        let width = image.width, height = image.height
+        let source = try BrushRaster.context(width: width, height: height, mask: false)
+        BrushRaster.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height), mask: false, context: source)
+        let destination = try BrushRaster.context(width: width, height: height, mask: false)
+        guard let from = source.data, let into = destination.data else { throw ExportError.render }
+        lens_distort(from.assumingMemoryBound(to: UInt8.self), into.assumingMemoryBound(to: UInt8.self),
+                     width, height, source.bytesPerRow, k)
+        guard let result = destination.makeImage() else { throw ExportError.render }
+        return result
     }
 
     /// Temperature and tint that turn one straight sRGB color (0…1) as nearly gray as Camera Raw's white balance can.
@@ -378,20 +443,30 @@ nonisolated struct CameraRawScope: Equatable, Sendable {
 
     /// Preview image plus the scope of the grade itself, without Option-drag or indicator paint.
     static func preview(_ job: FilterJob) throws -> (image: CGImage, scope: Self) {
+        let made = try previewResult(job)
+        return (made.image, made.scope)
+    }
+
+    /// Preview plus Expand to Fit placement metadata from the graded (non-overlay) pass.
+    static func previewResult(_ job: FilterJob) throws -> (image: CGImage, scope: Self, geometryExpansion: CameraRawGeometryExpansion?) {
         var grade = job
         grade.cameraRawClipping = nil
         grade.showsShadowClipping = false
         grade.showsHighlightClipping = false
         grade.visualizesPointColor = -1
         grade.showsSharpenMask = false
-        let graded = try PixelFilter.run(grade)
-        let scope = make(graded) ?? Self(red: Array(repeating: 0, count: binCount), green: Array(repeating: 0, count: binCount),
-                                         blue: Array(repeating: 0, count: binCount), vectorscope: Array(repeating: 0, count: scopeSide * scopeSide))
-        if job.cameraRawClipping != nil || job.showsSharpenMask { return (try PixelFilter.run(job), scope) }
-        if job.showsShadowClipping || job.showsHighlightClipping {
-            return (try overlay(graded, shadows: job.showsShadowClipping, highlights: job.showsHighlightClipping), scope)
+        let graded = try PixelFilter.runResult(grade)
+        let scope = make(graded.image) ?? Self(red: Array(repeating: 0, count: binCount), green: Array(repeating: 0, count: binCount),
+                                               blue: Array(repeating: 0, count: binCount), vectorscope: Array(repeating: 0, count: scopeSide * scopeSide))
+        if job.cameraRawClipping != nil || job.showsSharpenMask {
+            let painted = try PixelFilter.runResult(job)
+            return (painted.image, scope, painted.geometryExpansion)
         }
-        return (graded, scope)
+        if job.showsShadowClipping || job.showsHighlightClipping {
+            return (try overlay(graded.image, shadows: job.showsShadowClipping, highlights: job.showsHighlightClipping),
+                    scope, graded.geometryExpansion)
+        }
+        return (graded.image, scope, graded.geometryExpansion)
     }
 }
 
@@ -555,6 +630,27 @@ extension EditorSession {
         updateFilter(settings, preview: edit.preview)
     }
 
+    /// Auto Level / Vertical / Full: detect guides on the preview source and refresh.
+    func applyCameraRawUprightDetection() async {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return }
+        let mode = edit.settings.cameraRaw.geometry.upright
+        guard mode.isAuto else { return }
+        let image = edit.previewSource
+        let version = edit.previewSourceVersion
+        let observation = await Task.detached(priority: .userInitiated) {
+            CameraRawUprightDetection.observe(in: image, mode: mode)
+        }.value
+        guard let current = filterEdit, CameraRawUprightDetection.shouldApply(
+            mode: mode, current: current.settings.cameraRaw.geometry.upright,
+            version: version, currentVersion: current.previewSourceVersion, committing: current.committing
+        ) else { return }
+        var settings = current.settings
+        // A miss leaves the picture alone. Guided lines stashed on the edit are put back if the user returns to Guided.
+        settings.cameraRaw.geometry.guides = observation.guides
+        current.cameraRawUprightDetectionAttempted = true
+        updateFilter(settings, preview: current.preview)
+    }
+
     func beginCameraRawGeometryGuide(at point: CGPoint) {
         guard let edit = filterEdit, edit.kind == .cameraRaw, edit.drawingCameraRawGeometryGuide,
               let normalized = cameraRawNormalizedPoint(at: point) else { return }
@@ -570,12 +666,94 @@ extension EditorSession {
 
     func commitCameraRawGeometryGuide() {
         guard let edit = filterEdit, let draft = edit.cameraRawGuideDraft else { return }
+        // Prevent malformed or zero-length guides from entering committed settings.
+        guard hypot(draft.end.x - draft.start.x, draft.end.y - draft.start.y) > 0.01 else {
+            edit.cameraRawGuideDraft = nil
+            edit.cameraRawDraggingGuideIndex = nil
+            edit.cameraRawDraggingEndpoint = false
+            return
+        }
         var settings = edit.settings
+        // Enforce the maximum of four manual guides.
+        guard settings.cameraRaw.geometry.guides.count < 4 else { return }
         settings.cameraRaw.geometry.guides.append(CameraRawGeometryGuide(startX: draft.start.x, startY: draft.start.y,
                                                                          endX: draft.end.x, endY: draft.end.y))
         settings.cameraRaw.geometry.upright = .guided
         edit.cameraRawGuideDraft = nil
+        edit.cameraRawDraggingGuideIndex = nil
+        edit.cameraRawDraggingEndpoint = false
         updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Hit-tests a Camera Raw guide endpoint at a document point, returning the guide index and
+    /// whether the endpoint is the end (`true`) or the start (`false`). Tolerance scales with zoom.
+    func cameraRawHitGuideEndpoint(at documentPoint: CGPoint, zoom: CGFloat) -> (guideIndex: Int, endpoint: Bool)? {
+        guard let edit = filterEdit else { return nil }
+        let geometry = edit.settings.cameraRaw.geometry
+        guard !geometry.guides.isEmpty else { return nil }
+        let image = edit.previewSource
+        let tolerance = 14.0 / max(zoom, 0.001)
+        for index in geometry.guides.indices {
+            let guide = geometry.guides[index]
+            for endpoint in [false, true] {
+                let normalized = endpoint ? guide.end : guide.start
+                let pixel = CGPoint(x: normalized.x * CGFloat(image.width), y: normalized.y * CGFloat(image.height))
+                let documentPointForEndpoint = pixel.applying(edit.previewMapping)
+                let dx = documentPoint.x - documentPointForEndpoint.x
+                let dy = documentPoint.y - documentPointForEndpoint.y
+                if hypot(dx, dy) <= tolerance {
+                    return (index, endpoint)
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Begins dragging a Camera Raw guide endpoint. The opposite endpoint stays fixed.
+    /// Captures the original guide coordinates so Escape can restore them exactly.
+    func beginCameraRawGuideEndpointDrag(at documentPoint: CGPoint, zoom: CGFloat) {
+        guard let edit = filterEdit else { return }
+        guard let hit = cameraRawHitGuideEndpoint(at: documentPoint, zoom: zoom) else { return }
+        edit.cameraRawDraggingGuideIndex = hit.guideIndex
+        edit.cameraRawDraggingEndpoint = hit.endpoint
+        edit.cameraRawDragOriginalGuide = edit.settings.cameraRaw.geometry.guides[hit.guideIndex]
+    }
+
+    /// Moves the currently dragged endpoint to a document point. The opposite endpoint is unchanged.
+    func continueCameraRawGuideEndpointDrag(to documentPoint: CGPoint) {
+        guard let edit = filterEdit, let guideIndex = edit.cameraRawDraggingGuideIndex,
+              edit.settings.cameraRaw.geometry.guides.indices.contains(guideIndex) else { return }
+        var settings = edit.settings
+        let image = edit.previewSource
+        guard let normalized = cameraRawNormalizedPoint(at: documentPoint) else { return }
+        var guide = settings.cameraRaw.geometry.guides[guideIndex]
+        if edit.cameraRawDraggingEndpoint {
+            guide.endX = normalized.x
+            guide.endY = normalized.y
+        } else {
+            guide.startX = normalized.x
+            guide.startY = normalized.y
+        }
+        settings.cameraRaw.geometry.guides[guideIndex] = guide
+        edit.settings = settings
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Cancels an in-progress endpoint drag, restoring the guide to its original coordinates.
+    func cancelCameraRawGuideEndpointDrag() {
+        guard let edit = filterEdit else { return }
+        defer {
+            edit.cameraRawDraggingGuideIndex = nil
+            edit.cameraRawDraggingEndpoint = false
+            edit.cameraRawDragOriginalGuide = nil
+        }
+        guard let guideIndex = edit.cameraRawDraggingGuideIndex,
+              edit.settings.cameraRaw.geometry.guides.indices.contains(guideIndex),
+              let original = edit.cameraRawDragOriginalGuide else { return }
+        // Restore the exact coordinates captured at drag start; no document commit occurs during cancellation.
+        var settings = edit.settings
+        settings.cameraRaw.geometry.guides[guideIndex] = original
+        edit.settings = settings
     }
 
     private func cameraRawNormalizedPoint(at point: CGPoint) -> CGPoint? {

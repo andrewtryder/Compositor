@@ -21,7 +21,11 @@ actor ImageResizer {
         if old.width == options.width && old.height == options.height {
             manifest.layers = old.layers
             return ProjectSnapshot(manifest: manifest, images: snapshot.images, masks: snapshot.masks,
-                                   animations: snapshot.animations)
+                                   animations: snapshot.animations,
+                                   reshapeSources: snapshot.reshapeSources,
+                                   reshapeMeshes: snapshot.reshapeMeshes,
+                                   correctionSources: snapshot.correctionSources,
+                                   correctionStacks: snapshot.correctionStacks)
         }
         guard options.width * options.height <= DocumentLimits.maxSurfacePixels else { throw ProjectError.tooLarge }
         let sx = CGFloat(options.width) / CGFloat(old.width)
@@ -33,6 +37,10 @@ actor ImageResizer {
         var images: [UUID: ImportedImage] = [:]
         var masks: [UUID: ImportedImage] = [:]
         var animations = snapshot.animations
+        var reshapeSources: [UUID: ImportedImage] = [:]
+        var reshapeMeshes: [UUID: MeshWarpPersistentState] = [:]
+        var correctionSources: [UUID: ImportedImage] = [:]
+        var correctionStacks: [UUID: LayerCorrectionStackPersistentState] = [:]
         var usedPixels = 0, usedMaskPixels = 0
         for layer in old.layers {
             try Task.checkCancellation()
@@ -70,12 +78,62 @@ actor ImageResizer {
                 animations[layer.id] = resized
                 gif?.geometry = resized.geometry
             }
+            var reshape = layer.reshape
+            var correction = layer.correctionStack
+            if reshape != nil {
+                guard let source = snapshot.reshapeSources[layer.id],
+                      var mesh = snapshot.reshapeMeshes[layer.id] else { throw ProjectError.missingImage }
+                guard width * height <= DocumentLimits.documentPixelBudget - usedPixels else { throw ProjectError.tooLarge }
+                usedPixels += width * height
+                let resizedSource = try resizedImage(source, from: layer.transform, to: transform, scaleX: sx, scaleY: sy)
+                mesh.imageWidth = width
+                mesh.imageHeight = height
+                // UV mesh stays; only the source/display pixel footprint changes.
+                do { _ = try mesh.makeGrid() } catch { throw ProjectError.invalid }
+                reshapeSources[layer.id] = resizedSource
+                reshapeMeshes[layer.id] = mesh
+                reshape = ProjectReshapeRecord(sourceFile: "\(layer.id.uuidString).reshape-source.png",
+                                               meshFile: "\(layer.id.uuidString).reshape.json")
+            }
+            if correction != nil {
+                guard let source = snapshot.correctionSources[layer.id],
+                      var stack = snapshot.correctionStacks[layer.id] else { throw ProjectError.missingImage }
+                if reshape == nil {
+                    guard width * height <= DocumentLimits.documentPixelBudget - usedPixels else { throw ProjectError.tooLarge }
+                    usedPixels += width * height
+                }
+                let resizedSource: ImportedImage
+                if let existing = reshapeSources[layer.id] {
+                    resizedSource = existing
+                } else {
+                    resizedSource = try resizedImage(source, from: layer.transform, to: transform, scaleX: sx, scaleY: sy)
+                }
+                stack.sourceWidth = width
+                stack.sourceHeight = height
+                for i in stack.nodes.indices where stack.nodes[i].kind == .reshape {
+                    guard var mesh = stack.nodes[i].mesh else { throw ProjectError.invalid }
+                    mesh.imageWidth = width
+                    mesh.imageHeight = height
+                    do { _ = try mesh.makeGrid() } catch { throw ProjectError.invalid }
+                    stack.nodes[i].mesh = mesh
+                }
+                correctionSources[layer.id] = resizedSource
+                correctionStacks[layer.id] = stack
+                let sourceFile = stack.nodes.contains(where: { $0.kind == .reshape })
+                    ? "\(layer.id.uuidString).reshape-source.png"
+                    : "\(layer.id.uuidString).corrections-source.png"
+                correction = ProjectCorrectionStackRecord(sourceFile: sourceFile,
+                                                          stackFile: "\(layer.id.uuidString).corrections.json")
+            }
             manifest.layers.append(ProjectLayerRecord(id: layer.id, name: layer.name, isVisible: layer.isVisible,
                 transform: transform, imageFile: layer.imageFile, parentID: layer.parentID, isGroup: layer.isGroup, opacity: layer.opacity, blendMode: layer.blendMode, maskFile: layer.maskFile, maskEnabled: layer.maskEnabled, maskSourceID: layer.maskSourceID, adjustment: layer.adjustment,
                 maskPlacement: layer.maskPlacement.map { $0.placing($0.unitToDocument.concatenating(CGAffineTransform(scaleX: sx, y: sy))) },
-                maskLinked: layer.maskLinked, effects: layer.effects?.scaled(by: effectScale), gif: gif))
+                maskLinked: layer.maskLinked, effects: layer.effects?.scaled(by: effectScale), gif: gif, reshape: reshape,
+                correctionStack: correction))
         }
-        return ProjectSnapshot(manifest: manifest, images: images, masks: masks, animations: animations)
+        return ProjectSnapshot(manifest: manifest, images: images, masks: masks, animations: animations,
+                               reshapeSources: reshapeSources, reshapeMeshes: reshapeMeshes,
+                               correctionSources: correctionSources, correctionStacks: correctionStacks)
     }
 
     private func resizedImage(_ source: ImportedImage, from original: LayerTransform, to transform: LayerTransform,

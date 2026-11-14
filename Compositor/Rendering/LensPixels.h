@@ -9,4 +9,10 @@
 // pushes them outward (straightens pincushion distortion, corners turn transparent). Pixels
 // outside the source are transparent. k = 0 copies the source exactly.
 void lens_distort(const uint8_t *source, uint8_t *destination, size_t width, size_t height, size_t stride, double k);
+
+// ViewPoint-style volume (anamorphosis) warp. `strengthH`, `strengthV`, and `strengthR` are the
+// ComputeAnamorphosis `b` values (0 leaves that axis unchanged). `mode` is 0 radial, 1 horizontal,
+// 2 vertical, 3 horizontal then vertical. Destination samples the source bilinearly.
+void volume_deform(const uint8_t *source, uint8_t *destination, size_t width, size_t height, size_t stride,
+                   double strengthH, double strengthV, double strengthR, int mode);
 #endif

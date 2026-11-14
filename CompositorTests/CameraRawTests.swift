@@ -757,10 +757,10 @@ struct CameraRawTests {
         #expect(hiddenPixels[0] == before)
     }
 
-    /// Upright is Off or Guided. Guided reads a drawn line; without one it must not invent a warp,
-    /// and two different pictures must not receive one shared result.
+    /// Upright modes include Auto and Guided. Empty Guided / Auto must not invent a warp; a horizon
+    /// guide rotates; two vertical guides change corner geometry.
     @Test func guidedUprightFollowsADrawnLineAndLeavesAnUnguidedPicture() throws {
-        #expect(Set(CameraRawUprightMode.allCases) == [.off, .guided])
+        #expect(Set(CameraRawUprightMode.allCases) == [.off, .autoLevel, .autoVertical, .autoFull, .guided])
         let cool = try image(width: 16, height: 16, red: 0.2, green: 0.45, blue: 0.8)
         let warm = try image(width: 16, height: 16, red: 0.85, green: 0.25, blue: 0.15)
         let coolPixels = try pixels(cool)
@@ -776,6 +776,301 @@ struct CameraRawTests {
         #expect(coolGuided != coolPixels)
         #expect(warmGuided != warmPixels)
         #expect(coolGuided != warmGuided)
+
+        // Two near-vertical guides must change the perspective corners (Force Parallel Vertical).
+        settings.geometry.guides = [
+            CameraRawGeometryGuide(startX: 0.25, startY: 0.05, endX: 0.30, endY: 0.95),
+            CameraRawGeometryGuide(startX: 0.70, startY: 0.05, endX: 0.80, endY: 0.95)
+        ]
+        let corners = settings.geometry.outputCorners(width: 100, height: 100)
+        let identity = [CGPoint(x: 0, y: 100), CGPoint(x: 100, y: 100), CGPoint(x: 100, y: 0), CGPoint(x: 0, y: 0)]
+        let moved = zip(corners, identity).contains { hypot($0.x - $1.x, $0.y - $1.y) > 0.5 }
+        #expect(moved)
+
+        settings.geometry.upright = .autoFull
+        settings.geometry.guides = []
+        #expect(try pixels(settings.apply(cool)) == coolPixels)
+    }
+
+    /// Converging verticals take the vanishing-point path; nearly parallel verticals fall back to rotation;
+    /// two of each take the rectangle DLT path. Manual Vertical / Horizontal / Rotate must not change
+    /// solver corners while upright is on, and must still work when upright is Off.
+    @Test func perspectiveHomographyPathsAndKeystoneIsolation() {
+        let converging = [
+            CameraRawGeometryGuide(startX: 0.30, startY: 0.05, endX: 0.20, endY: 0.95),
+            CameraRawGeometryGuide(startX: 0.70, startY: 0.05, endX: 0.85, endY: 0.95)
+        ]
+        #expect(CameraRawPerspective.homography(guides: converging, width: 100, height: 100) != nil)
+        var settings = CameraRawGeometrySettings()
+        settings.upright = .guided
+        settings.guides = converging
+        let convergingCorners = settings.outputCorners(width: 100, height: 100)
+        let identity = [CGPoint(x: 0, y: 100), CGPoint(x: 100, y: 100), CGPoint(x: 100, y: 0), CGPoint(x: 0, y: 0)]
+        #expect(zip(convergingCorners, identity).contains { hypot($0.x - $1.x, $0.y - $1.y) > 0.5 })
+
+        let parallel = [
+            CameraRawGeometryGuide(startX: 0.30, startY: 0.05, endX: 0.32, endY: 0.95),
+            CameraRawGeometryGuide(startX: 0.70, startY: 0.05, endX: 0.72, endY: 0.95)
+        ]
+        #expect(CameraRawPerspective.homography(guides: parallel, width: 100, height: 100) != nil)
+
+        let rectangle = [
+            CameraRawGeometryGuide(startX: 0.25, startY: 0.10, endX: 0.20, endY: 0.90),
+            CameraRawGeometryGuide(startX: 0.75, startY: 0.10, endX: 0.80, endY: 0.90),
+            CameraRawGeometryGuide(startX: 0.15, startY: 0.25, endX: 0.85, endY: 0.20),
+            CameraRawGeometryGuide(startX: 0.15, startY: 0.80, endX: 0.85, endY: 0.75)
+        ]
+        #expect(CameraRawPerspective.homography(guides: rectangle, width: 200, height: 200) != nil)
+        settings.guides = rectangle
+        let rectCorners = settings.outputCorners(width: 200, height: 200)
+        let rectIdentity = [CGPoint(x: 0, y: 200), CGPoint(x: 200, y: 200), CGPoint(x: 200, y: 0), CGPoint(x: 0, y: 0)]
+        #expect(zip(rectCorners, rectIdentity).contains { hypot($0.x - $1.x, $0.y - $1.y) > 0.5 })
+
+        settings.guides = converging
+        settings.vertical = 40
+        settings.horizontal = -35
+        settings.rotate = 12
+        let withKeystone = settings.outputCorners(width: 100, height: 100)
+        #expect(zip(withKeystone, convergingCorners).allSatisfy { hypot($0.x - $1.x, $0.y - $1.y) < 0.01 },
+                "Guided / Auto ignore Vertical, Horizontal, and Rotate")
+
+        var manual = CameraRawGeometrySettings()
+        manual.vertical = 40
+        let manualCorners = manual.outputCorners(width: 100, height: 100)
+        #expect(zip(manualCorners, identity).contains { hypot($0.x - $1.x, $0.y - $1.y) > 0.5 },
+                "Off still uses Vertical / Horizontal / Rotate")
+    }
+
+    /// Reversing a guide must not spin the picture. A tilted line must come out level or upright,
+    /// including on a wide frame. A vanishing point inside the picture must not throw the corners away.
+    @Test func guideDirectionAndVanishingPointStayBounded() throws {
+        #expect(abs(CameraRawPerspective.rotationOntoHorizontal(angleDegrees: 170) - 10) < 0.01)
+        #expect(abs(CameraRawPerspective.rotationOntoHorizontal(angleDegrees: -170) - (-10)) < 0.01)
+        #expect(abs(CameraRawPerspective.rotationOntoVertical(angleDegrees: 100) - (-10)) < 0.01)
+        #expect(abs(CameraRawPerspective.rotationOntoVertical(angleDegrees: -100) - 10) < 0.01)
+        let forward = CameraRawPerspective.meanOrientation([170, -10])
+        let reversed = CameraRawPerspective.meanOrientation([-10, 170])
+        #expect(abs(CameraRawPerspective.foldedOrientation(forward) - CameraRawPerspective.foldedOrientation(reversed)) < 0.01)
+
+        var forwardSettings = CameraRawGeometrySettings()
+        forwardSettings.upright = .guided
+        forwardSettings.guides = [CameraRawGeometryGuide(startX: 0.1, startY: 0.40, endX: 0.9, endY: 0.62)]
+        var reverseSettings = forwardSettings
+        reverseSettings.guides = [CameraRawGeometryGuide(startX: 0.9, startY: 0.62, endX: 0.1, endY: 0.40)]
+        let forwardCorners = forwardSettings.outputCorners(width: 200, height: 80)
+        let reverseCorners = reverseSettings.outputCorners(width: 200, height: 80)
+        #expect(zip(forwardCorners, reverseCorners).allSatisfy { hypot($0.x - $1.x, $0.y - $1.y) < 1 },
+                "reversing a guide must not change the correction")
+
+        let homo = try #require(CameraRawPerspective.homography(guides: forwardSettings.guides, width: 200, height: 80))
+        let start = CameraRawPerspective.segment(forwardSettings.guides[0], width: 200, height: 80).0
+        let end = CameraRawPerspective.segment(forwardSettings.guides[0], width: 200, height: 80).1
+        let mappedStart = homo.applying(start), mappedEnd = homo.applying(end)
+        #expect(abs(mappedStart.y - mappedEnd.y) < 1.5, "a horizontal guide levels: \(mappedStart) \(mappedEnd)")
+
+        let leaning = [CameraRawGeometryGuide(startX: 0.42, startY: 0.08, endX: 0.55, endY: 0.92)]
+        let vertical = try #require(CameraRawPerspective.homography(guides: leaning, width: 120, height: 200))
+        let segment = CameraRawPerspective.segment(leaning[0], width: 120, height: 200)
+        let a = vertical.applying(segment.0), b = vertical.applying(segment.1)
+        #expect(abs(a.x - b.x) < 1.5, "a vertical guide stands upright: \(a) \(b)")
+
+        var crossing = CameraRawGeometrySettings()
+        crossing.upright = .guided
+        crossing.guides = [
+            CameraRawGeometryGuide(startX: 0.2, startY: 0.1, endX: 0.8, endY: 0.9),
+            CameraRawGeometryGuide(startX: 0.8, startY: 0.1, endX: 0.2, endY: 0.9)
+        ]
+        let corners = crossing.outputCorners(width: 100, height: 100)
+        #expect(corners.allSatisfy { $0.x.isFinite && $0.y.isFinite && abs($0.x) < 350 && abs($0.y) < 350 })
+
+        let converging = [
+            CameraRawGeometryGuide(startX: 0.32, startY: 0.08, endX: 0.22, endY: 0.92),
+            CameraRawGeometryGuide(startX: 0.68, startY: 0.08, endX: 0.82, endY: 0.92)
+        ]
+        let parallel = try #require(CameraRawPerspective.homography(guides: converging, width: 160, height: 120))
+        for guide in converging {
+            let line = CameraRawPerspective.segment(guide, width: 160, height: 120)
+            let p = parallel.applying(line.0), q = parallel.applying(line.1)
+            let dx = q.x - p.x, dy = q.y - p.y
+            #expect(abs(dx) < abs(dy) * 0.08 + 1.5, "converging verticals become vertical: \(p) \(q)")
+        }
+    }
+
+    /// Distortion runs once, and only before geometry. Optics alone still match a single lens pass.
+    @Test func distortionIsNotAppliedTwiceAndStaysLateWithoutGeometry() throws {
+        let grid = try checker(20, 20)
+        let k = CameraRawOpticsSettings(distortion: 40).distortionK(profileStrength: PixelFilter.lensStrength)
+        let once = try CameraRawSettings.applyLensDistort(grid, k: k)
+        var distortOnly = CameraRawSettings()
+        distortOnly.optics.distortion = 40
+        #expect(try pixels(distortOnly.apply(grid)) == pixels(once))
+
+        var both = CameraRawSettings()
+        both.optics.distortion = 40
+        both.geometry.vertical = 35
+        var geometry = CameraRawGeometrySettings()
+        geometry.vertical = 35
+        let sequenced = try geometry.apply(once)
+        #expect(try pixels(both.apply(grid)) == pixels(sequenced))
+
+        var profile = CameraRawSettings()
+        profile.optics.enableLensProfile = true
+        profile.optics.profileDistortion = 80
+        profile.optics.profileVignetting = 0
+        profile.geometry.vertical = 20
+        let profileK = profile.optics.distortionK(profileStrength: PixelFilter.lensStrength)
+        let profileOnce = try CameraRawSettings.applyLensDistort(grid, k: profileK)
+        var profileGeometry = profile.geometry
+        #expect(try pixels(profile.apply(grid)) == pixels(profileGeometry.apply(profileOnce)))
+    }
+
+    /// Constrain Crop fits a solid rectangle. A rotated picture must not keep transparent corners inside that rectangle.
+    @Test func constrainCropDropsTransparentCorners() throws {
+        let grid = try checker(48, 48)
+        var plain = CameraRawGeometrySettings()
+        plain.constrainCrop = true
+        #expect(try pixels(plain.apply(grid)) == pixels(grid))
+
+        var rotated = CameraRawGeometrySettings()
+        rotated.rotate = 18
+        rotated.constrainCrop = true
+        let cropped = try rotated.apply(grid)
+        let samples = try pixels(cropped)
+        var minX = cropped.width, minY = cropped.height, maxX = 0, maxY = 0, opaque = 0
+        for index in samples.indices where samples[index][3] > 200 {
+            let x = index % cropped.width, y = index / cropped.width
+            minX = min(minX, x); maxX = max(maxX, x)
+            minY = min(minY, y); maxY = max(maxY, y)
+            opaque += 1
+        }
+        #expect(opaque > 100)
+        var transparent = 0, inside = 0
+        for y in minY...maxY {
+            for x in minX...maxX {
+                inside += 1
+                if samples[y * cropped.width + x][3] < 20 { transparent += 1 }
+            }
+        }
+        #expect(inside > 0)
+        #expect(Double(transparent) / Double(inside) < 0.02, "transparent corners inside the crop: \(transparent) / \(inside)")
+    }
+
+    @Test func volumeStaysMonotonicSymmetricAndPremultiplied() throws {
+        var previous = 0.0
+        for step in stride(from: 0.0, through: 1.0, by: 0.1) {
+            let value = CameraRawGeometrySettings.computeAnamorphosis(a: step, b: 0.4)
+            #expect(value + 1e-9 >= previous)
+            previous = value
+        }
+        let grid = try checker(32, 32)
+        var radial = CameraRawGeometrySettings()
+        radial.volumeMode = .radial
+        radial.volumeRadial = 100
+        let warped = try pixels(radial.apply(grid))
+        for pixel in warped {
+            #expect(pixel[0] <= pixel[3] + 1 && pixel[1] <= pixel[3] + 1 && pixel[2] <= pixel[3] + 1)
+        }
+    }
+
+    @Test func autoUprightOnABlankPictureDoesNotInventGuides() throws {
+        let blank = try gray(width: 48, height: 32)
+        for mode in [CameraRawUprightMode.autoLevel, .autoVertical, .autoFull] {
+            let guides = CameraRawUprightDetection.guides(in: blank, mode: mode)
+            var settings = CameraRawGeometrySettings()
+            settings.upright = mode
+            settings.guides = guides
+            let corners = settings.outputCorners(width: blank.width, height: blank.height)
+            #expect(corners.allSatisfy { $0.x.isFinite && $0.y.isFinite && abs($0.x) < 200 && abs($0.y) < 200 },
+                    "\(mode) on a blank picture: \(corners)")
+        }
+    }
+
+    /// Prints wall time for distortion, volume, perspective, and the three together. Not a pass/fail budget.
+    @Test func geometryPerformanceBaseline() throws {
+        var lines: [String] = []
+        let warmup = try gray(width: 32, height: 32)
+        var warmupSettings = CameraRawSettings()
+        warmupSettings.optics.distortion = 30
+        warmupSettings.geometry.volumeRadial = 40
+        warmupSettings.geometry.vertical = 10
+        _ = try warmupSettings.apply(warmup)
+        let sizes = [(1024, 1024), (4000, 3000), (6000, 4000)]
+        for (width, height) in sizes {
+            let image = try gray(width: width, height: height)
+            var distort = CameraRawSettings()
+            distort.optics.distortion = 30
+            var volume = CameraRawGeometrySettings()
+            volume.volumeRadial = 80
+            var perspective = CameraRawGeometrySettings()
+            perspective.vertical = 25
+            var combined = CameraRawSettings()
+            combined.optics.distortion = 20
+            combined.geometry.volumeRadial = 40
+            combined.geometry.vertical = 15
+            try measure(width, height, "distortion", into: &lines) { _ = try distort.apply(image) }
+            try measure(width, height, "volume", into: &lines) { _ = try volume.apply(image) }
+            try measure(width, height, "perspective", into: &lines) { _ = try perspective.apply(image) }
+            try measure(width, height, "combined", into: &lines) { _ = try combined.apply(image) }
+        }
+        #expect(lines.count == 12)
+    }
+
+    private func measure(_ width: Int, _ height: Int, _ name: String, into lines: inout [String], _ body: () throws -> Void) rethrows {
+        let start = CFAbsoluteTimeGetCurrent()
+        try body()
+        let milliseconds = (CFAbsoluteTimeGetCurrent() - start) * 1000
+        lines.append(String(format: "geometry %dx%d %@: %.1f ms", width, height, name, milliseconds))
+    }
+
+    @Test func computeAnamorphosisAndVolumeModes() {
+        #expect(CameraRawGeometrySettings.computeAnamorphosis(a: 0.8, b: 0) == 0.8)
+        let warped = CameraRawGeometrySettings.computeAnamorphosis(a: 0.8, b: 0.4)
+        #expect(abs(warped) < 0.8)
+        #expect(warped > 0)
+        #expect(CameraRawGeometrySettings.computeAnamorphosis(a: -0.8, b: 0.4) == -CameraRawGeometrySettings.computeAnamorphosis(a: 0.8, b: 0.4))
+        let auto = CameraRawGeometrySettings.autoVolumeSliders(focalLengthMm: 16, sensorWidthMm: 36)
+        #expect(auto.horizontal > 0 && auto.radial > 0)
+        #expect(CameraRawGeometrySettings.autoVolumeSliders(focalLengthMm: 0, sensorWidthMm: 36) == (0, 0, 0))
+    }
+
+    @Test func volumeDeformIdentityAndNonIdentity() throws {
+        let grid = try checker(24, 24)
+        let gridPixels = try pixels(grid)
+        var settings = CameraRawGeometrySettings()
+        #expect(try pixels(settings.apply(grid)) == gridPixels)
+
+        settings.volumeMode = .radial
+        settings.volumeRadial = 120
+        let radial = try pixels(settings.apply(grid))
+        #expect(radial != gridPixels)
+
+        settings = CameraRawGeometrySettings()
+        settings.volumeMode = .horizontal
+        settings.volumeHorizontal = 150
+        #expect(try pixels(settings.apply(grid)) != gridPixels)
+
+        settings = CameraRawGeometrySettings()
+        settings.volumeMode = .vertical
+        settings.volumeVertical = 150
+        #expect(try pixels(settings.apply(grid)) != gridPixels)
+    }
+
+    @Test func distortionRunsBeforePerspectiveWithoutDoubleApplying() throws {
+        let grid = try checker(20, 20)
+        var settings = CameraRawSettings()
+        settings.optics.distortion = 40
+        settings.geometry.vertical = 35
+        let combined = try pixels(settings.apply(grid))
+        let original = try pixels(grid)
+        #expect(combined != original)
+
+        // Early distortion alone matches full apply when late optics would only have repeated it.
+        let earlyOnly = try pixels(CameraRawSettings.applyLensDistort(
+            grid, k: CameraRawOpticsSettings(distortion: 40).distortionK(profileStrength: PixelFilter.lensStrength)))
+        var distortOnly = CameraRawSettings()
+        distortOnly.optics.distortion = 40
+        let fullDistort = try pixels(distortOnly.apply(grid))
+        #expect(earlyOnly == fullDistort)
     }
 
     private func peakIndex(_ bins: [Double]) -> Int {

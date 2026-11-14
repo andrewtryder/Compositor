@@ -9,6 +9,7 @@ extension EditorSession {
             && activeLayerID.map { document?.effectiveVisibleIDs.contains($0) == true } == true
             && (!isMaskSelected || targetMask?.isEnabled == true)
             && (isMaskSelected || activeLayer?.adjustment == nil)
+            && (isMaskSelected || activeLayer?.reshape == nil)
     }
     /// Why a stroke can't start on the target, for the alert, as Photoshop explains a brush it refuses. Nil when
     /// nothing about the target is in the way; while the editor is busy (a transform, a dialog) a press just waits.
@@ -27,6 +28,7 @@ extension EditorSession {
         if !isMaskSelected, layer.adjustment != nil {
             return "“\(layer.name)” is an adjustment layer, with no pixels to paint. Paint on its mask instead."
         }
+        if !isMaskSelected, let message = reshapeDestructiveRefusal(for: layer) { return message }
         if selection?.isEmpty == true {
             return "Nothing is selected, so there’s nowhere to paint. Choose Select › Deselect (⌘D) to paint anywhere."
         }

@@ -245,9 +245,17 @@ struct NativeLayerList: NSViewRepresentable {
             visibilityItem.isEnabled = validateMenuItem(visibilityItem)
             menu.addItem(visibilityItem)
 
+            // 13. Edit RAW Development… (for RAW-backed layers)
+            if let activeLayer = session.activeLayer, activeLayer.rawDevelopment != nil {
+                let editRawItem = NSMenuItem(title: "Edit RAW Development…", action: #selector(editRawDevelopmentAction), keyEquivalent: "")
+                editRawItem.target = self
+                editRawItem.isEnabled = validateMenuItem(editRawItem)
+                menu.addItem(editRawItem)
+            }
+
             menu.addItem(NSMenuItem.separator())
 
-            // 13. Export Layer as PNG… / Export Layers as PNGs…
+            // 14. Export Layer as PNG… / Export Layers as PNGs…
             let exportTitle = session.selectedLayerIDs.count > 1 ? "Export Layers as PNGs…" : "Export Layer as PNG…"
             let exportItem = NSMenuItem(title: exportTitle, action: #selector(exportLayersAction), keyEquivalent: "")
             exportItem.target = self
@@ -291,6 +299,8 @@ struct NativeLayerList: NSViewRepresentable {
                 return session.canEditLayers && session.activeLayer != nil
             case #selector(exportLayersAction):
                 return session.canStartProjectOperation && session.activeLayer != nil && session.exportsLayers != nil
+            case #selector(editRawDevelopmentAction):
+                return session.canEditLayers && session.activeLayer?.rawDevelopment != nil
             default:
                 if menuItem.submenu != nil && menuItem.title == "Add Mask" {
                     return session.canEditMask && session.activeLayer?.mask == nil
@@ -302,6 +312,16 @@ struct NativeLayerList: NSViewRepresentable {
         @objc func exportLayersAction(_ sender: Any?) {
             guard let export = session.exportsLayers else { return }
             Task { await export() }
+        }
+
+        @objc func editRawDevelopmentAction(_ sender: Any?) {
+            guard let id = session.activeLayerID,
+                  session.document?.layers.first(where: { $0.id == id })?.rawDevelopment != nil else { return }
+            // Assign the layer ID before showing the sheet, so the sheet binds to the
+            // actually-right-clicked layer and not a previously active one.
+            session.rawDevelopEditorLayerID = id
+            session.beginRawDevelopmentEdit(layerID: id)
+            session.showRawDevelopEditor = true
         }
 
         @objc func duplicateLayerAction(_ sender: Any?) {

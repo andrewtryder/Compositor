@@ -7,7 +7,12 @@ extension EditorSession {
         var images: [UUID: ImportedImage] = [:]
         var masks: [UUID: ImportedImage] = [:]
         var animations: [UUID: GIFAnimation] = [:]
-        let layers = document.layers.map { layer in
+        var reshapeSources: [UUID: ImportedImage] = [:]
+        var reshapeMeshes: [UUID: MeshWarpPersistentState] = [:]
+        var correctionSources: [UUID: ImportedImage] = [:]
+        var correctionStacks: [UUID: LayerCorrectionStackPersistentState] = [:]
+        var rawSources: [UUID: RawSourceAsset] = [:]
+        let layers = document.layers.map { layer -> ProjectLayerRecord in
             let asset = displayedAsset(for: layer)
             if let asset { images[layer.id] = asset }
             if let mask = layer.mask { masks[layer.id] = mask.asset }
@@ -21,13 +26,98 @@ extension EditorSession {
                     }, deletedFrameIndices: animation.deletedFrameIndices.sorted(), frameOrder: animation.frameOrder,
                     timing: animation.timing == GIFFrameTiming() ? nil : ProjectGIFTimingRecord(animation.timing))
             }
+            var reshape: ProjectReshapeRecord?
+            var correction: ProjectCorrectionStackRecord?
+            var rawSourceFile: String?
+            var raw: ProjectRawDevelopmentRecord?
+            let stack = layer.correctionStack
+            let persistStack = stack.map { !$0.nodes.isEmpty && ($0.hasAnyCameraRaw || $0.nodes.count > 1) } ?? false
+            if persistStack, let stack,
+               let persistent = try? LayerCorrectionStackPersistentState(stack: stack) {
+                correctionSources[layer.id] = stack.source
+                correctionStacks[layer.id] = persistent
+                let sharesReshapeSource = stack.hasReshape
+                let sourceFile = sharesReshapeSource
+                    ? "\(layer.id.uuidString).reshape-source.png"
+                    : "\(layer.id.uuidString).corrections-source.png"
+                correction = ProjectCorrectionStackRecord(
+                    sourceFile: sourceFile,
+                    stackFile: "\(layer.id.uuidString).corrections.json")
+                if let projected = stack.projectedReshape {
+                    reshapeSources[layer.id] = projected.source
+                    reshapeMeshes[layer.id] = projected.persistentState
+                    reshape = ProjectReshapeRecord(
+                        sourceFile: "\(layer.id.uuidString).reshape-source.png",
+                        meshFile: "\(layer.id.uuidString).reshape.json")
+                }
+            } else if let projected = stack?.projectedReshape ?? layer.reshape {
+                // Reshape-only stays on the v22 reshape dual-write path (no corrections.json).
+                reshapeSources[layer.id] = projected.source
+                reshapeMeshes[layer.id] = projected.persistentState
+                reshape = ProjectReshapeRecord(
+                    sourceFile: "\(layer.id.uuidString).reshape-source.png",
+                    meshFile: "\(layer.id.uuidString).reshape.json")
+            }
+            // Persistent RAW development: store the immutable source bytes inside the package.
+            if let rawDevelopment = layer.rawDevelopment {
+                rawSources[layer.id] = rawDevelopment.source
+                rawSourceFile = rawDevelopment.source.fileName()
+                let asShotPersistent = RawDevelopmentSettingsPersistentState(rawDevelopment.source.asShotSettings)
+
+                // Store each metadata value as a JSON-encoded string so complex EXIF/TIFF
+                // dictionaries and arrays round-trip intact, rather than collapsing them to
+                // String(describing:) which loses structure.
+                let cameraMetadataJSON: [String: String] = rawDevelopment.source.cameraMetadata.mapValues { value in
+                    if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+                       let string = String(data: data, encoding: .utf8) {
+                        return string
+                    }
+                    return String(describing: value)
+                }
+
+                raw = ProjectRawDevelopmentRecord(
+                    sourceFile: rawSourceFile ?? "\(layer.id.uuidString).raw-source.dng",
+                    settings: rawDevelopment.settings,
+                    developedWidth: rawDevelopment.developedWidth,
+                    developedHeight: rawDevelopment.developedHeight,
+                    developedColorSpace: rawDevelopment.developedColorSpace,
+                    developedBitsPerComponent: 16, // Output is always 16-bit via RawDevelopmentRenderer
+                    asShotSettings: asShotPersistent,
+                    cameraMetadata: cameraMetadataJSON,
+                    colorSpace: rawDevelopment.source.colorSpace,
+                    bitsPerComponent: rawDevelopment.source.bitsPerComponent,
+                    supportsNoiseReduction: rawDevelopment.source.supportsNoiseReduction,
+                    supportsLensCorrection: rawDevelopment.source.supportsLensCorrection,
+                    supportsHighlightRecovery: rawDevelopment.source.supportsHighlightRecovery
+                )
+            }
             return ProjectLayerRecord(id: layer.id, name: layer.name, isVisible: layer.isVisible,
-                transform: layer.transform, imageFile: asset?.file(for: layer.id), parentID: layer.parentID, isGroup: layer.isGroup, opacity: layer.opacity, blendMode: layer.blendMode, maskFile: layer.mask == nil ? nil : "\(layer.id.uuidString).mask.png", maskEnabled: layer.mask?.isEnabled, maskSourceID: layer.maskSourceID, adjustment: layer.adjustment, maskPlacement: layer.mask?.placement, maskLinked: layer.mask?.isLinked, shape: layer.liveShape?.style, effects: layer.effects, text: layer.liveText?.style, gif: gif)
+                transform: layer.transform, imageFile: asset?.file(for: layer.id), parentID: layer.parentID, isGroup: layer.isGroup, opacity: layer.opacity, blendMode: layer.blendMode, maskFile: layer.mask == nil ? nil : "\(layer.id.uuidString).mask.png", maskEnabled: layer.mask?.isEnabled, maskSourceID: layer.maskSourceID, adjustment: layer.adjustment, maskPlacement: layer.mask?.placement, maskLinked: layer.mask?.isLinked, shape: layer.liveShape?.style, effects: layer.effects, text: layer.liveText?.style, gif: gif, reshape: reshape, correctionStack: correction, rawSourceFile: rawSourceFile, rawDevelopment: raw)
         }
-        return ProjectSnapshot(manifest: ProjectManifest(resolution: document.resolution, documentID: document.id, width: document.width,
+        var manifest = ProjectManifest(resolution: document.resolution, documentID: document.id, width: document.width,
             height: document.height, activeLayerID: activeLayerID, layers: layers,
-            guides: document.guides.isEmpty ? nil : document.guides), images: images, masks: masks,
-            animations: animations)
+            guides: document.guides.isEmpty ? nil : document.guides)
+        // v24 when any stack carries full Camera Raw; v23 for geometry/reshape stacks;
+        // reshape-only packages stay at v22. v25 when any layer carries persistent RAW source.
+        let needsFullCameraRaw = correctionStacks.values.contains { state in
+            state.nodes.contains { $0.kind == .cameraRawFull }
+        }
+        let needsRAW = !rawSources.isEmpty
+        if needsRAW {
+            manifest.version = 25
+        } else if needsFullCameraRaw {
+            manifest.version = 24
+        } else if !correctionStacks.isEmpty {
+            manifest.version = 23
+        } else if !reshapeMeshes.isEmpty {
+            manifest.version = 22
+        } else {
+            manifest.version = ProjectManifest.current
+        }
+        return ProjectSnapshot(manifest: manifest, images: images, masks: masks,
+            animations: animations, reshapeSources: reshapeSources, reshapeMeshes: reshapeMeshes,
+            correctionSources: correctionSources, correctionStacks: correctionStacks,
+            rawSources: rawSources)
     }
 
     /// Called only after the entire package has successfully validated and loaded.
@@ -46,6 +136,8 @@ extension EditorSession {
         sourceImageURL = nil
         renamingLayerID = nil
         history.reset()
+        // Clear stale RAW drafts when a new project is loaded.
+        rawDrafts.removeAll()
         viewport.fit(documentSize: document!.size)
     }
 
@@ -81,6 +173,8 @@ extension EditorSession {
         projectURL = nil
         sourceImageURL = nil
         history.reset()
+        // Clear stale RAW drafts when the project changes.
+        rawDrafts.removeAll()
     }
 
     func createNewProject(width: Int, height: Int, resolution: Double = 72, background: CGColor? = nil) {
@@ -95,13 +189,35 @@ extension ProjectSnapshot {
     /// and the edits that rebuild the document from a snapshot (canvas and image size, crop, trim) all build them here,
     /// so none of them leaves part of a layer behind.
     var documentLayers: [ImageLayer] {
-        manifest.layers.map {
-            ImageLayer(id: $0.id, asset: images[$0.id], name: $0.name,
-                       isVisible: $0.isVisible, transform: $0.transform, parentID: $0.parentID, isGroup: $0.isGroup == true, opacity: $0.opacity ?? 1, blendMode: $0.blendMode ?? .normal, mask: mask(for: $0), maskSourceID: $0.maskSourceID, adjustment: $0.adjustment,
-                       shape: LayerShape.loaded($0.shape, image: images[$0.id]?.image),
-                       effects: $0.effects,
-                       text: LayerText.loaded($0.text, image: images[$0.id]?.image),
-                       gifAnimation: animations[$0.id])
+        manifest.layers.map { record in
+            var reshape: LayerReshape?
+            if let persistent = reshapeMeshes[record.id], let source = reshapeSources[record.id] {
+                reshape = LayerReshape(persistent: persistent, source: source)
+            }
+            var stack: LayerCorrectionStack?
+            if let persistent = correctionStacks[record.id], let source = correctionSources[record.id] {
+                stack = try? persistent.makeStack(source: source)
+            } else if let reshape {
+                // v22 reshape-only: synthesize an in-memory stack so ND ops work after open.
+                stack = LayerCorrectionStack.fromReshape(reshape)
+            }
+            return ImageLayer(id: record.id, asset: images[record.id], name: record.name,
+                       isVisible: record.isVisible, transform: record.transform, parentID: record.parentID, isGroup: record.isGroup == true, opacity: record.opacity ?? 1, blendMode: record.blendMode ?? .normal, mask: mask(for: record), maskSourceID: record.maskSourceID, adjustment: record.adjustment,
+                       shape: LayerShape.loaded(record.shape, image: images[record.id]?.image),
+                       effects: record.effects,
+                       text: LayerText.loaded(record.text, image: images[record.id]?.image),
+                       gifAnimation: animations[record.id],
+                       reshape: reshape ?? stack?.projectedReshape,
+                       correctionStack: stack,
+                       rawDevelopment: record.rawDevelopment.map { rawRecord in
+                           guard let source = rawSources[record.id] else { return nil }
+                           return RawDevelopmentPersistentState(source: source,
+                                                                settings: rawRecord.settings,
+                                                                developedWidth: rawRecord.developedWidth,
+                                                                developedHeight: rawRecord.developedHeight,
+                                                                developedColorSpace: rawRecord.developedColorSpace,
+                                                                developedBitsPerComponent: rawRecord.developedBitsPerComponent)
+                       } ?? nil)
         }
     }
 }

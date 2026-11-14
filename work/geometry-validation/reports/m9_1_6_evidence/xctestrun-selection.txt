@@ -1,0 +1,14 @@
+# SkipTestIdentifiers / OnlyTestIdentifiers as baked into the generated .xctestrun
+# (this is what the test host obeys; the .xctestplan alone is not sufficient)
+
+## CompositorRegression
+# /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Compositor_CompositorRegression_macosx27.2-arm64.xctestrun
+[CompositorTests] SkipTestIdentifiers:
+  MeshWarpPerformanceTests/warmMediansHeavyAt6000x4000()
+  RawDevelopmentIntegrationTests/realRawFixtureEndToEnd()
+
+## CompositorHeavy
+# /Users/atr/Library/Developer/Xcode/DerivedData/Compositor-bejeuxmlppwmzccyrfprwfwapbad/Build/Products/Compositor_CompositorHeavy_macosx27.2-arm64.xctestrun
+[CompositorTests] OnlyTestIdentifiers:
+  MeshWarpPerformanceTests/warmMediansHeavyAt6000x4000()
+  RawDevelopmentIntegrationTests/realRawFixtureEndToEnd()
