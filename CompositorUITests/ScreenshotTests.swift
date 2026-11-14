@@ -35,10 +35,43 @@ final class ScreenshotTests: XCTestCase {
         app.menuBars.menuBarItems["Filter"].click()
         app.menuItems["Camera Raw Filter…"].click()
         shoot("06 Camera Raw", settle: 2)
+
+        // Milestone 10 evidence. The panel is its own dialog beside the document window, so each of these captures
+        // it as an element; a screen grab would be mostly desktop. Light starts expanded, so it already shows the
+        // added Auto row above the six original sliders, and Optics is opened here, with Lens Blur after its own
+        // controls. Every preexisting section keeps its order and place.
+        let panel = app.dialogs["filterPanel"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Camera Raw panel")
+        shoot("07 Camera Raw Light", panel, settle: 1)
+
+        // Optics plus Lens Blur is taller than the panel, so scroll the panel to its end. The scroll is done
+        // unconditionally: reading a SwiftUI element's frame mid-scroll returns stale values, so a frame-driven
+        // loop stops early. Lens Blur is Optics' last group, so the end of the scroll is where it sits.
+        openCameraRawSection("Optics", in: app)
+        let scrollView = app.scrollViews.firstMatch
+        for _ in 0..<90 {
+            scrollView.scroll(byDeltaX: 0, deltaY: -60)
+        }
+        Thread.sleep(forTimeInterval: 1)
+        let lensBlur = app.staticTexts["Lens Blur"].firstMatch
+        XCTAssertTrue(lensBlur.exists, "Optics shows the added Lens Blur group")
+        XCTAssertTrue(app.buttons["Move Focus Region"].firstMatch.exists, "Lens Blur's Move Focus Region button")
+        shoot("08 Camera Raw Optics", panel, settle: 1)
         dismiss(app)
 
         app.typeKey("n", modifierFlags: .command)
-        shoot("07 Second tab", window)
+        shoot("09 Second tab", window)
+    }
+
+    /// Opens a closed Camera Raw section by its header. A section that is already open is left as it is.
+    private func openCameraRawSection(_ section: String, in app: XCUIApplication) {
+        let header = app.buttons[section].firstMatch
+        guard header.waitForExistence(timeout: 3) else { return }
+        // Its own first control: present already means the section is open, and clicking would close it.
+        let opener: [String: String] = ["Optics": "Distortion", "Light": "Exposure"]
+        if let marker = opener[section], app.staticTexts[marker].firstMatch.exists { return }
+        header.click()
+        Thread.sleep(forTimeInterval: 0.8)
     }
 
     /// Waits for animations to finish, then keeps a screenshot of the element, or of the whole screen (for menus and

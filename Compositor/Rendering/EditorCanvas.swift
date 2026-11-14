@@ -117,6 +117,7 @@ final class CanvasView: NSView {
             || session.colorRange != nil
             || session.filterEdit?.samplesWhiteBalance == true || session.filterEdit?.samplesPointColor == true
             || session.filterEdit?.samplesDefringe == true
+            || session.filterEdit?.movesCameraRawLensBlurFocus == true
             || session.filterEdit?.drawingCameraRawGeometryGuide == true
     }
     /// View point where a targeted-adjustment drag began.
@@ -130,6 +131,8 @@ final class CanvasView: NSView {
     private var rgbSplitDrag = false
     /// Volumetric Light's light being dragged on the canvas.
     private var volumetricDrag = false
+    /// Camera Raw Lens Blur's focus region being dragged on the canvas.
+    private var lensBlurDrag = false
     /// ReShape control-point drag in progress.
     private var meshDragging = false
     private var antsTimer: Timer?
@@ -1943,6 +1946,12 @@ final class CanvasView: NSView {
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
             return
         }
+        if session.filterEdit?.movesCameraRawLensBlurFocus == true, !spaceHeld, let document = session.document {
+            session.moveCameraRawLensBlurFocus(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            lensBlurDrag = true
+            synchronizeDisplay()
+            return
+        }
         if session.filterEdit?.drawingCameraRawGeometryGuide == true, !spaceHeld, let document = session.document {
             let documentPoint = session.viewport.documentPoint(from: point, documentSize: document.size)
             // Endpoint dragging takes priority over starting a new guide.
@@ -2088,6 +2097,10 @@ final class CanvasView: NSView {
         if volumetricDrag, let document = session.document {
             session.moveVolumetricLight(to: session.viewport.documentPoint(from: point, documentSize: document.size))
             synchronizeDisplay()
+            return
+        }
+        if lensBlurDrag, let document = session.document {
+            session.moveCameraRawLensBlurFocus(to: session.viewport.documentPoint(from: point, documentSize: document.size))
             return
         }
         if let handle = progressiveDrag, let settings = session.filterEdit?.settings, let document = session.document {
@@ -2317,6 +2330,11 @@ final class CanvasView: NSView {
         if rgbSplitDrag || volumetricDrag {
             rgbSplitDrag = false
             volumetricDrag = false
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if lensBlurDrag {
+            lensBlurDrag = false
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
             return
         }

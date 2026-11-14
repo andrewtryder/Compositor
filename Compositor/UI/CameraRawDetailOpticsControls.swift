@@ -134,6 +134,71 @@ struct CameraRawOpticsControls: View {
                          help: "Brightens or darkens the corners to counter lens falloff.")
             opticsSlider("Midpoint", \.vignetteMidpoint, range: CameraRawOpticsSettings.unitRange, reset: 50,
                          help: "Moves the vignette correction inward or outward.")
+            Text("Lens Blur").font(.subheadline)
+                .padding(.top, 2)
+            lensBlurControls
+        }
+    }
+
+    /// Optics › Lens Blur. New controls only; every control above keeps its place.
+    private var lensBlurControls: some View {
+        let blur = raw.optics.lensBlur
+        return VStack(alignment: .leading, spacing: 8) {
+            lensBlurSlider("Amount", \.amount, range: CameraRawLensBlurSettings.unitRange, reset: 0,
+                           help: "Blurs outside the focus region in the aperture's own shape. Zero leaves the picture alone.")
+            Picker("Aperture", selection: Binding(get: { blur.aperture },
+                                                  set: { value in update { $0.cameraRaw.optics.lensBlur.aperture = value } })) {
+                ForEach(BokehShape.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .help("The shape out-of-focus lights open into: Round, Hexagon, an anamorphic Oval, or Cat's Eye toward the edges.")
+            Group {
+                lensBlurSlider("Focus Range", \.focusRange, range: CameraRawLensBlurSettings.unitRange, reset: 35,
+                               help: "How wide the sharp region is. 100 keeps the whole frame sharp.")
+                lensBlurSlider("Falloff", \.falloff, range: CameraRawLensBlurSettings.unitRange, reset: 40,
+                               help: "How gradually the sharp region gives way to the blur.")
+                lensBlurSlider("Highlights", \.highlights, range: CameraRawLensBlurSettings.unitRange, reset: 50,
+                               help: "Gathers more of each disc's light at its rim, as fast lenses draw it.")
+            }
+            .opacity(blur.amount > 0 ? 1 : 0.45)
+            .disabled(blur.amount <= 0)
+            HStack(spacing: 10) {
+                Button {
+                    session.filterEdit?.movesCameraRawLensBlurFocus.toggle()
+                    session.brushRevision += 1
+                } label: {
+                    Label("Move Focus", systemImage: "scope")
+                }
+                .buttonStyle(.borderless)
+                .tint(session.filterEdit?.movesCameraRawLensBlurFocus == true ? Color.accentColor : Color.secondary)
+                .help("Click or drag on the preview to move the sharp region.")
+                .accessibilityLabel("Move Focus Region")
+                Spacer(minLength: 0)
+            }
+            .opacity(blur.amount > 0 ? 1 : 0.45)
+            .disabled(blur.amount <= 0)
+            Text(CameraRawLensBlur.drawsApertures
+                 ? "Out-of-focus light is drawn as the aperture's own discs."
+                 : "This Mac has no Metal device, so a Gaussian blur stands in for the aperture's discs.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func lensBlurSlider(_ title: String, _ key: WritableKeyPath<CameraRawLensBlurSettings, Double>,
+                                range: ClosedRange<Double>, reset: Double, help: String) -> some View {
+        let value = raw.optics.lensBlur[keyPath: key]
+        return HStack(spacing: 10) {
+            Text(title).frame(minWidth: CameraRawControls.labelWidth, alignment: .leading).help(help)
+            CameraRawSlider(value: value, range: range, track: .plain, help: help,
+                            onChange: { rawValue in
+                                update { $0.cameraRaw.optics.lensBlur[keyPath: key] = rawValue.rounded() }
+                            },
+                            onReset: { update { $0.cameraRaw.optics.lensBlur[keyPath: key] = reset } })
+            TextField(title, value: Binding(get: { raw.optics.lensBlur[keyPath: key] },
+                                            set: { newValue in update { $0.cameraRaw.optics.lensBlur[keyPath: key] = newValue } }),
+                      format: .number.precision(.fractionLength(0)))
+                .frame(width: 56).textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).help(help)
         }
     }
 

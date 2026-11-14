@@ -613,6 +613,8 @@ final class FilterEdit {
     var samplesWhiteBalance = false
     /// Defringe eyedropper, armed from Optics. Sets purple or green hue range from the clicked fringe.
     var samplesDefringe = false
+    /// Lens Blur's focus region is being dragged on the preview from the Optics section.
+    var movesCameraRawLensBlurFocus = false
 /// Guided Upright: drag lines on the preview.
 var drawingCameraRawGeometryGuide = false
 var cameraRawGuideDraft: (start: CGPoint, end: CGPoint)?

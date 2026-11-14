@@ -121,6 +121,44 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         var greenHueHigh: Double = 120
         var vignetteAmount: Double = 0
         var vignetteMidpoint: Double = 50
+        /// Focus-area blur. Absent in projects written before it existed, which decode to no blur.
+        var lensBlur: LensBlur = LensBlur()
+
+        nonisolated struct LensBlur: Codable, Equatable, Sendable {
+            var amount: Double = 0
+            var aperture: String = BokehShape.round.rawValue
+            var focusX: Double = 0.5
+            var focusY: Double = 0.5
+            var focusRange: Double = 35
+            var falloff: Double = 40
+            var highlights: Double = 50
+        }
+
+        init() {}
+
+        /// Each key read if it's there, its default if not, so an `optics` object saved before Lens Blur
+        /// existed still loads.
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            let base = Self()
+            func read<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
+                try values.decodeIfPresent(T.self, forKey: key) ?? fallback
+            }
+            removeChromaticAberration = try read(.removeChromaticAberration, base.removeChromaticAberration)
+            enableLensProfile = try read(.enableLensProfile, base.enableLensProfile)
+            profileDistortion = try read(.profileDistortion, base.profileDistortion)
+            profileVignetting = try read(.profileVignetting, base.profileVignetting)
+            distortion = try read(.distortion, base.distortion)
+            purpleAmount = try read(.purpleAmount, base.purpleAmount)
+            purpleHueLow = try read(.purpleHueLow, base.purpleHueLow)
+            purpleHueHigh = try read(.purpleHueHigh, base.purpleHueHigh)
+            greenAmount = try read(.greenAmount, base.greenAmount)
+            greenHueLow = try read(.greenHueLow, base.greenHueLow)
+            greenHueHigh = try read(.greenHueHigh, base.greenHueHigh)
+            vignetteAmount = try read(.vignetteAmount, base.vignetteAmount)
+            vignetteMidpoint = try read(.vignetteMidpoint, base.vignetteMidpoint)
+            lensBlur = try read(.lensBlur, base.lensBlur)
+        }
     }
 
     nonisolated struct Calibration: Codable, Equatable, Sendable {
@@ -204,13 +242,27 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
                         noiseLuminance: s.detail.noiseLuminance, noiseLuminanceDetail: s.detail.noiseLuminanceDetail,
                         noiseLuminanceContrast: s.detail.noiseLuminanceContrast, noiseColor: s.detail.noiseColor,
                         noiseColorDetail: s.detail.noiseColorDetail, noiseColorSmoothness: s.detail.noiseColorSmoothness)
-        optics = Optics(removeChromaticAberration: s.optics.removeChromaticAberration,
-                        enableLensProfile: s.optics.enableLensProfile, profileDistortion: s.optics.profileDistortion,
-                        profileVignetting: s.optics.profileVignetting, distortion: s.optics.distortion,
-                        purpleAmount: s.optics.purpleAmount, purpleHueLow: s.optics.purpleHueLow,
-                        purpleHueHigh: s.optics.purpleHueHigh, greenAmount: s.optics.greenAmount,
-                        greenHueLow: s.optics.greenHueLow, greenHueHigh: s.optics.greenHueHigh,
-                        vignetteAmount: s.optics.vignetteAmount, vignetteMidpoint: s.optics.vignetteMidpoint)
+        optics = Optics()
+        optics.removeChromaticAberration = s.optics.removeChromaticAberration
+        optics.enableLensProfile = s.optics.enableLensProfile
+        optics.profileDistortion = s.optics.profileDistortion
+        optics.profileVignetting = s.optics.profileVignetting
+        optics.distortion = s.optics.distortion
+        optics.purpleAmount = s.optics.purpleAmount
+        optics.purpleHueLow = s.optics.purpleHueLow
+        optics.purpleHueHigh = s.optics.purpleHueHigh
+        optics.greenAmount = s.optics.greenAmount
+        optics.greenHueLow = s.optics.greenHueLow
+        optics.greenHueHigh = s.optics.greenHueHigh
+        optics.vignetteAmount = s.optics.vignetteAmount
+        optics.vignetteMidpoint = s.optics.vignetteMidpoint
+        optics.lensBlur.amount = s.optics.lensBlur.amount
+        optics.lensBlur.aperture = s.optics.lensBlur.aperture.rawValue
+        optics.lensBlur.focusX = s.optics.lensBlur.focusX
+        optics.lensBlur.focusY = s.optics.lensBlur.focusY
+        optics.lensBlur.focusRange = s.optics.lensBlur.focusRange
+        optics.lensBlur.falloff = s.optics.lensBlur.falloff
+        optics.lensBlur.highlights = s.optics.lensBlur.highlights
         geometry = s.geometry
         calibration = Calibration(process: s.calibration.process.rawValue, shadowTint: s.calibration.shadowTint,
                                   redHue: s.calibration.redHue, redSaturation: s.calibration.redSaturation,
@@ -285,6 +337,8 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
             optics.purpleAmount, optics.purpleHueLow, optics.purpleHueHigh,
             optics.greenAmount, optics.greenHueLow, optics.greenHueHigh,
             optics.vignetteAmount, optics.vignetteMidpoint,
+            optics.lensBlur.amount, optics.lensBlur.focusX, optics.lensBlur.focusY,
+            optics.lensBlur.focusRange, optics.lensBlur.falloff, optics.lensBlur.highlights,
             calibration.shadowTint, calibration.redHue, calibration.redSaturation,
             calibration.greenHue, calibration.greenSaturation, calibration.blueHue, calibration.blueSaturation
         ]
@@ -380,6 +434,13 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         settings.optics.greenHueHigh = optics.greenHueHigh
         settings.optics.vignetteAmount = optics.vignetteAmount
         settings.optics.vignetteMidpoint = optics.vignetteMidpoint
+        settings.optics.lensBlur.amount = optics.lensBlur.amount
+        settings.optics.lensBlur.aperture = BokehShape(rawValue: optics.lensBlur.aperture) ?? .round
+        settings.optics.lensBlur.focusX = optics.lensBlur.focusX
+        settings.optics.lensBlur.focusY = optics.lensBlur.focusY
+        settings.optics.lensBlur.focusRange = optics.lensBlur.focusRange
+        settings.optics.lensBlur.falloff = optics.lensBlur.falloff
+        settings.optics.lensBlur.highlights = optics.lensBlur.highlights
         settings.geometry = geometry
         settings.calibration.process = CameraRawProcessVersion(rawValue: calibration.process) ?? .version6
         settings.calibration.shadowTint = calibration.shadowTint

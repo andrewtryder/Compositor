@@ -273,6 +273,11 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
                 source = try CameraRawMiniature.apply(source, settings: settings.miniature, scale: CGFloat(pixelScale))
             }
         }
+        // Lens Blur is spatial like the geometry passes, so it runs before the color grade and after the warp:
+        // its discs are round in the corrected picture, not in the distorted one.
+        if clipping == nil && !sharpenMask && visualizePointColor < 0 && !settings.optics.lensBlur.isIdentity {
+            source = try CameraRawLensBlur.apply(source, settings: settings.optics.lensBlur, scale: CGFloat(pixelScale))
+        }
         func applyTable(_ table: [Float]?, pixels: UnsafeMutablePointer<UInt8>, width: Int, height: Int, stride: Int, clipping: Int32) {
             if usesGPU, clipping == 0, let table,
                MetalCameraRawLookup.shared?.apply(pixels, width: width, height: height, rowBytes: stride,
@@ -510,6 +515,16 @@ extension EditorSession {
         settings = edit.settings
         settings.cameraRaw.temperature = solved.temperature
         settings.cameraRaw.tint = solved.tint
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Lens Blur's focus region follows the pointer. Armed from Optics, then dragged on the preview.
+    func moveCameraRawLensBlurFocus(to point: CGPoint) {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing,
+              let normalized = cameraRawNormalizedPoint(at: point) else { return }
+        var settings = edit.settings
+        settings.cameraRaw.optics.lensBlur.focusX = Double(normalized.x)
+        settings.cameraRaw.optics.lensBlur.focusY = Double(normalized.y)
         updateFilter(settings, preview: edit.preview)
     }
 
