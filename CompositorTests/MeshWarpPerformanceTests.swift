@@ -196,6 +196,12 @@ struct MeshWarpPerformanceTests {
                 rebuildSamples.append((CFAbsoluteTimeGetCurrent() - t0) * 1000)
             }
 
+            // Deform both meshes before GPU rendering: render() returns false for identity meshes.
+            _ = regular.applyLocalCorrection(.volume(volume), region: region,
+                                             imageWidth: width, imageHeight: height)
+            _ = adaptive.applyLocalCorrection(.volume(volume), region: region,
+                                              imageWidth: width, imageHeight: height)
+
             var gpuRegular: [Double] = []
             var gpuAdaptive: [Double] = []
             if MetalMeshWarp.shared != nil {
@@ -205,9 +211,7 @@ struct MeshWarpPerformanceTests {
                     #expect(session.render(mesh: regular, sample: &sample, wait: true))
                     if i >= 1 { gpuRegular.append(sample.kernelMilliseconds) }
                 }
-                // Apply local correction then re-render; source stays resident.
-                _ = regular.applyLocalCorrection(.volume(volume), region: region,
-                                                 imageWidth: width, imageHeight: height)
+                // Re-render the same deformed mesh; source stays resident.
                 for i in 0..<5 {
                     var sample = MetalMeshWarpSession.Sample()
                     #expect(session.render(mesh: regular, sample: &sample, wait: true))

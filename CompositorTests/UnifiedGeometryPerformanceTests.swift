@@ -158,11 +158,16 @@ struct UnifiedGeometryPerformanceTests {
         lines.append("- Load median: \(String(format: "%.2f", median(loadSamples))) ms")
         lines.append("")
 
-        let report = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("work/geometry-validation/reports/MILESTONE_8_6_PERF.txt")
+        // Write benchmark output to a writable temporary test-artifacts directory so the test
+        // runs independently of repository write permissions. The checked-in report, if any,
+        // is updated as a separate explicit operation.
+        let report = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MILESTONE_8_6_PERF-\(UUID().uuidString).txt")
         try lines.joined(separator: "\n").write(to: report, atomically: true, encoding: .utf8)
         #expect(FileManager.default.fileExists(atPath: report.path))
+        // Validation: the output location must be in the user's temp directory, never inside
+        // the (possibly read-only) source tree.
+        #expect(report.path.hasPrefix(FileManager.default.temporaryDirectory.path),
+                "benchmark output must not be written into the source tree")
     }
 }

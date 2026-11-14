@@ -236,6 +236,41 @@ struct CameraRawGeometryGuideTests {
         #expect(abs(after.endY - original.endY) < 0.0001)
     }
 
+    @Test func endpointDragEscapeRestoresMovedEndpoint() throws {
+        let session = try cameraRawSession()
+        let edit = try #require(session.filterEdit)
+        edit.settings.cameraRaw.geometry.guides = [
+            CameraRawGeometryGuide(startX: 0.2, startY: 0.3, endX: 0.8, endY: 0.7)
+        ]
+        let original = edit.settings.cameraRaw.geometry.guides[0]
+
+        let image = edit.previewSource
+        let startPixel = CGPoint(x: 0.2 * CGFloat(image.width), y: 0.3 * CGFloat(image.height))
+        let startDoc = startPixel.applying(edit.previewMapping)
+        session.beginCameraRawGuideEndpointDrag(at: startDoc, zoom: session.viewport.zoom)
+        #expect(edit.cameraRawDraggingGuideIndex == 0)
+        #expect(edit.cameraRawDraggingEndpoint == false)
+
+        // Perform an actual move before pressing Escape.
+        let newNormalized = CGPoint(x: 0.45, y: 0.55)
+        let newPixel = CGPoint(x: newNormalized.x * CGFloat(image.width), y: newNormalized.y * CGFloat(image.height))
+        let newDoc = newPixel.applying(edit.previewMapping)
+        session.continueCameraRawGuideEndpointDrag(to: newDoc)
+        let midDrag = edit.settings.cameraRaw.geometry.guides[0]
+        #expect(abs(midDrag.startX - 0.45) < 0.001, "start moved during drag")
+        #expect(abs(midDrag.startY - 0.55) < 0.001, "start moved during drag")
+
+        // Escape must restore the exact original coordinates.
+        session.cancelCameraRawGuideEndpointDrag()
+        #expect(edit.cameraRawDraggingGuideIndex == nil)
+        #expect(edit.cameraRawDraggingEndpoint == false)
+        let after = edit.settings.cameraRaw.geometry.guides[0]
+        #expect(abs(after.startX - original.startX) < 0.0001, "start restored after Escape")
+        #expect(abs(after.startY - original.startY) < 0.0001, "start restored after Escape")
+        #expect(abs(after.endX - original.endX) < 0.0001, "end unchanged after Escape")
+        #expect(abs(after.endY - original.endY) < 0.0001, "end unchanged after Escape")
+    }
+
     @Test func endpointDragOppositeEndpointStaysFixed() throws {
         let session = try cameraRawSession()
         let edit = try #require(session.filterEdit)
@@ -267,11 +302,19 @@ struct CameraRawGeometryGuideTests {
     @Test func perspectiveRecalculatesWhenEndpointMoves() throws {
         let session = try cameraRawSession()
         let edit = try #require(session.filterEdit)
+        // Guided upright must be explicitly enabled; the production default is .off, so the solver
+        // would otherwise ignore the guides and the perspective would never change.
+        edit.settings.cameraRaw.geometry.upright = .guided
         edit.settings.cameraRaw.geometry.guides = [
             CameraRawGeometryGuide(startX: 0.2, startY: 0.1, endX: 0.3, endY: 0.9),
             CameraRawGeometryGuide(startX: 0.7, startY: 0.1, endX: 0.8, endY: 0.9)
         ]
+        // Verify the initial homography is valid and the selected guides are geometrically meaningful
+        // (two roughly vertical guides, suitable for a perspective solve).
         let before = edit.settings.cameraRaw.geometry.outputCorners(width: 100, height: 100)
+        let identity = CameraRawPerspective.identityCorners(width: 100, height: 100)
+        #expect(!zip(before, identity).allSatisfy { hypot($0.x - $1.x, $0.y - $1.y) < 0.05 },
+                "initial perspective corners differ from identity: guided solve is active")
 
         let image = edit.previewSource
         let startPixel = CGPoint(x: 0.2 * CGFloat(image.width), y: 0.1 * CGFloat(image.height))
@@ -286,6 +329,15 @@ struct CameraRawGeometryGuideTests {
         session.continueCameraRawGuideEndpointDrag(to: newDoc)
 
         let after = edit.settings.cameraRaw.geometry.outputCorners(width: 100, height: 100)
+        // Verify the guide coordinate changed and the untouched endpoint stayed fixed.
+        let moved = edit.settings.cameraRaw.geometry.guides[0]
+        #expect(abs(moved.startX - 0.45) < 0.001, "start endpoint moved")
+        #expect(abs(moved.startY - 0.1) < 0.001, "start endpoint y unchanged")
+        #expect(abs(moved.endX - 0.3) < 0.001, "untouched end endpoint x unchanged")
+        #expect(abs(moved.endY - 0.9) < 0.001, "untouched end endpoint y unchanged")
+        // A mathematically meaningful assertion: the perspective corners must actually change.
+        let displacement = zip(before, after).map { hypot($0.x - $1.x, $0.y - $1.y) }
+        #expect(displacement.max()! > 0.5, "moving an endpoint changes the perspective corners meaningfully")
         #expect(!zip(before, after).allSatisfy { hypot($0.x - $1.x, $0.y - $1.y) < 1 },
               "moving an endpoint changes the perspective corners")
     }

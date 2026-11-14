@@ -710,11 +710,13 @@ extension EditorSession {
     }
 
     /// Begins dragging a Camera Raw guide endpoint. The opposite endpoint stays fixed.
+    /// Captures the original guide coordinates so Escape can restore them exactly.
     func beginCameraRawGuideEndpointDrag(at documentPoint: CGPoint, zoom: CGFloat) {
         guard let edit = filterEdit else { return }
         guard let hit = cameraRawHitGuideEndpoint(at: documentPoint, zoom: zoom) else { return }
         edit.cameraRawDraggingGuideIndex = hit.guideIndex
         edit.cameraRawDraggingEndpoint = hit.endpoint
+        edit.cameraRawDragOriginalGuide = edit.settings.cameraRaw.geometry.guides[hit.guideIndex]
     }
 
     /// Moves the currently dragged endpoint to a document point. The opposite endpoint is unchanged.
@@ -740,8 +742,18 @@ extension EditorSession {
     /// Cancels an in-progress endpoint drag, restoring the guide to its original coordinates.
     func cancelCameraRawGuideEndpointDrag() {
         guard let edit = filterEdit else { return }
-        edit.cameraRawDraggingGuideIndex = nil
-        edit.cameraRawDraggingEndpoint = false
+        defer {
+            edit.cameraRawDraggingGuideIndex = nil
+            edit.cameraRawDraggingEndpoint = false
+            edit.cameraRawDragOriginalGuide = nil
+        }
+        guard let guideIndex = edit.cameraRawDraggingGuideIndex,
+              edit.settings.cameraRaw.geometry.guides.indices.contains(guideIndex),
+              let original = edit.cameraRawDragOriginalGuide else { return }
+        // Restore the exact coordinates captured at drag start; no document commit occurs during cancellation.
+        var settings = edit.settings
+        settings.cameraRaw.geometry.guides[guideIndex] = original
+        edit.settings = settings
     }
 
     private func cameraRawNormalizedPoint(at point: CGPoint) -> CGPoint? {
