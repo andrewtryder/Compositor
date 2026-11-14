@@ -44,9 +44,10 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Camera Raw panel")
         shoot("07 Camera Raw Light", panel, settle: 1)
 
-        // Optics plus Lens Blur is taller than the panel, so scroll the panel to its end. The scroll is done
-        // unconditionally: reading a SwiftUI element's frame mid-scroll returns stale values, so a frame-driven
-        // loop stops early. Lens Blur is Optics' last group, so the end of the scroll is where it sits.
+        // Optics plus Lens Blur and Lens Profile is taller than the panel, so scroll the panel to its end. The scroll
+        // is done unconditionally: reading a SwiftUI element's frame mid-scroll returns stale values, so a
+        // frame-driven loop stops early. Lens Profile is Optics' last group, so the end of the scroll is where it sits,
+        // with Lens Blur just above it: one capture shows both.
         openCameraRawSection("Optics", in: app)
         let scrollView = app.scrollViews.firstMatch
         for _ in 0..<90 {
@@ -57,10 +58,28 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(lensBlur.exists, "Optics shows the added Lens Blur group")
         XCTAssertTrue(app.buttons["Move Focus Region"].firstMatch.exists, "Lens Blur's Move Focus Region button")
         shoot("08 Camera Raw Optics", panel, settle: 1)
+
+        // Milestone 10.3: Lens Profile follows Lens Blur at the end of Optics, so the same scroll already shows it.
+        let lensProfile = app.staticTexts["Lens Profile"].firstMatch
+        XCTAssertTrue(lensProfile.exists, "Optics shows the added Lens Profile group")
+        XCTAssertTrue(app.staticTexts["Provider"].firstMatch.exists, "the provider row is present")
+        shoot("09 Camera Raw Lens Profile", panel, settle: 1)
+
+        // Choosing Lensfun reveals the install status, the import control and the "no database yet" copy: the whole
+        // of what M10.3 adds, captured with nothing installed so the evidence shows the state a new user meets.
+        // A SwiftUI menu-style Picker does not surface as a pop-up button, so it is found by its identifier.
+        let provider = app.descendants(matching: .any).matching(identifier: "lensProfileProvider").firstMatch
+        XCTAssertTrue(provider.waitForExistence(timeout: 3), "the Lens Profile provider picker is reachable")
+        provider.click()
+        let lensfun = app.menuItems["Lensfun"].firstMatch
+        if lensfun.waitForExistence(timeout: 3) { lensfun.click() }
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertTrue(app.staticTexts["Lens Profile"].firstMatch.exists, "Lens Profile survives choosing a provider")
+        shoot("10 Camera Raw Lens Profile, Lensfun chosen", panel, settle: 1)
         dismiss(app)
 
         app.typeKey("n", modifierFlags: .command)
-        shoot("09 Second tab", window)
+        shoot("11 Second tab", window)
     }
 
     /// Opens a closed Camera Raw section by its header. A section that is already open is left as it is.

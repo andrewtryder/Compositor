@@ -137,6 +137,9 @@ struct CameraRawOpticsControls: View {
             Text("Lens Blur").font(.subheadline)
                 .padding(.top, 2)
             lensBlurControls
+            Text("Lens Profile").font(.subheadline)
+                .padding(.top, 2)
+            CameraRawLensProfileControls(session: session)
         }
     }
 

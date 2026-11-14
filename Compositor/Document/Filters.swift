@@ -615,6 +615,12 @@ final class FilterEdit {
     var samplesDefringe = false
     /// Lens Blur's focus region is being dragged on the preview from the Optics section.
     var movesCameraRawLensBlurFocus = false
+    /// Camera, lens, focal length and aperture of the layer being edited, for Optics › Lens Profile. Empty when the
+    /// layer came from a file with no tags.
+    var lensMetadata = LensMetadata()
+    /// The layer's retained RAW development, if it has any: what decides whether the decoder's lens correction can
+    /// still be taken back out. Nil for a JPEG, TIFF or any other rendered layer.
+    var rawDevelopment: RawDevelopmentPersistentState?
 /// Guided Upright: drag lines on the preview.
 var drawingCameraRawGeometryGuide = false
 var cameraRawGuideDraft: (start: CGPoint, end: CGPoint)?
@@ -681,6 +687,8 @@ var cameraRawDragOriginalGuide: CameraRawGeometryGuide?
         self.kind = kind
         self.settings = settings.normalized
         layerID = layer.id; original = asset; transform = layer.transform; self.selection = selection
+        lensMetadata = asset.lensMetadata
+        rawDevelopment = layer.rawDevelopment
         let ready = try Self.prepared(kind: kind, from: asset.image, placed: layer.transform)
         mapping = ready.mapping
         previewSource = ready.previewSource
@@ -1297,5 +1305,36 @@ extension EditorSession {
             isMaskSelected = true
             endEdit()
         } catch { brushError = error.localizedDescription }
+    }
+}
+
+// MARK: - Lens correction policy
+
+extension FilterEdit {
+    /// What the layer's pixels are, as far as lens correction goes, so the panel can say whether a profile may be
+    /// applied without correcting the same distortion twice.
+    ///
+    /// A RAW that Compositor still holds the bytes for can be developed again with the decoder's lens correction
+    /// switched off. One that was developed and baked cannot: whatever the decoder did is in its pixels. Anything
+    /// that is not a RAW may already carry the camera's own correction, which no metadata here can rule out.
+    var lensCorrectionSource: CameraRawLensCorrectionPolicy.Source {
+        guard let raw = rawDevelopment else { return .renderedImage }
+        // Retained RAW bytes: the decoder can run again, so its correction is still a choice.
+        return raw.source.rawData.isEmpty ? .previouslyDevelopedRaw : .redevelopableRaw
+    }
+
+    /// Whether Apple's correction is in these pixels right now. Read from the layer's RAW development settings, so a
+    /// baked develop is reported as baked rather than as still being a choice.
+    var appleLensCorrectionActive: Bool {
+        rawDevelopment?.settings.lensCorrection ?? false
+    }
+
+    /// The policy the panel explains, for the provider in the current settings.
+    var lensCorrectionPolicy: CameraRawLensCorrectionPolicy {
+        CameraRawLensCorrectionPolicy(
+            source: lensCorrectionSource,
+            provider: settings.cameraRaw.optics.lensProfile.provider,
+            appleCorrectionActive: appleLensCorrectionActive,
+            manualAdjustmentsActive: settings.cameraRaw.optics.adjusts)
     }
 }

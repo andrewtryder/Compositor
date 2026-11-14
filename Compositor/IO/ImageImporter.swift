@@ -18,6 +18,9 @@ nonisolated struct ImportedImage: @unchecked Sendable {
     var focalLengthMm: Double = 0
     /// Estimated sensor width in mm from EXIF (or from 35 mm equivalent). Zero when unknown.
     var sensorWidthMm: Double = 0
+    /// Camera, lens, focal length and aperture as the file recorded them, for Optics › Lens Profile. Empty when the
+    /// file carried no tags; never invented.
+    var lensMetadata = LensMetadata()
     /// An HDR layer: `deep` holds light brighter than white, as half floats (`DeepLayer.hdr`).
     var isHDR: Bool { deep.map(DeepLayer.isHDR) ?? false }
     /// Its file in a project: EXR for an HDR layer, which PNG can't hold, otherwise PNG.
@@ -193,7 +196,10 @@ actor ImageImporter {
             guard let thumbnail = context.createCGImage(preview, from: preview.extent.integral, format: .RGBA8, colorSpace: sRGB) else {
                 throw ImageImportError.unreadable
             }
-            return ImportedImage(image: image, thumbnail: thumbnail, name: url.deletingPathExtension().lastPathComponent)
+            var asset = ImportedImage(image: image, thumbnail: thumbnail, name: url.deletingPathExtension().lastPathComponent)
+            // Lens Profile reads the same dictionaries ImageIO just handed over, so no second file read.
+            asset.lensMetadata = LensMetadata(imageProperties: properties)
+            return asset
         }
     }
 

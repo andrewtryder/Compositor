@@ -177,6 +177,9 @@ private struct GIFLayerTimelineState {
 final class EditorSession {
     var skipsInitialClipboardCanvasSize = false
     var document: CanvasDocument?
+    /// The optional Lensfun database, shared by every Lens Profile panel so its install state survives the panel
+    /// closing. Reading it is cheap when nothing is installed.
+    let lensfunDatabase = LensfunDatabaseManager()
     /// Runtime animation data keyed by the imported layer, so switching layers restores that GIF's timeline.
     private var gifTimelinesByLayerID: [UUID: GIFLayerTimelineState] = [:]
     private func gifTimeline(for layer: ImageLayer) -> GIFLayerTimelineState? {
@@ -1409,6 +1412,7 @@ var rawDevelopEditorLayerID: UUID?
                     let lens = RawImporter.lensGeometry(url)
                     asset.focalLengthMm = lens.focalLengthMm
                     asset.sensorWidthMm = lens.sensorWidthMm
+                    asset.lensMetadata = LensMetadata(cameraMetadata: cameraMetadata)
                     insert(asset, centeredAt: point)
                     // Attach RAW source ownership and development settings to the new layer.
                     // Must mutate the layer in-place in the document's array; a local copy would be discarded.

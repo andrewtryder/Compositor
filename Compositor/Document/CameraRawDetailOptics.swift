@@ -59,6 +59,8 @@ nonisolated struct CameraRawOpticsSettings: Equatable, Sendable {
     var vignetteMidpoint: Double = 50
     /// Focus-area blur. Part of Optics, but drawn by its own spatial pass rather than the per-pixel optics kernel.
     var lensBlur = CameraRawLensBlurSettings()
+    /// Camera-specific profile discovery and selection. Additive: it changes no pixels in M10.3.
+    var lensProfile = CameraRawLensProfileSettings()
 
     static let toneRange: ClosedRange<Double> = -100...100
     static let unitRange: ClosedRange<Double> = 0...100
@@ -66,7 +68,7 @@ nonisolated struct CameraRawOpticsSettings: Equatable, Sendable {
 
     var adjusts: Bool {
         removeChromaticAberration || enableLensProfile || distortion != 0 || purpleAmount != 0 || greenAmount != 0
-            || vignetteAmount != 0 || !lensBlur.isIdentity
+            || vignetteAmount != 0 || !lensBlur.isIdentity || lensProfile.adjustsPixels
     }
 
     var normalized: Self {
@@ -85,6 +87,7 @@ nonisolated struct CameraRawOpticsSettings: Equatable, Sendable {
         if result.purpleHueLow > result.purpleHueHigh { swap(&result.purpleHueLow, &result.purpleHueHigh) }
         if result.greenHueLow > result.greenHueHigh { swap(&result.greenHueLow, &result.greenHueHigh) }
         result.lensBlur = lensBlur.normalized
+        result.lensProfile = lensProfile.normalized
         return result
     }
 

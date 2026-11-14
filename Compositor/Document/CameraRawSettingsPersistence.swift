@@ -123,6 +123,8 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         var vignetteMidpoint: Double = 50
         /// Focus-area blur. Absent in projects written before it existed, which decode to no blur.
         var lensBlur: LensBlur = LensBlur()
+        /// Camera-specific profile choice. Absent in older projects, which decode to Apple Native with no selection.
+        var lensProfile: LensProfile = LensProfile()
 
         nonisolated struct LensBlur: Codable, Equatable, Sendable {
             var amount: Double = 0
@@ -132,6 +134,15 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
             var focusRange: Double = 35
             var falloff: Double = 40
             var highlights: Double = 50
+        }
+
+        nonisolated struct LensProfile: Codable, Equatable, Sendable {
+            var provider: String = CameraRawLensProfileProvider.appleNative.rawValue
+            var automatic: Bool = true
+            var lensID: String = ""
+            var cameraID: String = ""
+
+            init() {}
         }
 
         init() {}
@@ -158,6 +169,7 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
             vignetteAmount = try read(.vignetteAmount, base.vignetteAmount)
             vignetteMidpoint = try read(.vignetteMidpoint, base.vignetteMidpoint)
             lensBlur = try read(.lensBlur, base.lensBlur)
+            lensProfile = try read(.lensProfile, base.lensProfile)
         }
     }
 
@@ -263,6 +275,10 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         optics.lensBlur.focusRange = s.optics.lensBlur.focusRange
         optics.lensBlur.falloff = s.optics.lensBlur.falloff
         optics.lensBlur.highlights = s.optics.lensBlur.highlights
+        optics.lensProfile.provider = s.optics.lensProfile.provider.rawValue
+        optics.lensProfile.automatic = s.optics.lensProfile.selection.automatic
+        optics.lensProfile.lensID = s.optics.lensProfile.selection.lensID
+        optics.lensProfile.cameraID = s.optics.lensProfile.selection.cameraID
         geometry = s.geometry
         calibration = Calibration(process: s.calibration.process.rawValue, shadowTint: s.calibration.shadowTint,
                                   redHue: s.calibration.redHue, redSaturation: s.calibration.redSaturation,
@@ -441,6 +457,10 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         settings.optics.lensBlur.focusRange = optics.lensBlur.focusRange
         settings.optics.lensBlur.falloff = optics.lensBlur.falloff
         settings.optics.lensBlur.highlights = optics.lensBlur.highlights
+        settings.optics.lensProfile.provider = CameraRawLensProfileProvider(rawValue: optics.lensProfile.provider) ?? .appleNative
+        settings.optics.lensProfile.selection = CameraRawLensProfileSelection(automatic: optics.lensProfile.automatic,
+                                                                            lensID: optics.lensProfile.lensID,
+                                                                            cameraID: optics.lensProfile.cameraID).normalized
         settings.geometry = geometry
         settings.calibration.process = CameraRawProcessVersion(rawValue: calibration.process) ?? .version6
         settings.calibration.shadowTint = calibration.shadowTint

@@ -62,6 +62,13 @@ final class CameraRawSectionOrderTests: XCTestCase {
         XCTAssertTrue(app.buttons["Move Focus Region"].firstMatch.exists, "Lens Blur can move its focus region")
         XCTAssertTrue(app.staticTexts["Amount"].firstMatch.exists, "Lens Blur has its Amount slider")
 
+        // Milestone 10.3's Lens Profile group follows Lens Blur, and its provider choice is a visible control rather
+        // than a hidden default. The panel scrolls, so this only has to prove the group exists after Lens Blur.
+        let profileMarker = app.staticTexts["Lens Profile"].firstMatch
+        XCTAssertTrue(profileMarker.waitForExistence(timeout: 5), "Optics has the added Lens Profile group")
+        XCTAssertLessThan(flourishMarker.frame.minY, profileMarker.frame.minY, "Lens Profile follows Lens Blur")
+        XCTAssertTrue(app.staticTexts["Provider"].firstMatch.exists, "the provider is a visible, labeled choice")
+
         // The other sections are untouched by the additions.
         for name in ["Curve", "Color Mixer", "Detail", "Geometry", "Calibration", "Effects", "Color Grading"] {
             XCTAssertTrue(app.buttons[name].firstMatch.exists, "section \(name) is still reachable")
