@@ -613,9 +613,13 @@ final class FilterEdit {
     var samplesWhiteBalance = false
     /// Defringe eyedropper, armed from Optics. Sets purple or green hue range from the clicked fringe.
     var samplesDefringe = false
-    /// Guided Upright: drag lines on the preview.
-    var drawingCameraRawGeometryGuide = false
-    var cameraRawGuideDraft: (start: CGPoint, end: CGPoint)?
+/// Guided Upright: drag lines on the preview.
+var drawingCameraRawGeometryGuide = false
+var cameraRawGuideDraft: (start: CGPoint, end: CGPoint)?
+/// When endpoint dragging is in progress: the index of the guide in `geometry.guides`, and whether
+/// the endpoint being dragged is the end (true) or the start (false).
+var cameraRawDraggingGuideIndex: Int?
+var cameraRawDraggingEndpoint: Bool = false
     /// Guided lines set aside while Auto is searching, so a miss or a return to Guided does not lose them.
     var cameraRawManualGuides: [CameraRawGeometryGuide]?
     /// True after Auto upright has searched the preview, so the panel can say when nothing was found.
