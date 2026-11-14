@@ -198,6 +198,19 @@ struct CameraRawControls: View {
 
     private var lightControls: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // Auto sits above the six sliders, which keep their order, ranges and defaults.
+            HStack(spacing: 10) {
+                Button("Auto") {
+                    Task { await session.applyCameraRawAutoTone() }
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .disabled(session.filterEdit?.committing == true)
+                .help("Sets Exposure through Blacks from the picture's own tones.")
+                .accessibilityLabel("Auto Tone")
+                Spacer(minLength: 0)
+            }
             slider("Exposure", \.exposure, range: CameraRawSettings.exposureRange, decimals: 2, clipping: .highlights,
                    help: "Brightens or darkens the whole picture, in stops of light. Hold Option to see clipped highlights.")
             slider("Contrast", \.contrast, range: CameraRawSettings.toneRange, decimals: 0, clipping: nil,
