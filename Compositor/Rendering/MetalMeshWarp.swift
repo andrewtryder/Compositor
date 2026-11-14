@@ -305,9 +305,9 @@ final class MetalMeshWarpSession {
     let width: Int
     let height: Int
     private let metal: MetalMeshWarp
-    private let sourceTexture: MTLTexture
-    private let destinationTexture: MTLTexture
-    private var triangleBuffer: MTLBuffer
+    private var sourceTexture: MTLTexture?
+    private var destinationTexture: MTLTexture?
+    private var triangleBuffer: MTLBuffer?
     private var triangleCapacity: Int
     private var lastCommand: MTLCommandBuffer?
     private var generation: UInt64 = 0
@@ -327,7 +327,7 @@ final class MetalMeshWarpSession {
         let width = image.width, height = image.height
         guard width > 0, height > 0 else { return nil }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,
-                                                                  width: width, height: height, mipmapped: false)
+                                                                   width: width, height: height, mipmapped: false)
         descriptor.usage = [.shaderRead, .shaderWrite]
         descriptor.storageMode = .shared
         guard let source = metal.device.makeTexture(descriptor: descriptor),
@@ -349,7 +349,8 @@ final class MetalMeshWarpSession {
 
     /// Live preview for the GPU canvas. Core Image synchronizes with the last submitted command.
     var image: CIImage? {
-        CIImage(mtlTexture: destinationTexture, options: [.colorSpace: colorSpace])
+        guard let destinationTexture else { return nil }
+        return CIImage(mtlTexture: destinationTexture, options: [.colorSpace: colorSpace])
     }
 
     /// Encodes a warp into the destination texture. Source stays untouched across calls.
@@ -360,12 +361,13 @@ final class MetalMeshWarpSession {
         guard !mesh.isIdentity else { return false }
         let triangles = mesh.triangles()
         guard !triangles.isEmpty else { return false }
+        guard let sourceTexture, let destinationTexture, let triangleBuffer else { return false }
         let packed = MetalMeshWarp.pack(triangles)
         let triangleBytes = packed.count * MemoryLayout<MetalMeshWarp.TriangleGPU>.stride
-        if triangleBuffer.length < triangleBytes {
-            guard let grown = metal.device.makeBuffer(length: max(triangleBytes, triangleBuffer.length * 2),
+        if self.triangleBuffer!.length < triangleBytes {
+            guard let grown = metal.device.makeBuffer(length: max(triangleBytes, self.triangleBuffer!.length * 2),
                                                       options: .storageModeShared) else { return false }
-            triangleBuffer = grown
+            self.triangleBuffer = grown
             triangleCapacity = grown.length / MemoryLayout<MetalMeshWarp.TriangleGPU>.stride
         }
         let threads = metal.texturePipeline.threadExecutionWidth
@@ -378,7 +380,7 @@ final class MetalMeshWarpSession {
 
         let uploadStarted = CFAbsoluteTimeGetCurrent()
         _ = packed.withUnsafeBytes { raw in
-            memcpy(triangleBuffer.contents(), raw.baseAddress!, triangleBytes)
+            memcpy(self.triangleBuffer!.contents(), raw.baseAddress!, triangleBytes)
         }
         sample.triangleUploadMilliseconds = (CFAbsoluteTimeGetCurrent() - uploadStarted) * 1000
 
@@ -389,7 +391,7 @@ final class MetalMeshWarpSession {
         encoder.setComputePipelineState(metal.texturePipeline)
         encoder.setTexture(sourceTexture, index: 0)
         encoder.setTexture(destinationTexture, index: 1)
-        encoder.setBuffer(triangleBuffer, offset: 0, index: 0)
+        encoder.setBuffer(self.triangleBuffer!, offset: 0, index: 0)
         encoder.setBytes(&parameters, length: MemoryLayout<MetalMeshWarp.Parameters>.stride, index: 1)
         let groupHeight = max(1, metal.texturePipeline.maxTotalThreadsPerThreadgroup / threads)
         encoder.dispatchThreads(MTLSize(width: width, height: height, depth: 1),
@@ -413,6 +415,7 @@ final class MetalMeshWarpSession {
 
     /// Full-resolution pixels for Apply. Waits for the latest command.
     func readbackCGImage(sample: inout MetalMeshWarp.Sample) -> CGImage? {
+        guard let destinationTexture else { return nil }
         let readbackStarted = CFAbsoluteTimeGetCurrent()
         lastCommand?.waitUntilCompleted()
         let stride = width * 4
@@ -423,14 +426,22 @@ final class MetalMeshWarpSession {
         return MeshWarpRaster.image(from: bytes, width: width, height: height, stride: stride)
     }
 
+    /// Release GPU-backed resources (textures and buffers) so they do not accumulate
+    /// across iterations or survive beyond the session's useful lifetime.
     func invalidate() {
-        generation &+= 1
         lastCommand?.waitUntilCompleted()
         lastCommand = nil
+        sourceTexture = nil
+        destinationTexture = nil
+        triangleBuffer = nil
+        triangleCapacity = 0
     }
 
     deinit {
         lastCommand?.waitUntilCompleted()
+        sourceTexture = nil
+        destinationTexture = nil
+        triangleBuffer = nil
     }
 }
 

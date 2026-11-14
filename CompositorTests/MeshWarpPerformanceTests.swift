@@ -32,8 +32,11 @@ struct MeshWarpPerformanceTests {
         values.isEmpty ? "n/a" : String(format: "%.2f", median(values))
     }
 
+    /// Regression-safe warm-median timings at 1K and 4K. The 6000×4000 case is intentionally
+    /// separated into `warmMediansHeavyAt6000x4000()` so ordinary regression runs do not
+    /// exercise GPU memory pressure at that resolution.
     @Test func warmMediansAtThreeResolutions() throws {
-        let sizes = [(1024, 1024), (4000, 3000), (6000, 4000)]
+        let sizes = [(1024, 1024), (4000, 3000)]
         var report: [String] = []
         report.append("build=Debug (xcodebuild test); host=\(ProcessInfo.processInfo.machineHardwareName)")
         for (width, height) in sizes {
@@ -53,7 +56,7 @@ struct MeshWarpPerformanceTests {
                 updateSamples.append((CFAbsoluteTimeGetCurrent() - started) * 1000)
             }
 
-            // CPU reference: full warm set at 1K; one warm sample at 4K/6K (piecewise affine is expensive).
+            // CPU reference: full warm set at 1K; one warm sample at 4K (piecewise affine is expensive).
             var cpuSamples: [Double] = []
             let cpuRuns = large ? 2 : 6
             for i in 0..<cpuRuns {
@@ -157,7 +160,72 @@ struct MeshWarpPerformanceTests {
         if let data = payload.data(using: .utf8) {
             FileHandle.standardError.write(data)
         }
-        #expect(report.count == 4, Comment(rawValue: payload))
+        #expect(report.count == 3, Comment(rawValue: payload))
+    }
+
+    /// Explicitly selectable heavy-resolution performance test for 6000×4000.
+    /// This resolution exercises GPU memory pressure and is intentionally separated from
+    /// the ordinary regression suite. Run with an explicit -only-testing filter:
+    ///   xcodebuild ... -only-testing:CompositorTests/MeshWarpPerformanceTests/warmMediansHeavyAt6000x4000()
+    @Test func warmMediansHeavyAt6000x4000() throws {
+        let width = 6000, height = 4000
+        let megapixels = Double(width * height) / 1_000_000
+        let source = try solid(width: width, height: height)
+        let mesh = deformedMesh()
+        let sourceBytes = try MeshWarpRaster.rgba8Bytes(from: source)
+        let stride = width * 4
+
+        var uploadSamples: [Double] = []
+        var kernelSamples: [Double] = []
+        var readbackSamples: [Double] = []
+        var gpuSamples: [Double] = []
+        if let metal = MetalMeshWarp.shared {
+            var destination = [UInt8](repeating: 0, count: stride * height)
+            for i in 0..<5 {
+                var sample = MetalMeshWarp.Sample()
+                let ok = sourceBytes.withUnsafeBufferPointer { src in
+                    destination.withUnsafeMutableBufferPointer { dst in
+                        metal.apply(source: src.baseAddress!, destination: dst.baseAddress!,
+                                    width: width, height: height, stride: stride, mesh: mesh, sample: &sample)
+                    }
+                }
+                #expect(ok)
+                if i >= 1 {
+                    uploadSamples.append(sample.uploadMilliseconds)
+                    kernelSamples.append(sample.kernelMilliseconds)
+                    readbackSamples.append(sample.readbackMilliseconds)
+                    gpuSamples.append(sample.gpuMilliseconds)
+                }
+            }
+        }
+
+        var residentSamples: [Double] = []
+        var residentKernelSamples: [Double] = []
+        if MetalMeshWarp.shared != nil {
+            let session = try #require(MetalMeshWarpSession(image: source))
+            for i in 0..<5 {
+                var sample = MetalMeshWarpSession.Sample()
+                #expect(session.render(mesh: mesh, sample: &sample, wait: true))
+                if i >= 1 {
+                    residentSamples.append(sample.endToEndMilliseconds)
+                    residentKernelSamples.append(sample.kernelMilliseconds)
+                }
+            }
+            session.invalidate()
+        }
+
+        let text = [
+            "build=Debug (xcodebuild test); host=\(ProcessInfo.processInfo.machineHardwareName)",
+            "\(width)x\(height) megapixels=\(megapixels) " +
+            "upload=\(fmt(uploadSamples))ms kernel=\(fmt(kernelSamples))ms " +
+            "readback=\(fmt(readbackSamples))ms gpu=\(fmt(gpuSamples))ms " +
+            "residentPreview=\(fmt(residentSamples))ms residentKernel=\(fmt(residentKernelSamples))ms",
+        ].joined(separator: "\n")
+        let payload = "MESH_PERF_HEAVY_BEGIN\n\(text)\nMESH_PERF_HEAVY_END\n"
+        if let data = payload.data(using: .utf8) {
+            FileHandle.standardError.write(data)
+        }
+        #expect(uploadSamples.count == 4, Comment(rawValue: payload))
     }
 
     @Test func localCorrectionAndAdaptiveWarmMedians() throws {

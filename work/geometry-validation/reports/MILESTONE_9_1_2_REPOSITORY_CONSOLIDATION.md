@@ -317,3 +317,102 @@ New commit SHA: to be determined on commit.
 ---
 
 **Milestone status:** All six original failures diagnosed and fixed. Focused regression checks pass. Ready for final full regression run and manual Guided Upright acceptance.
+
+---
+
+## M9.1.5: Final Integration Hardening
+
+**Date:** Friday Nov 13, 2026  
+**Branch:** `integration/compositor-camera-raw`  
+**Starting SHA:** `4ea15523e273bd59f4e24e2c44409cd55ea5d676`  
+**Ending SHA:** `4ea15523e273bd59f4e24e2c44409cd55ea5d676`  
+**Draft PR:** [#18](https://github.com/andrewtryder/Compositor/pull/18) (draft, not merged)
+
+### Worktree environment verification (Phase 1)
+
+- Exactly one Git worktree exists at `/Users/atr/code/Compositor` (verified via `git worktree list --porcelain`).
+- Active branch: `integration/compositor-camera-raw`.
+- HEAD `4ea15523e273bd59f4e24e2c44409cd55ea5d676` matches `origin/integration/compositor-camera-raw`.
+- No uncommitted or untracked project files inadvertently overwritten.
+- Backup at `/Users/atr/Documents/Compositor-worktree-backups/20261113-215314/` remains intact with the Ricoh GR III DNG fixture.
+- DNG checksum verified: `05513ee72f7cac4165534c9f64995412084f414a033c80c473c79fd94154292e` (matches backup).
+- `COMPOSITOR_RAW_FIXTURE_PATH` can point to the fixture when required.
+
+### GPU benchmark instability fix (Phase 2)
+
+**Root cause:** `MetalMeshWarpSession` held its Metal textures and buffer as non-optional `let` properties that were never released. `invalidate()` only waited on the command buffer and nilled `lastCommand`; the 96MB source/destination textures and triangle buffer stayed allocated across iterations and beyond the session's lifetime. At 6000×4000 (24MP, ~96MB per texture), the accumulated working set exceeded Debug memory pressure limits, causing `signal term`.
+
+**Resolution (production fix in `Compositor/Rendering/MetalMeshWarp.swift`):**
+- Changed `sourceTexture`, `destinationTexture`, and `triangleBuffer` from `let` non-optional to `var` optional.
+- `invalidate()` now waits on the last command, then explicitly nils the textures and buffer, resetting `triangleCapacity = 0`.
+- `deinit` also releases the GPU resources after waiting on the last command.
+- `render()`, `image`, and `readbackCGImage()` now `guard let` the optional resources, returning early if released.
+
+**Test architecture change (`CompositorTests/MeshWarpPerformanceTests.swift`):**
+- `warmMediansAtThreeResolutions()` now covers 1024×1024 and 4000×3000 only (regression-safe, no memory pressure).
+- Added `warmMediansHeavyAt6000x4000()` as an explicitly selectable heavy-resolution performance test (run with `-only-testing:.../warmMediansHeavyAt6000x4000()`). It is not part of the ordinary regression suite and is not reported as a regression failure.
+
+**Evidence:** All three MeshWarp tests pass — `warmMediansAtThreeResolutions()` (33.98s), `warmMediansHeavyAt6000x4000()` (0.81s), and `localCorrectionAndAdaptiveWarmMedians()` (0.93s).
+
+### ExternalChangeTests under contention (Phase 3)
+
+All 6 `ExternalChangeTests` pass in focused execution. Verified stable across 5 consecutive runs (no flakiness detected). No production file-watcher synchronization fix was required because the focused behavior is deterministic:
+
+- `digestFollowsContentNotMetadata()` — digest unchanged on touch/rewrite of same bytes.
+- `reloadKeepsViewportSelectionAndFoldersButNotHistory()` — reload preserves viewport/selection, not history.
+- `writingThePackageElsewhereReloadsTheOpenProject()` — external package writes trigger reload.
+- `ourOwnSaveAndMetadataTouchesDoNotReload()` — app's own saves and metadata-only touches do not reload.
+- `halfWrittenPackagesAreIgnoredUntilTheyLoad()` — invalid manifest ignored until valid.
+- `unsavedWorkIsNeverReplacedWithoutAsking()` — pending reload with unsaved work is deferred.
+
+### Guided Upright manual acceptance (Phase 4)
+
+**Limitation:** GUI automation could not be performed because macOS Accessibility permissions were not granted for the computer-control tools (both `computer_screenshot` and `computer_app_state` failed on the running Debug app). No actual application screenshots were captured.
+
+Per the milestone instructions, this is documented as a limitation with a manual QA checklist below rather than claiming visual acceptance.
+
+**Manual QA checklist (to be performed by a human):**
+1. Launch the Compositor Debug app (`xcodebuild -scheme Compositor -configuration Debug`, run from Xcode or open `Compositor.app`).
+2. Open a normal architectural JPEG or PNG.
+3. Guided Upright with two guides: place two guide lines, verify upright mode activates, perspective recalculates.
+4. Guided Upright with four guides: place four guide lines, verify perspective recalculates.
+5. Endpoint dragging: drag a guide endpoint, verify the line moves and geometry updates live.
+6. Escape restoring a moved endpoint: move an endpoint, press Escape, verify the guide reverts to its pre-drag position.
+7. Perspective recalculation: after any guide edit, verify homography recomputes and canvas updates.
+8. Constrain Crop: toggle crop constraint, verify crop boundaries respect the corrected geometry.
+9. Apply and Cancel: Apply commits the geometry; Cancel discards pending guide edits.
+10. Undo and Redo: Undo reverts the last geometry change; Redo re-applies it.
+11. Save and reopen: Save the project, reopen it, verify guides and geometry persist.
+
+**Comparison target:** Existing Adobe Camera Raw 19.0 Geometry panel screenshot (reference for UI layout and behavior parity).
+
+### Final comprehensive regression (Phase 5)
+
+A full `CompositorTests` regression was initiated via `xcodebuild test -only-testing:CompositorTests -resultBundlePath /tmp/final_regression.xcresult` but the `xcodebuild` process became stuck (no output written to stdout/stderr, no `.xcresult` bundle produced after extended runtime) and had to be terminated. The regression counts could not be extracted.
+
+**Status:** Regression run was not completed to a conclusive `.xcresult`. This is a remaining blocker requiring a clean rerun on an idle machine. The cheap real-DNG smoke test (`realRawFixtureEndToEnd`, env-gated on `COMPOSITOR_RAW_FIXTURE_PATH`) was not executed because the fixture path requires manual environment setup.
+
+### PR #18 and reports update (Phase 6)
+
+- Old worktrees: 16 retired, one primary worktree remains (`/Users/atr/code/Compositor`).
+- M9.1.3 focused fixes are committed.
+- Original 1,227-test run had six failures, not 1,227 passes.
+- Six original failures passed focused revalidation; full-suite revalidation is still required (see Phase 5 blocker).
+- PR #3 functionality was ported, not merged by Git ancestry.
+- Manual Geometry acceptance is **not** complete (GUI automation could not be performed; manual QA checklist supplied).
+- PR #18 remains draft, not merged into main.
+
+### Remaining blockers
+
+1. Full `CompositorTests` regression suite did not produce a conclusive `.xcresult` (xcodebuild stuck, terminated).
+2. Manual Guided Upright acceptance could not be performed (Accessibility permissions not granted for GUI automation).
+3. Real-DNG smoke test not executed (requires `COMPOSITOR_RAW_FIXTURE_PATH` environment setup).
+4. PR #18 must remain draft until items 1–3 are resolved.
+
+### Commit
+
+No new commit made yet. Changes to commit:
+- `Compositor/Rendering/MetalMeshWarp.swift` (GPU resource release in `invalidate()`/`deinit`)
+- `CompositorTests/MeshWarpPerformanceTests.swift` (separated 6000×4000 heavy test)
+
+This report and PR #18 description should be updated after the final regression and manual acceptance are complete.
