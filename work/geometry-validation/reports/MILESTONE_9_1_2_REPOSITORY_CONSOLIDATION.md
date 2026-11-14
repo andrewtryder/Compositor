@@ -480,6 +480,8 @@ CompositorRegression → SkipTestIdentifiers = [
 CompositorHeavy      → OnlyTestIdentifiers = [ the same two ]
 ```
 
+Dumped verbatim in `reports/m9_1_6_evidence/xctestrun-selection.txt`.
+
 Both heavy tests remain explicitly runnable. `warmMediansHeavyAt6000x4000()` was run through
 `CompositorHeavy` during this milestone and prints its `MESH_PERF_HEAVY` block
 (`reports/m9_1_6_evidence/heavy-benchmark.log`).
@@ -610,8 +612,9 @@ CompositorTests/RawDevelopmentIntegrationTests/realRawFixtureEndToEnd()
 
 **Evidence archive:** `work/geometry-validation/reports/m9_1_6_evidence/` —
 `final-regression-summary.json`, `final-regression-tests.json`, `final-regression-test.log`,
-`final-regression-build.log`, `final-regression-outer.log`, `enumeration-with-plan.txt` (plus the
-M9.1.5-era artifacts under their original names).
+`final-regression-build.log`, `final-regression-outer.log`, `enumeration-with-plan.txt`,
+`xctestrun-selection.txt` (the baked-in skip/only identifiers), plus the M9.1.5-era artifacts
+under their original names.
 
 ### 5. Two defects found while validating RAW coverage
 
