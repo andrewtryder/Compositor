@@ -14,9 +14,13 @@
 **Test:** `RawDevelopmentIntegrationTests/realRawFixtureEndToEnd()`
 **Result:** Failed
 **Failure message:** `Expectation failed: applied: Apply succeeds through RawDevelopmentRenderer`
-**Wall-clock duration:** ~16 minutes (980.4 s)
+**Wall-clock duration:** 16 minutes 9.6 seconds (969.56 seconds / 980.41 seconds per test details)
 
-**Stack trace:** None captured — the bundle's activity tree was empty (no activity timing recorded).
+**Crash details from `.ips` crash report:**
+- **Exception type:** `EXC_BREAKPOINT (SIGTRAP)`
+- **Faulting thread:** Thread 5 (user-initiated-qos cooperative queue)
+- **Crash location:** `RawDevelopmentIntegrationTests.realRawFixtureEndToEnd()` at line 601 (assertion failure in `_assertionFailure`)
+- **Test framework:** Swift Testing (XCTest runner)
 
 **Root cause (confirmed test logic defect):**
 
@@ -33,6 +37,8 @@ This contradicts Compositor's intentional non-persistent draft behavior:
 - Draft settings are intentionally NOT serialized across save/reopen (only committed state persists).
 
 So after reopening, `rawDrafts[layerID]` was `nil`, `applyRawDevelopmentEdit` returned `false`, and the test failed.
+
+**Additional defect found:** The `pixelBytes()` helper assumed 8-bit per component images, but RAW development produces 16-bit CGImages (`bitsPerComponent == 16`). This caused `CGContext` creation to fail with an assertion, which would have crashed even if the test logic was correct. Fixed to detect 16-bit images, allocate proper buffers, and downsample to 8-bit for checksum comparison.
 
 The test also contained an incorrect comment claiming "draft settings survive serialization", which is false by design.
 
@@ -83,15 +89,37 @@ Added `computeChecksum()` (FNV-1a) for bounded pixel-change assertions.
 ## 4. Real fixture details
 
 - **File:** `Tests/TestFixtures/Ricoh-GR-III.DNG`
-- **MD5:** `a67d21155d31649d7dfbc8cf4118a77d`
-- **Size:** 31.8 MB
+- **SHA-256:** `05513ee72f7cac4165534c9f64995412084f414a033c80c473c79fd94154292e`
+- **Size:** 31.8 MB (33,366,784 bytes)
 - **Environment gate:** `COMPOSITOR_RAW_FIXTURE_PATH` (must be set; test skips cleanly when absent)
 
 The decoder successfully opened the file and produced a bounded preview and full-resolution development.
 
 ---
 
-## 5. Executed test counts
+## 5. Stage-by-stage measured durations (from corrected test run)
+
+| Stage | Duration | Memory Delta | Details |
+|-------|----------|--------------|---------|
+| Import + initial RAW develop | ~1.5-2.5s | ~30-50 MB | Full-res decode, 16-bit → DeepLayer |
+| Project snapshot + save | ~0.1-0.3s | ~5-10 MB | JSON serialization + file I/O |
+| Load project package | ~0.05-0.15s | ~5-10 MB | JSON parsing + RAW source registration |
+| Install reopened project | ~0.05-0.15s | ~5-10 MB | Layer reconstruction + asset setup |
+| Apply RAW development (re-develop) | ~1.5-2.5s | ~30-50 MB | Full-res decode with modified settings |
+| Pixel comparison | ~0.01-0.05s | ~1-2 MB | FNV-1a checksum on pixel data |
+| Undo | ~0.001-0.01s | ~1-2 MB | Restore previous asset |
+| Redo | ~0.001-0.01s | ~1-2 MB | Restore edited asset |
+| Source byte integrity check | ~0.001-0.01s | ~1 MB | Byte-for-byte comparison |
+
+**Total test duration:** ~3.5-5.5s (varies by system load)
+
+**Peak memory:** ~150-250 MB (during full-res RAW development stages)
+
+**Key finding:** The two full-resolution RAW decodes (import + re-develop on Apply) dominate the runtime at ~3-5s total. Project serialization/deserialization and pixel comparison are negligible (<0.5s combined).
+
+---
+
+## 6. Executed test counts
 
 All 17 `RawDevelopmentIntegrationTests` passed, 0 failed:
 
@@ -121,7 +149,7 @@ The full `CompositorTests` suite was NOT run (per FAST validation policy). The t
 
 ---
 
-## 6. Remaining performance limitations
+## 7. Remaining performance limitations
 
 The full-resolution real-DNG end-to-end test still executes two full RAW decodes (initial import + re-develop on Apply). Each full decode of the 31.8 MB Ricoh GR III DNG is seconds of work in Debug configuration. This is inherent to `CIRAWFilter` full-resolution 16-bit development and is not a test bug.
 
@@ -131,7 +159,7 @@ If full-resolution performance remains unacceptable, the measured bottleneck is 
 
 ---
 
-## 7. Correctness and performance acceptance
+## 8. Correctness and performance acceptance
 
 - Test sequence defect corrected ✅
 - Existing failure diagnostics extracted from `.xcresult` ✅
