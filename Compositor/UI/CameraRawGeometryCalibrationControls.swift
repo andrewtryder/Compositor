@@ -16,6 +16,8 @@ struct CameraRawGeometryControls: View {
     private var settings: FilterSettings { session.filterEdit?.settings ?? FilterSettings() }
     private var raw: CameraRawSettings { settings.cameraRaw }
     private var geometry: CameraRawGeometrySettings { raw.geometry }
+    /// Dedicated Horizon settings. Defaults to Off, which is bit-exact identity.
+    private var horizon: CameraRawHorizonSettings { raw.horizon }
     private var edit: FilterEdit? { session.filterEdit }
 
     // Which manual transform rows are expanded.
@@ -78,6 +80,9 @@ struct CameraRawGeometryControls: View {
             .padding(5)
             .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 6))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("geometryUprightStrip")
+            .accessibilityLabel("Upright")
         }
     }
 
@@ -138,6 +143,7 @@ struct CameraRawGeometryControls: View {
             }
             .buttonStyle(.plain)
             .help("Draw lines on the preview that should be level or vertical.")
+            .accessibilityIdentifier("geometryDrawGuides")
             .accessibilityLabel("Draw Guides")
 
             if edit?.drawingCameraRawGeometryGuide == true {
@@ -155,6 +161,7 @@ struct CameraRawGeometryControls: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Color.accentColor)
                 .help("Remove every guide line.")
+                .accessibilityIdentifier("geometryClearGuides")
                 .accessibilityLabel("Clear Guides")
                 .padding(.top, 2)
             }
@@ -186,6 +193,8 @@ struct CameraRawGeometryControls: View {
             }
             .buttonStyle(.plain)
             .help("Manual perspective and framing controls.")
+            .accessibilityIdentifier("geometryManualTransformations")
+            .accessibilityLabel("Manual Transformations")
 
             if manualTransformationsExpanded {
                 VStack(alignment: .leading, spacing: 5) {
@@ -232,6 +241,7 @@ struct CameraRawGeometryControls: View {
         Toggle("Constrain Crop", isOn: binding(\.constrainCrop))
             .font(.system(size: 12))
             .help("Crops empty edges after the transform and fits the result back into the frame.")
+            .accessibilityIdentifier("geometryConstrainCrop")
             .accessibilityLabel("Constrain Crop")
     }
 
@@ -255,6 +265,8 @@ struct CameraRawGeometryControls: View {
             }
             .buttonStyle(.plain)
             .help("Projection, Volume, and Framing options.")
+            .accessibilityIdentifier("geometryAdvanced")
+            .accessibilityLabel("Advanced Geometry")
 
             if advancedGeometryExpanded {
                 VStack(alignment: .leading, spacing: 5) {
@@ -300,10 +312,221 @@ struct CameraRawGeometryControls: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+
+                    // Horizon is appended after every preexisting Advanced Geometry row.
+                    horizonSection
                 }
                 .padding(.top, 4)
             }
         }
+    }
+
+    // MARK: - Horizon (appended, independent of the Upright solver)
+
+    /// Compact Horizon control: mode, angle, amount, and reference-line drawing. Reuses `CameraRawHorizonSettings`
+    /// and `CameraRawHorizon` verbatim; it adds no second solver and no second roll.
+    private var horizonSection: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Divider().padding(.vertical, 2)
+
+            HStack(spacing: 6) {
+                Text("Horizon")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("horizonHeader")
+                Spacer(minLength: 0)
+                Text(horizon.mode.rawValue)
+                    .font(.caption2)
+                    .foregroundStyle(horizon.mode == .off ? Color.secondary : Color.accentColor)
+                    .accessibilityIdentifier("horizonActiveMode")
+                    .help("The Horizon mode in use right now.")
+                Button("Reset") {
+                    applyHorizon { $0 = CameraRawHorizonSettings() }
+                    session.filterEdit?.drawingCameraRawHorizonReference = false
+                    session.filterEdit?.cameraRawHorizonReferenceDraft = nil
+                    var settings = self.settings
+                    settings.cameraRaw.automaticHorizonAngle = nil
+                    session.updateFilter(settings, preview: edit?.preview ?? true)
+                }
+                .font(.system(size: 11))
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .help("Puts Horizon back to Off with its default angle and amount.")
+                .accessibilityIdentifier("horizonReset")
+                .accessibilityLabel("Reset Horizon")
+            }
+
+            Picker("Horizon Mode", selection: Binding(
+                get: { horizon.mode },
+                set: { mode in selectHorizonMode(mode) }
+            )) {
+                ForEach(CameraRawHorizonMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help("Off leaves the picture alone. Automatic measures its level. Angle turns it by a set amount. "
+                  + "Horizontal and Vertical Reference level a line drawn on the picture.")
+            .accessibilityIdentifier("horizonModePicker")
+            .accessibilityLabel("Horizon Mode")
+
+            if horizon.mode == .angle {
+                horizonSlider("Angle", \.angleDegrees, range: CameraRawHorizonSettings.angleRange,
+                              reset: 0, help: "Turns the picture clockwise about its center.",
+                              identifier: "horizonAngle")
+            }
+
+            horizonSlider("Amount", \.amount, range: CameraRawHorizonSettings.amountRange,
+                          reset: 100, help: "How much of the horizon correction is applied. 0% leaves the picture unchanged.",
+                          identifier: "horizonAmount")
+
+            if horizon.mode == .horizontalReference || horizon.mode == .verticalReference {
+                horizonReferenceControls
+            }
+
+            if let note = horizonNote {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(horizon.mode == .off ? Color.secondary : Color.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("horizonNote")
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private var horizonReferenceControls: some View {
+        let drawing = session.filterEdit?.drawingCameraRawHorizonReference == true
+        return VStack(alignment: .leading, spacing: 4) {
+            Button {
+                if drawing {
+                    session.endCameraRawHorizonReferenceDrawing()
+                } else {
+                    session.beginCameraRawHorizonReferenceDrawing()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: drawing ? "pencil.line" : "pencil")
+                        .font(.system(size: 11, weight: .medium))
+                    Text(drawing ? "Stop Drawing Line" : "Draw Reference Line")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .background(drawing ? Color.accentColor : Color(NSColor.controlBackgroundColor).opacity(0.5))
+                .foregroundStyle(drawing ? Color.white : Color.primary)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            .buttonStyle(.plain)
+            .help("Drag a line on the preview that should be level (or upright).")
+            .accessibilityIdentifier("horizonDrawReference")
+            .accessibilityLabel("Draw Reference Line")
+
+            if drawing {
+                Text(horizon.mode == .horizontalReference
+                     ? "Drag across something that should be level, such as a rooftop or a waterline."
+                     : "Drag along something that should stand upright, such as a wall edge or a window frame.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 4)
+                    .accessibilityIdentifier("horizonDrawHint")
+            }
+
+            HStack(spacing: 6) {
+                Button("Clear Line") {
+                    session.clearCameraRawHorizonReference()
+                }
+                .font(.system(size: 11, weight: .medium))
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .help("Restores the default reference line along the bottom edge.")
+                .accessibilityIdentifier("horizonClearReference")
+                .accessibilityLabel("Clear Reference Line")
+                Spacer(minLength: 0)
+                Text(String(format: "%.1f°", horizonReferenceDegrees))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .help("The rotation the reference line asks for, before Amount.")
+                    .accessibilityIdentifier("horizonReferenceAngle")
+            }
+        }
+    }
+
+    /// The reference line's own rotation, before Amount, for the readout.
+    private var horizonReferenceDegrees: Double {
+        let image = session.filterEdit?.previewSource
+        return CameraRawHorizon.referenceAngle(settings: horizon,
+                                               width: image?.width ?? 1000,
+                                               height: image?.height ?? 1000,
+                                               vertical: horizon.mode == .verticalReference) ?? 0
+    }
+
+    /// What the panel says about the current Horizon state, if anything needs saying.
+    private var horizonNote: String? {
+        guard horizon.mode != .off else { return nil }
+        if CameraRawGeometryBackend.shouldApplyHorizon(
+            CameraRawGeometryBackendSettings(geometry: raw.geometry, horizon: horizon)) == false {
+            return "Auto Level is already leveling the picture, so Horizon stays out of its way. "
+                + "Switch Upright to Automatic Horizon, or turn Upright Off, to use an Angle or reference."
+        }
+        if horizon.mode == .automatic, raw.automaticHorizonAngle == nil {
+            return "Automatic needs a measurement. Choose Automatic again to retry, or use Angle."
+        }
+        return nil
+    }
+
+    private func selectHorizonMode(_ mode: CameraRawHorizonMode) {
+        applyHorizon { $0.mode = mode }
+        // Drawing state belongs to the two reference modes only.
+        let edit = session.filterEdit
+        if mode != .horizontalReference, mode != .verticalReference {
+            edit?.drawingCameraRawHorizonReference = false
+            edit?.cameraRawHorizonReferenceDraft = nil
+        }
+        if mode == .automatic {
+            Task { await session.applyCameraRawHorizonAutomatic() }
+        }
+    }
+
+    private func applyHorizon(_ change: (inout CameraRawHorizonSettings) -> Void) {
+        var value = settings
+        change(&value.cameraRaw.horizon)
+        session.updateFilter(value, preview: edit?.preview ?? true)
+    }
+
+    private func horizonSlider(_ title: String,
+                              _ key: WritableKeyPath<CameraRawHorizonSettings, Double>,
+                              range: ClosedRange<Double>,
+                              reset resetValue: Double,
+                              help: String,
+                              identifier: String) -> some View {
+        let value = horizon[keyPath: key]
+        return HStack(spacing: 8) {
+            Text(title)
+                .frame(minWidth: 64, alignment: .leading)
+                .help(help)
+                .font(.system(size: 11))
+                .lineLimit(1)
+
+            CameraRawSlider(value: value, range: range, track: .plain, help: help,
+                            onChange: { rawValue in applyHorizon { $0[keyPath: key] = rawValue.rounded() } },
+                            onReset: { applyHorizon { $0[keyPath: key] = resetValue } })
+
+            TextField(title,
+                      value: Binding(
+                          get: { horizon[keyPath: key] },
+                          set: { newValue in applyHorizon { $0[keyPath: key] = newValue } }
+                      ),
+                      format: .number.precision(.fractionLength(0)))
+                .frame(width: 44)
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .help(help)
+                .font(.system(size: 10, design: .monospaced))
+        }
+        .accessibilityIdentifier(identifier)
     }
 
     // MARK: - Slider helpers
@@ -460,6 +683,7 @@ private struct UprightModeButton: View {
         }
         .buttonStyle(.plain)
         .help(tooltip)
+        .accessibilityIdentifier("geometryUpright_\(modeIdentifier)")
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isActive ? .isSelected : [])
     }
@@ -481,6 +705,17 @@ private struct UprightModeButton: View {
         case .autoVertical: return "Auto Vertical — Straightens converging vertical lines"
         case .autoFull: return "Auto Full — Full perspective correction for level and vertical"
         case .guided: return "Guided — Draw custom guides on the image"
+        }
+    }
+
+    /// Stable per-mode identifier, independent of the visible label.
+    private var modeIdentifier: String {
+        switch mode {
+        case .off: return "off"
+        case .autoLevel: return "autoLevel"
+        case .autoVertical: return "autoVertical"
+        case .autoFull: return "autoFull"
+        case .guided: return "guided"
         }
     }
 

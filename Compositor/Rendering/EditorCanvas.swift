@@ -119,6 +119,7 @@ final class CanvasView: NSView {
             || session.filterEdit?.samplesDefringe == true
             || session.filterEdit?.movesCameraRawLensBlurFocus == true
             || session.filterEdit?.drawingCameraRawGeometryGuide == true
+            || session.filterEdit?.drawingCameraRawHorizonReference == true
     }
     /// View point where a targeted-adjustment drag began.
     private var hueTargetStart: CGPoint?
@@ -1469,7 +1470,65 @@ final class CanvasView: NSView {
             if !visible.isNull, !visible.isEmpty { drawPixelGrid(in: visible, document: document, context: context) }
         }
         drawCameraRawGeometryGuides(context: context, document: document, dirtyRect: dirtyRect)
+        drawCameraRawHorizonReference(context: context, document: document, dirtyRect: dirtyRect)
         drawTextBoxDraft()
+    }
+
+    /// Draws Horizon › Horizontal / Vertical Reference as one dashed line, so it reads as a measurement rather
+    /// than a Guided Upright guide. It goes through the same image→document→view chain, so it lands on the picture
+    /// wherever the layer sits.
+    private func drawCameraRawHorizonReference(context: CGContext, document: CanvasDocument, dirtyRect: NSRect) {
+        guard let edit = session.filterEdit, edit.kind == .cameraRaw else { return }
+        let horizon = edit.settings.cameraRaw.horizon
+        guard horizon.mode == .horizontalReference || horizon.mode == .verticalReference else { return }
+        let image = edit.previewSource
+        let canvas = CGRect(origin: session.viewport.viewPoint(from: .zero, documentSize: document.size),
+                            size: CGSize(width: document.size.width * session.viewport.pointsPerPixel,
+                                         height: document.size.height * session.viewport.pointsPerPixel))
+        let area = dirtyRect.intersection(canvas)
+        guard !area.isNull, !area.isEmpty else { return }
+
+        func viewPoint(for normalized: CGPoint) -> CGPoint {
+            let pixel = CGPoint(x: normalized.x * CGFloat(image.width), y: normalized.y * CGFloat(image.height))
+            return session.viewport.viewPoint(from: pixel.applying(edit.previewMapping), documentSize: document.size)
+        }
+
+        let scale = session.viewport.pointsPerPixel
+        let horizontal = horizon.mode == .horizontalReference
+        let color = horizontal ? CGColor(srgbRed: 0.98, green: 0.78, blue: 0.20, alpha: 0.95)
+                               : CGColor(srgbRed: 0.36, green: 0.80, blue: 0.98, alpha: 0.95)
+        context.saveGState()
+        context.setLineWidth(1.5 / scale)
+        context.setLineCap(.round)
+        context.setStrokeColor(color)
+        context.setLineDash(phase: 0, lengths: [7 / scale, 5 / scale])
+
+        let start = viewPoint(for: CGPoint(x: horizon.referenceStartX, y: horizon.referenceStartY))
+        let end = viewPoint(for: CGPoint(x: horizon.referenceEndX, y: horizon.referenceEndY))
+        context.beginPath()
+        context.move(to: start)
+        context.addLine(to: end)
+        context.strokePath()
+        context.setLineDash(phase: 0, lengths: [])
+        for point in [start, end] {
+            let dot = CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)
+            context.setFillColor(color)
+            context.fillEllipse(in: dot)
+        }
+
+        if let draft = edit.cameraRawHorizonReferenceDraft {
+            let draftStart = viewPoint(for: draft.start)
+            let draftEnd = viewPoint(for: draft.end)
+            context.setStrokeColor(CGColor.white)
+            context.setLineWidth(1 / scale)
+            context.setLineDash(phase: 0, lengths: [4 / scale, 4 / scale])
+            context.beginPath()
+            context.move(to: draftStart)
+            context.addLine(to: draftEnd)
+            context.strokePath()
+            context.setLineDash(phase: 0, lengths: [])
+        }
+        context.restoreGState()
     }
 
     /// Draws Camera Raw Geometry (Guided Upright) guide lines over the canvas image.
@@ -1952,6 +2011,11 @@ final class CanvasView: NSView {
             synchronizeDisplay()
             return
         }
+        // Horizon › reference line: one dashed line, independent of the Guided Upright solver.
+        if session.filterEdit?.drawingCameraRawHorizonReference == true, !spaceHeld, let document = session.document {
+            session.beginCameraRawHorizonReference(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
         if session.filterEdit?.drawingCameraRawGeometryGuide == true, !spaceHeld, let document = session.document {
             let documentPoint = session.viewport.documentPoint(from: point, documentSize: document.size)
             // Endpoint dragging takes priority over starting a new guide.
@@ -2076,6 +2140,10 @@ final class CanvasView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard session.document != nil else { return }
         let point = convert(event.locationInWindow, from: nil)
+        if session.filterEdit?.cameraRawHorizonReferenceDraft != nil, let document = session.document {
+            session.continueCameraRawHorizonReference(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
         if session.filterEdit?.drawingCameraRawGeometryGuide == true, let document = session.document {
             // Endpoint drag takes priority over creating a new guide.
             if session.filterEdit?.cameraRawDraggingGuideIndex != nil {
@@ -2346,6 +2414,9 @@ final class CanvasView: NSView {
         }
         if session.filterEdit?.cameraRawGuideDraft != nil {
             session.commitCameraRawGeometryGuide()
+        }
+        if session.filterEdit?.cameraRawHorizonReferenceDraft != nil {
+            session.commitCameraRawHorizonReference()
         }
         if session.filterEdit?.cameraRawDraggingGuideIndex != nil {
             session.filterEdit?.cameraRawDraggingGuideIndex = nil

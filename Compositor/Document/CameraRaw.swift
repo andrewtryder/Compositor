@@ -771,6 +771,101 @@ extension EditorSession {
         edit.settings = settings
     }
 
+    // MARK: - Horizon reference line
+
+    /// Arms Horizon › Horizontal Reference / Vertical Reference so the next drag on the preview defines the line.
+    /// Exclusive with Guided Upright drawing: only one of the two can own a drag.
+    func beginCameraRawHorizonReferenceDrawing() {
+        guard let edit = filterEdit, edit.kind == .cameraRaw else { return }
+        let mode = edit.settings.cameraRaw.horizon.mode
+        guard mode == .horizontalReference || mode == .verticalReference else { return }
+        edit.drawingCameraRawHorizonReference = true
+        edit.cameraRawHorizonDrawingMode = mode
+        edit.cameraRawHorizonReferenceDraft = nil
+        edit.drawingCameraRawGeometryGuide = false
+        edit.cameraRawGuideDraft = nil
+        brushRevision += 1
+    }
+
+    func endCameraRawHorizonReferenceDrawing() {
+        guard let edit = filterEdit else { return }
+        edit.drawingCameraRawHorizonReference = false
+        edit.cameraRawHorizonDrawingMode = nil
+        edit.cameraRawHorizonReferenceDraft = nil
+        brushRevision += 1
+    }
+
+    /// Starts the reference line at a document point. A stroke replaces the previous line rather than
+    /// accumulating: one reference is what both reference modes read.
+    func beginCameraRawHorizonReference(at documentPoint: CGPoint) {
+        guard let edit = filterEdit, edit.drawingCameraRawHorizonReference,
+              let normalized = cameraRawNormalizedPoint(at: documentPoint) else { return }
+        edit.cameraRawHorizonReferenceDraft = (start: normalized, end: normalized)
+    }
+
+    func continueCameraRawHorizonReference(to documentPoint: CGPoint) {
+        guard let edit = filterEdit, edit.drawingCameraRawHorizonReference,
+              var draft = edit.cameraRawHorizonReferenceDraft,
+              let normalized = cameraRawNormalizedPoint(at: documentPoint) else { return }
+        draft.end = normalized
+        edit.cameraRawHorizonReferenceDraft = draft
+    }
+
+    /// Commits the drawn line into the Horizon settings. A line too short to read its angle is discarded.
+    func commitCameraRawHorizonReference() {
+        guard let edit = filterEdit, let draft = edit.cameraRawHorizonReferenceDraft else { return }
+        defer { edit.cameraRawHorizonReferenceDraft = nil }
+        guard hypot(draft.end.x - draft.start.x, draft.end.y - draft.start.y) > 0.01 else { return }
+        var settings = edit.settings
+        settings.cameraRaw.horizon.referenceStartX = min(1, max(0, draft.start.x))
+        settings.cameraRaw.horizon.referenceStartY = min(1, max(0, draft.start.y))
+        settings.cameraRaw.horizon.referenceEndX = min(1, max(0, draft.end.x))
+        settings.cameraRaw.horizon.referenceEndY = min(1, max(0, draft.end.y))
+        edit.settings = settings
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// The drawn line, normalized, for tests and for the panel's own summary.
+    var cameraRawHorizonReferenceLine: CameraRawGeometryGuide? {
+        guard let edit = filterEdit else { return nil }
+        let horizon = edit.settings.cameraRaw.horizon
+        return CameraRawGeometryGuide(startX: horizon.referenceStartX, startY: horizon.referenceStartY,
+                                      endX: horizon.referenceEndX, endY: horizon.referenceEndY)
+    }
+
+    /// Clears the reference line back to the default left-to-right line along the bottom edge.
+    func clearCameraRawHorizonReference() {
+        guard let edit = filterEdit, edit.kind == .cameraRaw else { return }
+        var settings = edit.settings
+        let base = CameraRawHorizonSettings()
+        settings.cameraRaw.horizon.referenceStartX = base.referenceStartX
+        settings.cameraRaw.horizon.referenceStartY = base.referenceStartY
+        settings.cameraRaw.horizon.referenceEndX = base.referenceEndX
+        settings.cameraRaw.horizon.referenceEndY = base.referenceEndY
+        edit.settings = settings
+        edit.cameraRawHorizonReferenceDraft = nil
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Horizon › Automatic: measure the picture's own level once and keep the angle beside the settings.
+    /// The angle is not persisted; the mode is, so reopening a project re-measures nothing behind the person's back.
+    func applyCameraRawHorizonAutomatic() async {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return }
+        let image = edit.previewSource
+        let version = edit.previewSourceVersion
+        let observation = await Task.detached(priority: .userInitiated) {
+            CameraRawUprightDetection.observe(in: image, mode: .autoLevel)
+        }.value
+        guard let current = filterEdit, !current.committing,
+              current.previewSourceVersion == version,
+              current.settings.cameraRaw.horizon.mode == .automatic else { return }
+        var settings = current.settings
+        settings.cameraRaw.automaticHorizonAngle = CameraRawHorizon.automaticAngle(
+            from: observation, width: image.width, height: image.height)
+        current.settings = settings
+        updateFilter(settings, preview: current.preview)
+    }
+
     private func cameraRawNormalizedPoint(at point: CGPoint) -> CGPoint? {
         guard let edit = filterEdit else { return nil }
         let image = edit.previewSource

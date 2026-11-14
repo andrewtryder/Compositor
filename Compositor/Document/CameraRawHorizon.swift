@@ -73,8 +73,10 @@ nonisolated enum CameraRawHorizon {
         case .off:
             return nil
         case .automatic:
+            // The observation already reports the rotation that levels the picture, in the same convention as Angle,
+            // so it is used as-is rather than negated into a second convention.
             guard let automaticAngle, automaticAngle.isFinite else { return nil }
-            full = -wrap(automaticAngle)
+            full = wrap(automaticAngle)
         case .angle:
             full = settings.angleDegrees
         case .horizontalReference:
@@ -137,15 +139,26 @@ nonisolated enum CameraRawHorizon {
         return wrap(delta)
     }
 
-    /// Automatic horizon from an Auto Level (or level-fallback) observation. Uses the first guide's slope.
-    static func automaticAngle(from observation: CameraRawUprightObservation) -> Double? {
-        guard let guide = observation.guides.first else {
-            let residual = observation.residualDegrees
-            return residual.isFinite && abs(residual) > 1e-6 ? wrap(-residual) : nil
+    /// Clockwise degrees that level the picture for an Auto Level (or level-fallback) observation.
+    /// The guide's slope is measured in pixels, as every other geometry stage measures it, so a non-square frame is not
+    /// leveled by an angle that only looks right in normalized space. Same convention as `referenceAngle`, so 0 is level
+    /// and the sign matches the parameter `rotationDegrees`/`outputCorners` take.
+    /// Nil when the observation carries no readable guide: `residualDegrees` is a magnitude, so it cannot say which way
+    /// to turn, and guessing a sign would tilt a picture that is already level.
+    static func automaticAngle(from observation: CameraRawUprightObservation, width: Int, height: Int) -> Double? {
+        let w = Double(width), h = Double(height)
+        guard w > 0, h > 0 else { return nil }
+        for guide in observation.guides {
+            guard let kind = CameraRawPerspective.classify(guide, width: w, height: h) else { continue }
+            var reference = CameraRawHorizonSettings()
+            reference.referenceStartX = guide.startX
+            reference.referenceStartY = guide.startY
+            reference.referenceEndX = guide.endX
+            reference.referenceEndY = guide.endY
+            return referenceAngle(settings: reference, width: width, height: height,
+                                  vertical: kind.kind == .vertical)
         }
-        let dx = guide.endX - guide.startX, dy = guide.endY - guide.startY
-        guard hypot(dx, dy) > 1e-6 else { return nil }
-        return wrap(-atan2(dy, dx) * 180 / .pi)
+        return nil
     }
 
     static func wrap(_ degrees: Double) -> Double {

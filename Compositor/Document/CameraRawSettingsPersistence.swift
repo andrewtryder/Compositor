@@ -355,6 +355,8 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
             optics.vignetteAmount, optics.vignetteMidpoint,
             optics.lensBlur.amount, optics.lensBlur.focusX, optics.lensBlur.focusY,
             optics.lensBlur.focusRange, optics.lensBlur.falloff, optics.lensBlur.highlights,
+            horizon.angleDegrees, horizon.amount,
+            horizon.referenceStartX, horizon.referenceStartY, horizon.referenceEndX, horizon.referenceEndY,
             calibration.shadowTint, calibration.redHue, calibration.redSaturation,
             calibration.greenHue, calibration.greenSaturation, calibration.blueHue, calibration.blueSaturation
         ]

@@ -17,7 +17,7 @@ Adds a `Lens Profile` group at the bottom of the existing Camera Raw `Optics` se
 
 It does **not** apply a Lensfun correction to any pixel. The panel says so in its own words. This is
 deliberate: the acceptance rules forbid presenting an incomplete renderer as functional, and the
-calibrated engine is M10.4.
+calibrated engine is M10.6 (it was planned as M10.4; see the roadmap note in section 8).
 
 Nothing else changed. The ten sections keep their order, every pre-existing Optics control keeps its
 position, and the RAW development editor's own `Lens Correction` toggle is untouched.
@@ -183,7 +183,15 @@ itself, captured as an element by `ScreenshotTests`.
 The two M10.3 captures are the same panel in its two provider states, which is the point: Apple Native
 is what a user sees before doing anything, and Lensfun is reachable but inert without an import.
 
-## 8. Plan for M10.4 — calibrated corrections
+## 8. Plan for calibrated corrections — now M10.6
+
+> **Roadmap note (revised in M10.4).** This section was written as "the next milestone". M10.4 took the
+> slot instead: Horizon's backend was already finished and only its controls were missing, so exposing it
+> was the smaller, safer step. The calibrated correction described below is now **M10.6**, and its content is
+> unchanged. M10.5 is the Advanced Perspective Tool UI.
+>
+> Nothing in sections 1–7 above has been altered: they record what M10.3 implemented and verified, and that
+> evidence stands.
 
 1. Ship the Lensfun **correction engine** as a separately built, separately signed component — either
    a signed embedded framework built from the pinned LGPL source at build time, or a

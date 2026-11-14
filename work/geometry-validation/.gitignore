@@ -9,3 +9,4 @@ input/photo-*.json
 /m9_1_6_runs/
 /regression-build.log
 /regression-test.log
+reports/m10_4-evidence

@@ -634,6 +634,14 @@ var cameraRawDragOriginalGuide: CameraRawGeometryGuide?
     var cameraRawManualGuides: [CameraRawGeometryGuide]?
     /// True after Auto upright has searched the preview, so the panel can say when nothing was found.
     var cameraRawUprightDetectionAttempted = false
+    /// Horizon › Horizontal / Vertical Reference: drag one line on the preview to define the reference.
+    /// Reuses the Guided Upright guide hit-testing and coordinate mapping; it never feeds the perspective solver.
+    var drawingCameraRawHorizonReference = false
+    /// The reference line being drawn, normalized image coordinates like a guide.
+    var cameraRawHorizonReferenceDraft: (start: CGPoint, end: CGPoint)?
+    /// Which Horizon reference mode the line belongs to. Captured when drawing starts so a mode change cannot
+    /// redirect a stroke half-way through.
+    var cameraRawHorizonDrawingMode: CameraRawHorizonMode?
     /// Set while Option is held on Exposure, Highlights, Shadows, Whites, or Blacks.
     var cameraRawClipping: CameraRawClipping?
     /// Set while Option is held on Sharpening Masking.

@@ -74,7 +74,47 @@ final class CameraRawSectionOrderTests: XCTestCase {
             XCTAssertTrue(app.buttons[name].firstMatch.exists, "section \(name) is still reachable")
         }
 
+        // Geometry keeps everything it had, and the M10.4 Horizon subsection is appended inside Advanced Geometry,
+        // below Volume, where nothing preexisting had to move. The identifiers are the stable hook the accessibility
+        // pass uses, so this also proves they resolve in a running app.
+        openCameraRawSection("Geometry", in: app)
+        let uprightStrip = app.descendants(matching: .any).matching(identifier: "geometryUprightStrip").firstMatch
+        XCTAssertTrue(uprightStrip.waitForExistence(timeout: 5), "the five-mode Upright strip")
+        for mode in ["off", "autoLevel", "autoVertical", "autoFull", "guided"] {
+            let button = app.descendants(matching: .any).matching(identifier: "geometryUpright_\(mode)").firstMatch
+            XCTAssertTrue(button.exists, "Upright \(mode) is reachable by identifier")
+        }
+        let manual = app.descendants(matching: .any).matching(identifier: "geometryManualTransformations").firstMatch
+        XCTAssertTrue(manual.exists, "Manual Transformations disclosure")
+        let constrain = app.descendants(matching: .any).matching(identifier: "geometryConstrainCrop").firstMatch
+        XCTAssertTrue(constrain.exists, "Constrain Crop")
+        let advanced = app.descendants(matching: .any).matching(identifier: "geometryAdvanced").firstMatch
+        XCTAssertTrue(advanced.exists, "Advanced Geometry disclosure")
+
+        // The added Horizon controls live inside Advanced Geometry.
+        advanced.click()
+        Thread.sleep(forTimeInterval: 0.8)
+        let horizonHeader = app.descendants(matching: .any).matching(identifier: "horizonHeader").firstMatch
+        XCTAssertTrue(horizonHeader.waitForExistence(timeout: 5), "Horizon is part of Advanced Geometry")
+        let horizonMode = app.descendants(matching: .any).matching(identifier: "horizonModePicker").firstMatch
+        XCTAssertTrue(horizonMode.exists, "Horizon has a mode selector")
+        let horizonAmount = app.descendants(matching: .any).matching(identifier: "horizonAmount").firstMatch
+        XCTAssertTrue(horizonAmount.exists, "Horizon has an Amount control")
+        // The Perspective Amount row it sits below is still there, so Horizon was appended rather than inserted.
+        XCTAssertTrue(app.staticTexts["Perspective Amount"].firstMatch.exists,
+                      "Perspective Amount keeps its place above Horizon")
+
         app.buttons["Cancel"].firstMatch.click()
+    }
+
+    /// Opens a closed Camera Raw section by its header. A section that is already open is left as it is.
+    private func openCameraRawSection(_ section: String, in app: XCUIApplication) {
+        let header = app.buttons[section].firstMatch
+        guard header.waitForExistence(timeout: 3) else { return }
+        let opener: [String: String] = ["Optics": "Distortion", "Light": "Exposure", "Geometry": "Upright"]
+        if let marker = opener[section], app.staticTexts[marker].firstMatch.exists { return }
+        header.click()
+        Thread.sleep(forTimeInterval: 0.8)
     }
 
     /// Opens a file in the app under test as the Finder would.

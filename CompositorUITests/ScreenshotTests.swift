@@ -76,10 +76,26 @@ final class ScreenshotTests: XCTestCase {
         Thread.sleep(forTimeInterval: 1)
         XCTAssertTrue(app.staticTexts["Lens Profile"].firstMatch.exists, "Lens Profile survives choosing a provider")
         shoot("10 Camera Raw Lens Profile, Lensfun chosen", panel, settle: 1)
+
+        // Milestone 10.4: Geometry is below Optics. Its own controls are unchanged, and the added Horizon subsection
+        // sits at the end of Advanced Geometry. Scrolling to the panel's end puts both in one capture.
+        openCameraRawSection("Geometry", in: app)
+        let advanced = app.descendants(matching: .any).matching(identifier: "geometryAdvanced").firstMatch
+        if advanced.waitForExistence(timeout: 3), advanced.exists { advanced.click() }
+        for _ in 0..<90 {
+            scrollView.scroll(byDeltaX: 0, deltaY: -60)
+        }
+        Thread.sleep(forTimeInterval: 1)
+        let horizon = app.staticTexts["Horizon"].firstMatch
+        XCTAssertTrue(horizon.exists, "Geometry shows the added Horizon subsection")
+        XCTAssertTrue(app.staticTexts["Perspective Amount"].firstMatch.exists,
+                      "Perspective Amount is still above it, unmoved")
+        shoot("11 Camera Raw Geometry Horizon", panel, settle: 1)
+
         dismiss(app)
 
         app.typeKey("n", modifierFlags: .command)
-        shoot("11 Second tab", window)
+        shoot("12 Second tab", window)
     }
 
     /// Opens a closed Camera Raw section by its header. A section that is already open is left as it is.
@@ -87,7 +103,7 @@ final class ScreenshotTests: XCTestCase {
         let header = app.buttons[section].firstMatch
         guard header.waitForExistence(timeout: 3) else { return }
         // Its own first control: present already means the section is open, and clicking would close it.
-        let opener: [String: String] = ["Optics": "Distortion", "Light": "Exposure"]
+        let opener: [String: String] = ["Optics": "Distortion", "Light": "Exposure", "Geometry": "Upright"]
         if let marker = opener[section], app.staticTexts[marker].firstMatch.exists { return }
         header.click()
         Thread.sleep(forTimeInterval: 0.8)

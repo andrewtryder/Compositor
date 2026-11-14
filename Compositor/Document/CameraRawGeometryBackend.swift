@@ -76,8 +76,13 @@ nonisolated enum CameraRawGeometryBackend {
         let horizon = settings.horizon.normalized
         guard !horizon.isIdentity else { return false }
         let upright = settings.geometry.upright
-        // Auto Level already owns roll when its guides are active; Automatic horizon is the Level substitute.
-        if upright == .autoLevel { return horizon.mode == .automatic }
+        // Auto Level rolls the picture through its guides, so an Automatic Horizon would rotate back over that roll and
+        // tilt a leveled picture. Automatic is the Level substitute only when Auto Level found no line to level with.
+        if upright == .autoLevel {
+            return horizon.mode == .automatic && settings.geometry.guides.isEmpty
+        }
+        // A dead-level observation replaces the Level roll the other solvers do not perform. An explicit Angle or
+        // reference is the person asking for a rotation on top, which Camera Raw does too, so it still runs.
         if upright == .guided || upright == .autoVertical || upright == .autoFull {
             return horizon.mode == .angle || horizon.mode == .horizontalReference || horizon.mode == .verticalReference
         }

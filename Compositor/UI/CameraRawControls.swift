@@ -137,6 +137,8 @@ struct CameraRawControls: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(section.rawValue)
+                .accessibilityIdentifier(section.accessibilityIdentifier)
+                .accessibilityAddTraits(expanded.contains(section) ? .isSelected : [])
                 Spacer(minLength: 0)
                 if section == .light, raw.adjustsLight {
                     eye(shown: session.filterEdit?.showsCameraRawLight ?? true, name: "Light", group: .light)
@@ -438,6 +440,8 @@ struct CameraRawControls: View {
         case geometry = "Geometry"
         case calibration = "Calibration"
         var id: String { rawValue }
+        /// Stable identifier for the disclosure button, independent of the visible title.
+        var accessibilityIdentifier: String { "cameraRawSection_\(id)" }
         var group: CameraRawGroup {
             switch self {
             case .light: return .light

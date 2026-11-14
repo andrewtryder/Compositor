@@ -12,6 +12,11 @@ nonisolated enum CameraRawGroup: String, CaseIterable, Sendable {
     case optics = "Optics"
     case geometry = "Geometry"
     case calibration = "Calibration"
+
+    /// The panel's fixed top-to-bottom section order. Declared with the model, not buried in a view, so a test can
+    /// assert the order that the milestone keeps without driving the interface.
+    static let panelOrder: [CameraRawGroup] = [.light, .color, .grading, .effects, .curve, .mixer, .detail,
+                                               .optics, .geometry, .calibration]
 }
 
 nonisolated extension CameraRawSettings {
@@ -145,6 +150,9 @@ extension EditorSession {
             edit.drawingCameraRawGeometryGuide = false
             edit.cameraRawUprightDetectionAttempted = false
             edit.cameraRawManualGuides = nil
+            edit.drawingCameraRawHorizonReference = false
+            edit.cameraRawHorizonReferenceDraft = nil
+            edit.cameraRawHorizonDrawingMode = nil
         }
         updateFilter(settings, preview: edit.preview)
     }
