@@ -240,19 +240,24 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     /// Same as `apply`, plus Expand to Fit placement metadata for FilterEdit / commit. `lensMetadata` and
     /// `lensfunDatabase` carry what the calibrated Lensfun pass needs: without them (or with no database
     /// installed) the pass never runs and the render is exactly what it was before M10.6.
+    ///
+    /// `lensBlurDepth`: the frame's depth estimate, computed once by the caller so Depth Focus does not run the
+    /// model per slider move. `visualizesLensBlurDepth`: preview only — Lens Blur's own map, never committed.
     func applyResult(_ image: CGImage, clipping: CameraRawClipping? = nil, scale: CGFloat = 1, seed: UInt32 = 0,
                      visualizePointColor: Int = -1, sharpenMask: Bool = false,
                      brightness known: CameraRawTables.Brightness? = nil, usesGPU: Bool = false,
                      lensMetadata: LensMetadata? = nil, lensfunDatabase: LensfunDatabase? = nil,
                      policySource: CameraRawLensCorrectionPolicy.Source = .renderedImage,
-                     appleCorrectionActive: Bool = false) throws -> CameraRawGeometryResult {
+                     appleCorrectionActive: Bool = false,
+                     lensBlurDepth: DepthMap? = nil, visualizesLensBlurDepth: Bool = false) throws -> CameraRawGeometryResult {
         let settings = normalized
         // A Lensfun selection can correct on its own, and whether it does is only known by resolving
         // against the photograph's metadata and the installed database — which happens below, not here.
         // The early return therefore stands aside whenever the provider is selected: the pass itself
         // leaves the pixels alone when no profile qualifies.
         let lensfunSelected = settings.optics.lensProfile.provider == .lensfun
-        if settings.isIdentity && !lensfunSelected && clipping == nil && visualizePointColor < 0 && !sharpenMask {
+        if settings.isIdentity && !lensfunSelected && clipping == nil && visualizePointColor < 0 && !sharpenMask
+            && !visualizesLensBlurDepth {
             return CameraRawGeometryResult(image: image, expansion: nil)
         }
         guard settings.isValid else { throw ProjectError.invalid }
@@ -268,6 +273,25 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         let paintDetailOptics = clipping == nil && (settings.adjustsDetail || settings.adjustsOptics || sharpenMask)
         var source = image
         var geometryExpansion: CameraRawGeometryExpansion?
+        var lensBlurAppliedEarly = false
+        // Showing the depth map is a preview of what Depth Focus reads, not a grade: it replaces the frame for as
+        // long as it is on, so the picture's own adjustments never tint it.
+        if clipping == nil && !sharpenMask && visualizePointColor < 0 && visualizesLensBlurDepth,
+           settings.optics.lensBlur.focusMode == .depthFocus {
+            let shown = try CameraRawLensBlur.apply(image, settings: settings.optics.lensBlur, scale: CGFloat(pixelScale),
+                                                    depth: lensBlurDepth, visualizeDepth: true)
+            return CameraRawGeometryResult(image: shown, expansion: nil)
+        }
+        // Depth Focus: the blur's mask is the captured frame's own depth, so it is blended on that frame — before
+        // any geometry warp — and the warp then carries the discs along with the picture. Focus Region keeps its
+        // long-standing place after the warp, so its result is exactly what it was before Depth Focus existed.
+        if clipping == nil && !sharpenMask && visualizePointColor < 0,
+           settings.optics.lensBlur.focusMode == .depthFocus,
+           !settings.optics.lensBlur.isIdentity {
+            source = try CameraRawLensBlur.apply(source, settings: settings.optics.lensBlur, scale: CGFloat(pixelScale),
+                                                 depth: lensBlurDepth, visualizeDepth: false)
+            lensBlurAppliedEarly = true
+        }
         // The calibrated Lensfun pass, before any geometry: vignetting, lateral CA and distortion in one
         // resample. It only runs when the caller supplied what it needs and the double-correction policy
         // allows it — the resolution is nil otherwise, and then nothing here changes.
@@ -317,9 +341,12 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
             }
         }
         // Lens Blur is spatial like the geometry passes, so it runs before the color grade and after the warp:
-        // its discs are round in the corrected picture, not in the distorted one.
-        if clipping == nil && !sharpenMask && visualizePointColor < 0 && !settings.optics.lensBlur.isIdentity {
-            source = try CameraRawLensBlur.apply(source, settings: settings.optics.lensBlur, scale: CGFloat(pixelScale))
+        // its discs are round in the corrected picture, not in the distorted one. Depth Focus reads the frame's
+        // depth estimate, which the caller may have computed once for the whole edit; it has already run above.
+        if !lensBlurAppliedEarly && clipping == nil && !sharpenMask && visualizePointColor < 0
+            && !settings.optics.lensBlur.isIdentity {
+            source = try CameraRawLensBlur.apply(source, settings: settings.optics.lensBlur, scale: CGFloat(pixelScale),
+                                                 depth: lensBlurDepth, visualizeDepth: false)
         }
         func applyTable(_ table: [Float]?, pixels: UnsafeMutablePointer<UInt8>, width: Int, height: Int, stride: Int, clipping: Int32) {
             if usesGPU, clipping == 0, let table,
@@ -569,6 +596,51 @@ extension EditorSession {
         settings.cameraRaw.optics.lensBlur.focusX = Double(normalized.x)
         settings.cameraRaw.optics.lensBlur.focusY = Double(normalized.y)
         updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Depth Focus › Set Focus: the clicked point's own depth becomes the sharp band's focus, so whatever is
+    /// there stays sharp and the rest of the scene blurs by its distance from it. Armed from Optics as a
+    /// one-shot pick; a point with no estimate leaves the settings alone.
+    func selectCameraRawLensBlurDepthFocus() {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return }
+        guard DepthModel.isReady else { return }
+        edit.picksCameraRawLensBlurDepth = true
+        edit.movesCameraRawLensBlurFocus = false
+        brushRevision += 1
+    }
+
+    /// A click while Set Focus is armed: that point's depth becomes the focal distance, then the mode ends.
+    func sampleCameraRawLensBlurDepth(at point: CGPoint) {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing, edit.picksCameraRawLensBlurDepth,
+              let normalized = cameraRawNormalizedPoint(at: point) else { return }
+        defer {
+            edit.picksCameraRawLensBlurDepth = false
+            brushRevision += 1
+        }
+        guard let depth = edit.lensBlurDepth(atNormalizedX: Double(normalized.x), y: Double(normalized.y)) else { return }
+        var settings = edit.settings
+        settings.cameraRaw.optics.lensBlur.focusMode = .depthFocus
+        settings.cameraRaw.optics.lensBlur.depthFocalDistance = depth
+        edit.settings = settings.normalized
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Prepares the depth model on an explicit request, then redraws: a download never starts because a panel
+    /// was opened. Volumetric Light's own prepare is unchanged.
+    func prepareCameraRawLensBlurDepth() async {
+        guard let edit = filterEdit, edit.kind == .cameraRaw else { return }
+        guard !DepthModel.isReady else {
+            // Already loaded: drop the cached "no estimate" and draw the depth-blurred picture.
+            edit.invalidateLensBlurDepth()
+            updateFilter(edit.settings, preview: edit.preview)
+            return
+        }
+        preparingDepth = true
+        let ready = await DepthModel.prepare()
+        preparingDepth = false
+        guard filterEdit === edit, !edit.committing else { return }
+        edit.invalidateLensBlurDepth()
+        if ready { updateFilter(edit.settings, preview: edit.preview) }
     }
 
     /// Miniature's focus follows the pointer. Armed from Geometry, then dragged on the preview,

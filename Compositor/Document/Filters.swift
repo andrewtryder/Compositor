@@ -258,6 +258,12 @@ nonisolated struct FilterJob: @unchecked Sendable {
     /// Crop After Transform editing on the canvas: the job renders uncropped so the rectangle can be
     /// drawn over the whole corrected picture. Preview only; committing leaves this nil.
     var editsCameraRawCrop = false
+    /// Lens Blur › Depth Focus: the frame's depth estimate, computed once per preview source so a slider move
+    /// never runs the model again. Nil asks the render to work it out (or, without the model, leaves the
+    /// picture alone).
+    var lensBlurDepth: DepthMap? = nil
+    /// Preview only: Lens Blur shows the depth estimate it reads. Never committed.
+    var visualizesLensBlurDepth = false
 }
 
 nonisolated enum PixelFilter {
@@ -379,7 +385,9 @@ nonisolated enum PixelFilter {
                                                   brightness: job.cameraRawBrightness, usesGPU: job.cameraRawUsesGPU,
                                                   lensMetadata: job.lensMetadata, lensfunDatabase: job.lensfunDatabase,
                                                   policySource: job.lensPolicySource,
-                                                  appleCorrectionActive: job.appleCorrectionActive)
+                                                  appleCorrectionActive: job.appleCorrectionActive,
+                                                  lensBlurDepth: job.lensBlurDepth,
+                                                  visualizesLensBlurDepth: job.visualizesLensBlurDepth)
             image = raw.image
             geometryExpansion = job.selection == nil ? raw.expansion : nil
         // Grain sits in layer pixels; the job's seed gives each application its own pattern.
@@ -629,6 +637,10 @@ final class FilterEdit {
     var samplesDefringe = false
     /// Lens Blur's focus region is being dragged on the preview from the Optics section.
     var movesCameraRawLensBlurFocus = false
+    /// Lens Blur › Depth Focus: show the depth estimate instead of the picture. Preview only.
+    var visualizesLensBlurDepth = false
+    /// Lens Blur › Depth Focus: the next click on the preview sets the focal distance from that point's depth.
+    var picksCameraRawLensBlurDepth = false
     /// Miniature's focus region is being dragged on the preview from the Geometry section.
     var movesCameraRawMiniatureFocus = false
     /// The Miniature focus center captured when a canvas drag began, so Escape can put it back exactly.
@@ -897,8 +909,39 @@ var cameraRawDragOriginalGuide: CameraRawGeometryGuide?
             job.appleCorrectionActive = appleLensCorrectionActive
             // Crop editing draws over the whole corrected picture, so its job must render uncropped.
             job.editsCameraRawCrop = editsCameraRawCrop
+            job.visualizesLensBlurDepth = visualizesLensBlurDepth
+            // Depth Focus reads one estimate per preview source; the renderer asks for it only when it is needed.
+            if settings.cameraRaw.optics.lensBlur.needsDepth
+                || (visualizesLensBlurDepth && settings.cameraRaw.optics.lensBlur.focusMode == .depthFocus) {
+                job.lensBlurDepth = lensBlurDepth
+            }
         }
         return job
+    }
+
+    /// The depth estimate Depth Focus works from, at most once per preview source. Asking with the model not yet
+    /// loaded gives nil, and the picture keeps its own pixels until the user prepares it.
+    @ObservationIgnored private var cachedLensBlurDepth: (version: UInt64, depth: DepthMap?)?
+    var lensBlurDepth: DepthMap? {
+        guard let cached = cachedLensBlurDepth, cached.version == previewSourceVersion else {
+            let version = previewSourceVersion
+            let depth = DepthModel.depth(for: previewSource)
+            cachedLensBlurDepth = (version, depth)
+            return depth
+        }
+        return cached.depth
+    }
+
+    /// The depth at a normalized point of the preview, for the panel's readout and its click-to-focus. Nil without
+    /// a model.
+    func lensBlurDepth(atNormalizedX x: Double, y: Double) -> Double? {
+        guard let map = lensBlurDepth else { return nil }
+        return CameraRawLensBlur.focalDistance(forDepthAtX: x, y: y, in: previewSource, depth: map)
+    }
+
+    /// Drops the held estimate so the next render asks the model again, after it was prepared or released.
+    func invalidateLensBlurDepth() {
+        cachedLensBlurDepth = nil
     }
 }
 
@@ -1243,6 +1286,9 @@ extension EditorSession {
             job.lensfunDatabase = edit.lensfunDatabase
             job.lensPolicySource = edit.lensCorrectionSource
             job.appleCorrectionActive = edit.appleLensCorrectionActive
+            // The same estimate the preview read: on a cameraRaw job the frame is the layer's own pixels, so this
+            // is the object the cache already holds.
+            if edit.settings.cameraRaw.optics.lensBlur.needsDepth { job.lensBlurDepth = edit.lensBlurDepth }
         }
         let cached = edit.kind.isAutomatic && edit.preparedSettings == edit.settings ? edit.preparedPreview : nil
         let baseTransform = edit.transform

@@ -118,6 +118,7 @@ final class CanvasView: NSView {
             || session.filterEdit?.samplesWhiteBalance == true || session.filterEdit?.samplesPointColor == true
             || session.filterEdit?.samplesDefringe == true
             || session.filterEdit?.movesCameraRawLensBlurFocus == true
+            || session.filterEdit?.picksCameraRawLensBlurDepth == true
             || session.filterEdit?.movesCameraRawMiniatureFocus == true
             || session.filterEdit?.drawingCameraRawGeometryGuide == true
             || session.filterEdit?.drawingCameraRawHorizonReference == true
@@ -2161,6 +2162,11 @@ final class CanvasView: NSView {
         }
         if session.filterEdit?.samplesDefringe == true, !spaceHeld, let document = session.document {
             session.sampleCameraRawDefringe(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if session.filterEdit?.picksCameraRawLensBlurDepth == true, !spaceHeld, let document = session.document {
+            session.sampleCameraRawLensBlurDepth(at: session.viewport.documentPoint(from: point, documentSize: document.size))
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
             return
         }

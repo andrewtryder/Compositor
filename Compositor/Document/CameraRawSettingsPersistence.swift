@@ -135,6 +135,33 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
             var focusRange: Double = 35
             var falloff: Double = 40
             var highlights: Double = 50
+            /// Depth Focus (M11.0). Absent in older projects, which decode to Focus Region — the behavior those
+            /// projects were saved with.
+            var focusMode: String = CameraRawLensBlurFocusMode.focusRegion.rawValue
+            var depthFocalDistance: Double = 50
+            var depthRange: Double = 25
+
+            init() {}
+
+            private enum Keys: String, CodingKey {
+                case amount, aperture, focusX, focusY, focusRange, falloff, highlights,
+                     focusMode, depthFocalDistance, depthRange
+            }
+
+            init(from decoder: Decoder) throws {
+                let values = try decoder.container(keyedBy: Keys.self)
+                let base = Self()
+                amount = try values.decodeIfPresent(Double.self, forKey: .amount) ?? base.amount
+                aperture = try values.decodeIfPresent(String.self, forKey: .aperture) ?? base.aperture
+                focusX = try values.decodeIfPresent(Double.self, forKey: .focusX) ?? base.focusX
+                focusY = try values.decodeIfPresent(Double.self, forKey: .focusY) ?? base.focusY
+                focusRange = try values.decodeIfPresent(Double.self, forKey: .focusRange) ?? base.focusRange
+                falloff = try values.decodeIfPresent(Double.self, forKey: .falloff) ?? base.falloff
+                highlights = try values.decodeIfPresent(Double.self, forKey: .highlights) ?? base.highlights
+                focusMode = try values.decodeIfPresent(String.self, forKey: .focusMode) ?? base.focusMode
+                depthFocalDistance = try values.decodeIfPresent(Double.self, forKey: .depthFocalDistance) ?? base.depthFocalDistance
+                depthRange = try values.decodeIfPresent(Double.self, forKey: .depthRange) ?? base.depthRange
+            }
         }
 
         nonisolated struct LensProfile: Codable, Equatable, Sendable {
@@ -294,6 +321,9 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         optics.lensBlur.focusRange = s.optics.lensBlur.focusRange
         optics.lensBlur.falloff = s.optics.lensBlur.falloff
         optics.lensBlur.highlights = s.optics.lensBlur.highlights
+        optics.lensBlur.focusMode = s.optics.lensBlur.focusMode.rawValue
+        optics.lensBlur.depthFocalDistance = s.optics.lensBlur.depthFocalDistance
+        optics.lensBlur.depthRange = s.optics.lensBlur.depthRange
         optics.lensProfile.provider = s.optics.lensProfile.provider.rawValue
         optics.lensProfile.automatic = s.optics.lensProfile.selection.automatic
         optics.lensProfile.lensID = s.optics.lensProfile.selection.lensID
@@ -377,6 +407,7 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
             optics.vignetteAmount, optics.vignetteMidpoint,
             optics.lensBlur.amount, optics.lensBlur.focusX, optics.lensBlur.focusY,
             optics.lensBlur.focusRange, optics.lensBlur.falloff, optics.lensBlur.highlights,
+            optics.lensBlur.depthFocalDistance, optics.lensBlur.depthRange,
             horizon.angleDegrees, horizon.amount,
             horizon.referenceStartX, horizon.referenceStartY, horizon.referenceEndX, horizon.referenceEndY,
             calibration.shadowTint, calibration.redHue, calibration.redSaturation,
@@ -481,6 +512,9 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         settings.optics.lensBlur.focusRange = optics.lensBlur.focusRange
         settings.optics.lensBlur.falloff = optics.lensBlur.falloff
         settings.optics.lensBlur.highlights = optics.lensBlur.highlights
+        settings.optics.lensBlur.focusMode = CameraRawLensBlurFocusMode(rawValue: optics.lensBlur.focusMode) ?? .focusRegion
+        settings.optics.lensBlur.depthFocalDistance = optics.lensBlur.depthFocalDistance
+        settings.optics.lensBlur.depthRange = optics.lensBlur.depthRange
         settings.optics.lensProfile.provider = CameraRawLensProfileProvider(rawValue: optics.lensProfile.provider) ?? .appleNative
         settings.optics.lensProfile.selection = CameraRawLensProfileSelection(automatic: optics.lensProfile.automatic,
                                                                             lensID: optics.lensProfile.lensID,

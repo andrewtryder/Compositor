@@ -47,6 +47,13 @@ nonisolated enum DepthModel {
     /// Whether the model is loaded and `depth` works.
     static var isReady: Bool { state.lock.withLock { state.model != nil } }
 
+    /// Whether a load (the first one is a download) is in progress. The panel reports this while an explicit
+    /// Prepare runs; opening a panel never starts one.
+    static var isLoading: Bool { state.lock.withLock { state.loading != nil } }
+
+    /// The compiled model's folder, for the panel's text: the model is not in the app, and this is where it goes.
+    static var installedFolderName: String { folder.lastPathComponent }
+
     /// Loads the model, downloading and compiling it the first time. True once it's ready; false if it couldn't be
     /// had (no connection, a file that doesn't match), to be tried again next time.
     @discardableResult static func prepare() async -> Bool {
@@ -198,5 +205,19 @@ nonisolated struct DepthMap: Sendable {
         let last = Float(values.count - 1)
         for (rank, index) in order.enumerated() { spread[index] += (Float(rank) / last - values[index]) * amount }
         return DepthMap(values: spread, width: width, height: height)
+    }
+
+    /// The depth at normalized 0…1 coordinates (y down), sampled bilinearly. NaN when the point is outside the map
+    /// or the map is empty.
+    func value(atNormalizedX x: Double, y: Double) -> Float {
+        guard width > 0, height > 0, values.count == width * height,
+              x.isFinite, y.isFinite, (0...1).contains(x), (0...1).contains(y) else { return .nan }
+        let fx = Float(x) * Float(width - 1), fy = Float(y) * Float(height - 1)
+        let x0 = min(width - 1, max(0, Int(fx))), y0 = min(height - 1, max(0, Int(fy)))
+        let x1 = min(width - 1, x0 + 1), y1 = min(height - 1, y0 + 1)
+        let tx = fx - Float(x0), ty = fy - Float(y0)
+        let top = values[y0 * width + x0] * (1 - tx) + values[y0 * width + x1] * tx
+        let bottom = values[y1 * width + x0] * (1 - tx) + values[y1 * width + x1] * tx
+        return top * (1 - ty) + bottom * ty
     }
 }
