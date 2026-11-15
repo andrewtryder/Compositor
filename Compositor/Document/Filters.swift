@@ -264,6 +264,8 @@ nonisolated struct FilterJob: @unchecked Sendable {
     var lensBlurDepth: DepthMap? = nil
     /// Preview only: Lens Blur shows the depth estimate it reads. Never committed.
     var visualizesLensBlurDepth = false
+    /// Preview only: the local mask painted over the picture while its overlay is shown. Never committed.
+    var visualizesLocalMask: UUID? = nil
 }
 
 nonisolated enum PixelFilter {
@@ -387,7 +389,8 @@ nonisolated enum PixelFilter {
                                                   policySource: job.lensPolicySource,
                                                   appleCorrectionActive: job.appleCorrectionActive,
                                                   lensBlurDepth: job.lensBlurDepth,
-                                                  visualizesLensBlurDepth: job.visualizesLensBlurDepth)
+                                                  visualizesLensBlurDepth: job.visualizesLensBlurDepth,
+                                                  visualizesLocalMask: job.visualizesLocalMask)
             image = raw.image
             geometryExpansion = job.selection == nil ? raw.expansion : nil
         // Grain sits in layer pixels; the job's seed gives each application its own pattern.
@@ -641,6 +644,24 @@ final class FilterEdit {
     var visualizesLensBlurDepth = false
     /// Lens Blur › Depth Focus: the next click on the preview sets the focal distance from that point's depth.
     var picksCameraRawLensBlurDepth = false
+    /// Local masks: which one the panel edits, and whether its coverage is painted on the preview.
+    var selectedLocalMaskID: UUID?
+    var showsLocalMaskOverlay = false
+    /// The selected mask's own overlay is shown while the mask is being drawn or sampled, so the region being set is
+    /// visible without the panel's toggle.
+    var previewsSelectedLocalMask: Bool { showsLocalMaskOverlay || samplesLocalMask || drawsLocalMask }
+    /// The eyedropper is armed to set the selected mask's Color Range sample, which replaces the raster kinds.
+    var samplesLocalMask = false
+    /// The next click adds an Object Selection mask from the foreground under it.
+    var picksLocalMaskObject = false
+    /// The next click adds a Color Range mask sampled there.
+    var picksLocalMaskColor = false
+    /// A gradient pair is being dragged on the preview for the selected mask.
+    var drawsLocalMask = false
+    /// The gradient handle grabbed at the press point.
+    var localMaskGradientHandle: CameraRawLocalMaskGradientHandle?
+    /// Where the gradient was when the drag began, so Escape can put it back exactly.
+    var localMaskGradientOriginal: (start: CGPoint, end: CGPoint)?
     /// Miniature's focus region is being dragged on the preview from the Geometry section.
     var movesCameraRawMiniatureFocus = false
     /// The Miniature focus center captured when a canvas drag began, so Escape can put it back exactly.
@@ -910,6 +931,9 @@ var cameraRawDragOriginalGuide: CameraRawGeometryGuide?
             // Crop editing draws over the whole corrected picture, so its job must render uncropped.
             job.editsCameraRawCrop = editsCameraRawCrop
             job.visualizesLensBlurDepth = visualizesLensBlurDepth
+            // The selected mask's overlay paints its region instead of showing the mask's own grade, so it is a
+            // preview of coverage: only asked for while the panel shows it.
+            job.visualizesLocalMask = previewsSelectedLocalMask ? selectedLocalMaskID : nil
             // Depth Focus reads one estimate per preview source; the renderer asks for it only when it is needed.
             if settings.cameraRaw.optics.lensBlur.needsDepth
                 || (visualizesLensBlurDepth && settings.cameraRaw.optics.lensBlur.focusMode == .depthFocus) {

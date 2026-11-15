@@ -103,6 +103,9 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     /// (de-squeeze, Volume, Perspective, Horizon, framing and Constrain Crop), before Miniature and Lens Blur.
     /// Defaults to no crop, which renders exactly as before this existed.
     var crop = CameraRawGeometryCropRequest()
+    /// Local regions, each with its own tone and color. Applied to the corrected frame after the global grade, in
+    /// list order; empty by default, so a project without masks renders exactly as it did.
+    var localMasks: [CameraRawLocalMask] = []
     /// Optional automatic horizon angle from the last Auto Level observation (degrees). Not persisted.
     var automaticHorizonAngle: Double? = nil
 
@@ -123,9 +126,13 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     var adjustsGeometry: Bool { geometry.adjusts || !horizon.isIdentity || !miniature.isIdentity
         || perspectiveTools.kind != .automatic || !crop.isNoCrop }
     var adjustsCalibration: Bool { calibration.adjusts }
+    /// Masks that are on and actually change something.
+    var appliedLocalMasks: [CameraRawLocalMask] { localMasks.filter(\.applies) }
+    var adjustsLocalMasks: Bool { !appliedLocalMasks.isEmpty }
     var isIdentity: Bool {
         !adjustsLight && !adjustsColor && !adjustsEffects && !adjustsCurve && !adjustsMixer && !adjustsGrading
             && !adjustsDetail && !adjustsOptics && !adjustsGeometry && !adjustsCalibration
+            && !adjustsLocalMasks
             && !optics.lensProfile.adjustsPixels
     }
     var isValid: Bool {
@@ -137,6 +144,9 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         && [glow, vignetteMidpoint, vignetteFeather, vignetteHighlights, grainAmount, grainSize, grainRoughness].allSatisfy {
             $0.isFinite && Self.unitRange.contains($0)
         }
+        && localMasks.count <= CameraRawLocalMask.maximumCount
+        && localMasks.allSatisfy(\.isValid)
+        && Set(localMasks.map(\.id)).count == localMasks.count
     }
     var normalized: Self {
         var result = self
@@ -177,6 +187,7 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         result.calibration = calibration.normalized
         result.horizon = horizon.normalized
         result.miniature = miniature.normalized
+        result.localMasks = Array(localMasks.prefix(CameraRawLocalMask.maximumCount)).map(\.normalized)
         return result
     }
 
@@ -249,7 +260,8 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
                      lensMetadata: LensMetadata? = nil, lensfunDatabase: LensfunDatabase? = nil,
                      policySource: CameraRawLensCorrectionPolicy.Source = .renderedImage,
                      appleCorrectionActive: Bool = false,
-                     lensBlurDepth: DepthMap? = nil, visualizesLensBlurDepth: Bool = false) throws -> CameraRawGeometryResult {
+                     lensBlurDepth: DepthMap? = nil, visualizesLensBlurDepth: Bool = false,
+                     visualizesLocalMask: UUID? = nil) throws -> CameraRawGeometryResult {
         let settings = normalized
         // A Lensfun selection can correct on its own, and whether it does is only known by resolving
         // against the photograph's metadata and the installed database — which happens below, not here.
@@ -257,7 +269,7 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         // leaves the pixels alone when no profile qualifies.
         let lensfunSelected = settings.optics.lensProfile.provider == .lensfun
         if settings.isIdentity && !lensfunSelected && clipping == nil && visualizePointColor < 0 && !sharpenMask
-            && !visualizesLensBlurDepth {
+            && !visualizesLensBlurDepth && visualizesLocalMask == nil {
             return CameraRawGeometryResult(image: image, expansion: nil)
         }
         guard settings.isValid else { throw ProjectError.invalid }
@@ -398,7 +410,23 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
                                            skipDistortion: earlyDistortion)
             }
         }
-        return CameraRawGeometryResult(image: graded, expansion: geometryExpansion)
+        // Local masks read the corrected frame — after de-squeeze, geometry, crop, Miniature, Lens Blur and the global
+        // grade — so a region drawn on the preview lands on the pixels it was drawn over, and the global grade is
+        // never applied twice. Nothing here runs when no mask is on, so a project without masks is pixel-identical.
+        var result = graded
+        if clipping == nil && !sharpenMask && visualizePointColor < 0 {
+            if settings.adjustsLocalMasks {
+                result = try CameraRawLocalMaskRenderer.applying(settings.appliedLocalMasks, to: result,
+                                                                 settings: settings,
+                                                                 inputWidth: image.width, inputHeight: image.height)
+            }
+            if let visualizesLocalMask {
+                result = try CameraRawLocalMaskRenderer.overlay(settings.localMasks, maskID: visualizesLocalMask,
+                                                                settings: settings, on: result,
+                                                                inputWidth: image.width, inputHeight: image.height)
+            }
+        }
+        return CameraRawGeometryResult(image: result, expansion: geometryExpansion)
     }
 
     /// Premultiplied RGBA lens distortion matching `lens_distort` / the Lens Correction filter.
@@ -1461,7 +1489,7 @@ extension EditorSession {
         updateFilter(settings, preview: current.preview)
     }
 
-    private func cameraRawNormalizedPoint(at point: CGPoint) -> CGPoint? {
+    func cameraRawNormalizedPoint(at point: CGPoint) -> CGPoint? {
         guard let edit = filterEdit else { return nil }
         let image = edit.previewSource
         let pixel = point.applying(edit.previewMapping.inverted())

@@ -45,6 +45,8 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
     var perspectiveTools: CameraRawPerspectiveToolState = CameraRawPerspectiveToolState()
     var miniature: CameraRawMiniatureSettings = CameraRawMiniatureSettings()
     var crop: CameraRawGeometryCropRequest = CameraRawGeometryCropRequest()
+    /// Local masks (M11.3). Absent in older projects, which decode to none and render exactly as they did.
+    var localMasks: [CameraRawLocalMask] = []
 
     nonisolated struct Curve: Codable, Equatable, Sendable {
         var shadows: Double = 0
@@ -338,6 +340,7 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         perspectiveTools = s.perspectiveTools
         miniature = s.miniature
         crop = s.crop
+        localMasks = s.localMasks
     }
 
     init(from decoder: Decoder) throws {
@@ -386,6 +389,7 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         perspectiveTools = try read(.perspectiveTools, base.perspectiveTools)
         miniature = try read(.miniature, base.miniature)
         crop = try read(.crop, base.crop)
+        localMasks = try read(.localMasks, base.localMasks)
     }
 
     func makeSettings() throws -> CameraRawSettings {
@@ -533,6 +537,12 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         settings.perspectiveTools = perspectiveTools
         settings.miniature = miniature
         settings.crop = crop
+        guard localMasks.count <= CameraRawLocalMask.maximumCount,
+              Set(localMasks.map(\.id)).count == localMasks.count,
+              localMasks.allSatisfy(\.isValid) else {
+            throw DecodeError.malformed("local masks")
+        }
+        settings.localMasks = localMasks
         settings = settings.normalized
         guard settings.isValid else { throw DecodeError.malformed("out of range") }
         return settings

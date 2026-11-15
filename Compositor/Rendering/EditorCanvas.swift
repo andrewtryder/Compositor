@@ -124,6 +124,8 @@ final class CanvasView: NSView {
             || session.filterEdit?.drawingCameraRawHorizonReference == true
             || session.filterEdit?.drawingCameraRawPerspectiveTool == true
             || session.filterEdit?.editsCameraRawCrop == true
+            || session.filterEdit?.drawsLocalMask == true || session.filterEdit?.samplesLocalMask == true
+            || session.filterEdit?.picksLocalMaskObject == true || session.filterEdit?.picksLocalMaskColor == true
     }
     /// View point where a targeted-adjustment drag began.
     private var hueTargetStart: CGPoint?
@@ -142,6 +144,8 @@ final class CanvasView: NSView {
     private var miniatureDrag = false
     /// Camera Raw Crop After Transform's rectangle being drawn or dragged on the canvas.
     private var cameraRawCropDrag = false
+    /// Camera Raw Local Mask's gradient being dragged on the canvas.
+    private var localMaskDrag = false
     /// ReShape control-point drag in progress.
     private var meshDragging = false
     private var antsTimer: Timer?
@@ -2202,6 +2206,28 @@ final class CanvasView: NSView {
             synchronizeDisplay()
             return
         }
+        // Local masks: the Color Range sample takes the click, then a gradient's pair is dragged.
+        if session.filterEdit?.picksLocalMaskObject == true, !spaceHeld, let document = session.document {
+            session.addCameraRawLocalMaskFromPickedObject(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if session.filterEdit?.picksLocalMaskColor == true, !spaceHeld, let document = session.document {
+            session.addCameraRawLocalMaskFromPickedColor(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if session.filterEdit?.samplesLocalMask == true, !spaceHeld, let document = session.document {
+            session.sampleCameraRawLocalMaskColor(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if session.filterEdit?.drawsLocalMask == true, !spaceHeld, let document = session.document {
+            session.beginCameraRawLocalMaskGradientDrag(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            localMaskDrag = true
+            synchronizeDisplay()
+            return
+        }
         if session.filterEdit?.drawingCameraRawGeometryGuide == true, !spaceHeld, let document = session.document {
             let documentPoint = session.viewport.documentPoint(from: point, documentSize: document.size)
             // Endpoint dragging takes priority over starting a new guide.
@@ -2383,6 +2409,11 @@ final class CanvasView: NSView {
         }
         if cameraRawCropDrag, let document = session.document {
             session.continueCameraRawCropDrag(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            synchronizeDisplay()
+            return
+        }
+        if localMaskDrag, let document = session.document {
+            session.continueCameraRawLocalMaskGradientDrag(to: session.viewport.documentPoint(from: point, documentSize: document.size))
             synchronizeDisplay()
             return
         }
@@ -2641,6 +2672,12 @@ final class CanvasView: NSView {
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
             return
         }
+        if localMaskDrag {
+            localMaskDrag = false
+            session.endCameraRawLocalMaskGradientDrag()
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
         if progressiveDrag != nil {
             progressiveDrag = nil
             // The panel keeps the keyboard, for Return and Escape.
@@ -2882,6 +2919,11 @@ final class CanvasView: NSView {
             // Escape puts the crop scalars back where the drag found them and disarms the mode;
             // no history entry is made for a canceled gesture.
             session.cancelCameraRawCropEditing()
+            synchronizeDisplay()
+        } else if event.keyCode == 53, session.filterEdit?.drawsLocalMask == true {
+            // Escape puts a local mask's gradient back where the drag found it and disarms the mode.
+            session.cancelCameraRawLocalMaskGradient()
+            localMaskDrag = false
             synchronizeDisplay()
         } else if event.keyCode == 53, session.transformEdit != nil {
             transformDrag = nil

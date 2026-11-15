@@ -19,6 +19,8 @@ struct CameraRawControls: View {
                     ForEach(Section.allCases) { section in
                         disclosure(section)
                     }
+                    Divider()
+                    CameraRawMasksControls(session: session)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.trailing, 20)
