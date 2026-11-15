@@ -218,12 +218,21 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
     var supportsNoiseReduction: Bool = false
     var supportsLensCorrection: Bool = false
     var supportsHighlightRecovery: Bool = false
+    /// Chroma noise reduction at the decoder's own stage (M11.2). Absent in older projects, which decoded with the
+    /// camera's own value.
+    var colorNoiseReduction: Float = 0
+    var asShotColorNoiseReduction: Float = 0
+    var supportsColorNoiseReduction: Bool = false
     /// White balance mode (M11.1). Absent in older projects, which decode to As Shot — the mode they were saved in.
     var whiteBalanceMode: String = RawWhiteBalanceMode.asShot.rawValue
     var asShotTemperatureAbsolute: Float = 5000
     var asShotTintAbsolute: Float = 0
     /// Photographic profile (M11.1). Absent in older projects, which decode to Camera Default.
     var colorProfile: ColorProfile = ColorProfile()
+    /// Raw Details (M11.2). Absent in older projects, which decode to the decoder's own defaults.
+    var rawDetail: RawDetail = RawDetail()
+    var rawDetailDefaults: RawDetailDefaults = RawDetailDefaults()
+    var supportsRawDetail: Bool = false
 
     nonisolated struct ColorProfile: Codable, Equatable, Sendable {
         var kind: String = RawColorProfileKind.cameraDefault.rawValue
@@ -233,11 +242,28 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
         var iccData: Data?
     }
 
+    nonisolated struct RawDetail: Codable, Equatable, Sendable {
+        var enabled: Bool = false
+        var detail: Float = 0
+        var sharpness: Float = 0
+        var contrast: Float = 0
+        var moire: Float = 0
+    }
+
+    nonisolated struct RawDetailDefaults: Codable, Equatable, Sendable {
+        var detail: Float = 0
+        var sharpness: Float = 0
+        var contrast: Float = 0
+        var moire: Float = 0
+    }
+
     private enum Keys: String, CodingKey {
         case schemaVersion, exposure, temperature, tint, boost, noiseReduction, lensCorrection, highlightRecovery,
              asShotTemperature, asShotTint, asShotNoiseReduction, asShotLensCorrection, asShotHighlightRecovery,
              supportsNoiseReduction, supportsLensCorrection, supportsHighlightRecovery,
-             whiteBalanceMode, asShotTemperatureAbsolute, asShotTintAbsolute, colorProfile
+             whiteBalanceMode, asShotTemperatureAbsolute, asShotTintAbsolute, colorProfile, rawDetail,
+             rawDetailDefaults, supportsRawDetail,
+             colorNoiseReduction, asShotColorNoiseReduction, supportsColorNoiseReduction
     }
 
     init() {}
@@ -269,6 +295,17 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
             ?? asShotTemperature
         asShotTintAbsolute = try values.decodeIfPresent(Float.self, forKey: .asShotTintAbsolute) ?? asShotTint
         colorProfile = try values.decodeIfPresent(ColorProfile.self, forKey: .colorProfile) ?? base.colorProfile
+        rawDetail = try values.decodeIfPresent(RawDetail.self, forKey: .rawDetail) ?? base.rawDetail
+        // Absent in a project written before the baseline existed; its offsets were measured against zero then.
+        rawDetailDefaults = try values.decodeIfPresent(RawDetailDefaults.self, forKey: .rawDetailDefaults)
+            ?? base.rawDetailDefaults
+        supportsRawDetail = try values.decodeIfPresent(Bool.self, forKey: .supportsRawDetail) ?? base.supportsRawDetail
+        colorNoiseReduction = try values.decodeIfPresent(Float.self, forKey: .colorNoiseReduction)
+            ?? asShotNoiseReduction
+        asShotColorNoiseReduction = try values.decodeIfPresent(Float.self, forKey: .asShotColorNoiseReduction)
+            ?? asShotNoiseReduction
+        supportsColorNoiseReduction = try values.decodeIfPresent(Bool.self, forKey: .supportsColorNoiseReduction)
+            ?? base.supportsColorNoiseReduction
     }
 
     init(_ settings: RawDevelopSettings) {
@@ -292,6 +329,17 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
         asShotTintAbsolute = settings.asShotTintAbsolute
         colorProfile = ColorProfile(kind: settings.colorProfile.kind.rawValue, name: settings.colorProfile.name,
                                     strength: settings.colorProfile.strength, iccData: settings.colorProfile.iccData)
+        rawDetail = RawDetail(enabled: settings.rawDetail.enabled, detail: settings.rawDetail.detail,
+                              sharpness: settings.rawDetail.sharpness, contrast: settings.rawDetail.contrast,
+                              moire: settings.rawDetail.moire)
+        rawDetailDefaults = RawDetailDefaults(detail: settings.rawDetailDefaults.detail,
+                                             sharpness: settings.rawDetailDefaults.sharpness,
+                                             contrast: settings.rawDetailDefaults.contrast,
+                                             moire: settings.rawDetailDefaults.moire)
+        supportsRawDetail = settings.supportsRawDetail
+        colorNoiseReduction = settings.colorNoiseReduction
+        asShotColorNoiseReduction = settings.asShotColorNoiseReduction
+        supportsColorNoiseReduction = settings.supportsColorNoiseReduction
     }
 
     /// Converts back to the live `RawDevelopSettings` used by `RawImporter`.
@@ -318,6 +366,17 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
         settings.colorProfile = RawColorProfile(kind: RawColorProfileKind(rawValue: colorProfile.kind) ?? .cameraDefault,
                                                iccData: colorProfile.iccData, name: colorProfile.name,
                                                strength: colorProfile.strength).normalized
+        settings.rawDetail = RawDetailSettings(enabled: rawDetail.enabled, detail: rawDetail.detail,
+                                              sharpness: rawDetail.sharpness, contrast: rawDetail.contrast,
+                                              moire: rawDetail.moire).normalized
+        settings.rawDetailDefaults = RawDetailBaseline(detail: rawDetailDefaults.detail,
+                                                       sharpness: rawDetailDefaults.sharpness,
+                                                       contrast: rawDetailDefaults.contrast,
+                                                       moire: rawDetailDefaults.moire)
+        settings.supportsRawDetail = supportsRawDetail
+        settings.colorNoiseReduction = colorNoiseReduction
+        settings.asShotColorNoiseReduction = asShotColorNoiseReduction
+        settings.supportsColorNoiseReduction = supportsColorNoiseReduction
         return settings
     }
 
@@ -325,9 +384,11 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
     func isValid() -> Bool {
         [exposure, temperature, tint, boost, noiseReduction,
          asShotTemperature, asShotTint, asShotNoiseReduction,
-         asShotTemperatureAbsolute, asShotTintAbsolute].allSatisfy { $0.isFinite }
+         asShotTemperatureAbsolute, asShotTintAbsolute,
+         colorNoiseReduction, asShotColorNoiseReduction].allSatisfy { $0.isFinite }
             && boost >= 0
             && (0...1).contains(Double(noiseReduction))
+            && (0...1).contains(Double(colorNoiseReduction))
             && RawColorProfileKind(rawValue: colorProfile.kind) != nil
             && colorProfile.strength.isFinite
             && RawWhiteBalanceMode(rawValue: whiteBalanceMode) != nil
@@ -338,16 +399,23 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
             && noiseReduction == asShotNoiseReduction && lensCorrection == asShotLensCorrection
             && highlightRecovery == asShotHighlightRecovery && whiteBalanceMode == RawWhiteBalanceMode.asShot.rawValue
             && colorProfile.kind == RawColorProfileKind.cameraDefault.rawValue
+            && colorNoiseReduction == asShotColorNoiseReduction
     }
 
+    /// Back to the file's own development: no exposure or boost change, the camera's balance, its noise
+    /// reductions, and the decoder's own profile and detail rendering.
     mutating func reset() {
         exposure = 0
         boost = 1
         temperature = asShotTemperature
         tint = asShotTint
         noiseReduction = asShotNoiseReduction
+        colorNoiseReduction = asShotColorNoiseReduction
         lensCorrection = asShotLensCorrection
         highlightRecovery = asShotHighlightRecovery
+        whiteBalanceMode = RawWhiteBalanceMode.asShot.rawValue
+        colorProfile = ColorProfile()
+        rawDetail = RawDetail()
     }
 }
 

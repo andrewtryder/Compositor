@@ -97,6 +97,7 @@ struct RawDevelopEditorSheet: View {
                 .padding(.leading, 120)
 
                 profileControls
+                rawDetailControls
                 HStack {
                     Button("Reset to As Shot") {
                         session.resetRawDevelopmentToAsShot(layerID: layerID)
@@ -161,6 +162,25 @@ struct RawDevelopEditorSheet: View {
         let image = await RawImporter.Queue.shared.develop(tmpURL, settings: current, limit: 800)
         guard !Task.isCancelled else { return }
         if let image { preview = image }
+    }
+
+    /// The decoder's own two noise reductions, at the sensor stage rather than a rendered picture's Detail sliders.
+    /// Chroma reduction is the one that removes color mottle without smearing luminance detail, which is why it is
+    /// offered separately rather than folded into the luminance value.
+    private var noiseControls: some View {
+        Group {
+            slider("Noise Reduction", value: $settings.noiseReduction, range: 0...1, unit: "", precision: 2,
+                   onChange: { session.updateRawDevelopmentSettings(layerID: layerID, noiseReduction: $0) })
+            .disabled(!settings.supportsNoiseReduction)
+            .help(settings.supportsNoiseReduction ? "Smooths grain, at the cost of fine detail"
+                                                  : "Not available for this camera")
+            slider("Color Noise", value: $settings.colorNoiseReduction, range: 0...1, unit: "", precision: 2,
+                   onChange: { session.updateRawDevelopmentSettings(layerID: layerID, colorNoiseReduction: $0) })
+            .disabled(!settings.supportsColorNoiseReduction)
+            .help(settings.supportsColorNoiseReduction
+                  ? "Removes color mottle at the sensor stage, where it is separate from luminance detail."
+                  : "Not available for this camera")
+        }
     }
 
     /// As Shot / Auto / Custom, and the fact that these readings are absolute: the decoder re-develops the sensor
@@ -245,6 +265,86 @@ struct RawDevelopEditorSheet: View {
         case .linear: return "The decoder's decode without its tone curve: linear sensor color, for a grade that starts from the data."
         case .icc: return ""
         }
+    }
+
+    /// Raw Details: the decoder's own reconstruction, moved from what this file's decoder does on its own rather than
+    /// from zero. Zero on a control is the camera's existing rendering, which is what makes switching it on, or
+    /// returning every control to its middle, a no-op.
+    private var rawDetailControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Text("Raw Details").frame(width: 110, alignment: .leading)
+                Toggle("Use decoder detail reconstruction", isOn: Binding(
+                    get: { settings.rawDetail.enabled },
+                    set: { enabled in
+                        var detail = persistedDetail
+                        detail.enabled = enabled
+                        session.updateRawDevelopmentSettings(layerID: layerID, rawDetail: detail)
+                    }))
+                .disabled(!settings.supportsRawDetail)
+                .help(settings.supportsRawDetail
+                      ? "Asks the RAW decoder for its own detail reconstruction, on the sensor data before it becomes pixels."
+                      : "This file's decoder does not offer detail reconstruction.")
+                .accessibilityIdentifier("rawDetailEnabled")
+                if settings.rawDetail.enabled, settings.supportsRawDetail {
+                    Text(String(format: "Camera's own: detail %.2f · sharpness %.2f", persistedDefaults.detail,
+                                persistedDefaults.sharpness))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            if settings.rawDetail.enabled, settings.supportsRawDetail {
+                Group {
+                    detailSlider("Detail", \.detail, range: RawDetailSettings.detailRange, precision: 2,
+                                 base: persistedDefaults.detail)
+                    detailSlider("Sharpness", \.sharpness, range: RawDetailSettings.sharpnessRange, precision: 2,
+                                 base: persistedDefaults.sharpness)
+                    detailSlider("Contrast", \.contrast, range: RawDetailSettings.contrastRange, precision: 2,
+                                 base: persistedDefaults.contrast)
+                    detailSlider("Moire", \.moire, range: RawDetailSettings.moireRange, precision: 2,
+                                 base: persistedDefaults.moire)
+                }
+                .padding(.leading, 120)
+                Text("Amounts are relative to the camera's own decode, so 0.00 leaves it exactly as it was. Applied by "
+                     + "the decoder before the image becomes pixels, so it recovers detail a rendered picture no "
+                     + "longer has.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 120)
+            }
+        }
+    }
+
+    /// One offset, with the amount the decoder will actually be asked for beside it, so the controls never leave the
+    /// reader guessing what zero means for this camera.
+    private func detailSlider(_ title: String, _ key: WritableKeyPath<RawDetailSettings, Float>,
+                              range: ClosedRange<Float>, precision: Int, base: Float) -> some View {
+        let value = persistedDetail[keyPath: key]
+        let total = base + value
+        return HStack(spacing: 10) {
+            Text(title).frame(width: 90, alignment: .leading)
+            AppSlider(value: Binding(get: { persistedDetail[keyPath: key] },
+                                     set: { newValue in
+                                         var detail = persistedDetail
+                                         detail[keyPath: key] = newValue
+                                         session.updateRawDevelopmentSettings(layerID: layerID, rawDetail: detail)
+                                     }), in: range)
+                .frame(width: 210)
+            Text(String(format: "%+.\(precision)f → %.\(precision)f", value, total))
+                .monospacedDigit().foregroundStyle(.secondary)
+                .frame(width: 110, alignment: .trailing)
+        }
+    }
+
+    /// The draft's own RAW details, not the view's copy: a slider writes the draft, and the view reads it back.
+    private var persistedDetail: RawDetailSettings {
+        session.rawDrafts[layerID]?.settings.makeSettings().rawDetail ?? RawDetailSettings()
+    }
+
+    /// What this file's decoder does before Raw Details' offsets apply, as the draft recorded it.
+    private var persistedDefaults: RawDetailBaseline {
+        guard let stored = session.rawDrafts[layerID]?.settings.rawDetailDefaults else { return RawDetailBaseline() }
+        return RawDetailBaseline(detail: stored.detail, sharpness: stored.sharpness,
+                                 contrast: stored.contrast, moire: stored.moire)
     }
 
     private var persistedProfile: RawColorProfile {

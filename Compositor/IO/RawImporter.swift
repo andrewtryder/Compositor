@@ -18,6 +18,10 @@ nonisolated struct RawDevelopSettings: Equatable, Sendable, Codable {
     var boost: Float = 1
     /// Luminance noise reduction, 0–1, starting where the system's RAW engine starts for this camera.
     var noiseReduction: Float = 0
+    /// Chroma noise reduction at the decoder's own stage (M11.2). A different thing from the rendered picture's
+    /// Color slider in Camera Raw Detail: this runs while the sensor data is still mosaic, where the color noise
+    /// is separate from the luminance and can be removed without touching either.
+    var colorNoiseReduction: Float = 0
     /// The lens's distortion and vignetting taken out, from the profile in the file, where it has one.
     var lensCorrection = false
     /// Detail brought back in highlights the camera only partly clipped (one or two channels blown).
@@ -26,10 +30,12 @@ nonisolated struct RawDevelopSettings: Equatable, Sendable, Codable {
     var asShotTemperature: Float = 5000
     var asShotTint: Float = 0
     var asShotNoiseReduction: Float = 0
+    var asShotColorNoiseReduction: Float = 0
     var asShotLensCorrection = false
     var asShotHighlightRecovery = false
     /// Which of those this file's camera allows; the others stay as they are.
     var supportsNoiseReduction = false
+    var supportsColorNoiseReduction = false
     var supportsLensCorrection = false
     var supportsHighlightRecovery = false
     /// How the white balance was arrived at. As Shot uses the camera's own reading; Auto has been solved from the
@@ -40,12 +46,19 @@ nonisolated struct RawDevelopSettings: Equatable, Sendable, Codable {
     var asShotTintAbsolute: Float = 0
     /// The photographic profile: the decoder's camera rendering, its linear decode, or an ICC profile.
     var colorProfile = RawColorProfile()
+    /// Raw Details (M11.2): the decoder's own detail reconstruction, off by default so nothing changes unless asked.
+    var rawDetail = RawDetailSettings()
+    /// What the decoder does to this file on its own; Raw Details' offsets are applied to these.
+    var rawDetailDefaults = RawDetailBaseline()
+    /// Whether this camera's decoder exposes its detail reconstruction and contrast controls.
+    var supportsRawDetail = false
 
     var isAsShot: Bool {
         exposure == 0 && boost == 1 && temperature == asShotTemperature && tint == asShotTint
             && noiseReduction == asShotNoiseReduction && lensCorrection == asShotLensCorrection
+            && colorNoiseReduction == asShotColorNoiseReduction
             && highlightRecovery == asShotHighlightRecovery && whiteBalanceMode == .asShot
-            && !colorProfile.adjusts
+            && !colorProfile.adjusts && rawDetail.isIdentity
     }
     mutating func reset() {
         exposure = 0
@@ -53,16 +66,89 @@ nonisolated struct RawDevelopSettings: Equatable, Sendable, Codable {
         temperature = asShotTemperature
         tint = asShotTint
         noiseReduction = asShotNoiseReduction
+        colorNoiseReduction = asShotColorNoiseReduction
         lensCorrection = asShotLensCorrection
         highlightRecovery = asShotHighlightRecovery
         whiteBalanceMode = .asShot
         colorProfile = RawColorProfile()
+        rawDetail = RawDetailSettings()
     }
 
     /// The Kelvin and tint to develop at. The mode labels how they were arrived at (As Shot, Auto, Custom) and
     /// Reset restores the camera's own reading; the pixels come from these two values alone, so a project saved
     /// before the mode existed develops exactly as it did.
     var developmentBalance: (temperature: Float, tint: Float) { (temperature, tint) }
+
+    /// Whether the decoder can still be asked for its detail reconstruction on this file.
+    var canUseRawDetail: Bool { supportsRawDetail && !rawDetail.isIdentity }
+}
+
+/// What the decoder already does to this file before any of Raw Details' offsets apply: its own detail, sharpness,
+/// contrast and moire amounts. Read once from a freshly built filter, because a filter that has been developed has
+/// its own values changed. Kept in the project so a reopen reproduces the same rendering even if the system's
+/// defaults for the file were to change (M11.2).
+nonisolated struct RawDetailBaseline: Equatable, Sendable, Codable {
+    var detail: Float = 0
+    var sharpness: Float = 0
+    var contrast: Float = 0
+    var moire: Float = 0
+
+    init(detail: Float = 0, sharpness: Float = 0, contrast: Float = 0, moire: Float = 0) {
+        self.detail = detail
+        self.sharpness = sharpness
+        self.contrast = contrast
+        self.moire = moire
+    }
+
+    /// A filter's values as it was just built, before anything was developed through it.
+    init(_ filter: CIRAWFilter) {
+        detail = filter.isDetailSupported ? filter.detailAmount : 0
+        sharpness = filter.isSharpnessSupported ? filter.sharpnessAmount : 0
+        contrast = filter.isContrastSupported ? filter.contrastAmount : 0
+        moire = filter.isMoireReductionSupported ? filter.moireReductionAmount : 0
+    }
+}
+
+/// Raw Details: the decoder's own detail reconstruction, run on the sensor data before it becomes pixels
+/// (M11.2). The amounts are the decoder's own, and each is *offset from what the decoder already does* rather than
+/// absolute: a camera's decode arrives with its own sharpness already applied (0.72 on the EOS 5DS R measured here),
+/// so a control at zero that means "no sharpness" would silently remove the camera's rendering. Zero here means the
+/// decoder's own value, which the develop reads off the filter once, per file.
+nonisolated struct RawDetailSettings: Equatable, Sendable, Codable {
+    /// Whether Raw Details takes part at all. Off leaves the decoder exactly as it was.
+    var enabled = false
+    /// Extra edge detail recovery, −1…2 on top of the decoder's own.
+    var detail: Float = 0
+    /// Sharpness, −0.75…0.28 on top of the decoder's own; zero is the camera's existing sharpening.
+    var sharpness: Float = 0
+    /// Local edge contrast, −1…1.
+    var contrast: Float = 0
+    /// Moire reduction, −1…3.
+    var moire: Float = 0
+
+    /// Ranges offered, as offsets. Sharpness is narrower upward because the decoder's own value plus these must
+    /// stay inside 0…1, and its default is already high on the files measured.
+    static let detailRange: ClosedRange<Float> = -1...2
+    static let sharpnessRange: ClosedRange<Float> = -0.75...0.28
+    static let contrastRange: ClosedRange<Float> = -1...1
+    static let moireRange: ClosedRange<Float> = -1...3
+
+    /// Whether this leaves the decoder untouched: switched off, or every offset at its neutral zero.
+    var isIdentity: Bool { !enabled || (detail == 0 && sharpness == 0 && contrast == 0 && moire == 0) }
+
+    var normalized: Self {
+        var result = self
+        result.detail = Self.clamp(detail, Self.detailRange)
+        result.sharpness = Self.clamp(sharpness, Self.sharpnessRange)
+        result.contrast = Self.clamp(contrast, Self.contrastRange)
+        result.moire = Self.clamp(moire, Self.moireRange)
+        return result
+    }
+
+    private static func clamp(_ value: Float, _ range: ClosedRange<Float>) -> Float {
+        guard value.isFinite else { return 0 }
+        return min(range.upperBound, max(range.lowerBound, value))
+    }
 }
 
 nonisolated enum RawImporter {
@@ -121,20 +207,28 @@ nonisolated enum RawImporter {
         guard let filter = CIRAWFilter(imageURL: url) else { return nil }
         var settings = RawDevelopSettings(temperature: filter.neutralTemperature, tint: filter.neutralTint)
         settings.noiseReduction = filter.isLuminanceNoiseReductionSupported ? filter.luminanceNoiseReductionAmount : 0
+        settings.colorNoiseReduction = filter.isColorNoiseReductionSupported ? filter.colorNoiseReductionAmount : 0
         settings.lensCorrection = filter.isLensCorrectionSupported && filter.isLensCorrectionEnabled
         settings.highlightRecovery = filter.isHighlightRecoverySupported && filter.isHighlightRecoveryEnabled
         settings.asShotTemperature = settings.temperature
         settings.asShotTint = settings.tint
         settings.asShotNoiseReduction = settings.noiseReduction
+        settings.asShotColorNoiseReduction = settings.colorNoiseReduction
         settings.asShotLensCorrection = settings.lensCorrection
         settings.asShotHighlightRecovery = settings.highlightRecovery
         settings.supportsNoiseReduction = filter.isLuminanceNoiseReductionSupported
+        settings.supportsColorNoiseReduction = filter.isColorNoiseReductionSupported
         settings.supportsLensCorrection = filter.isLensCorrectionSupported
         settings.supportsHighlightRecovery = filter.isHighlightRecoverySupported
         // M11.1: the camera's own absolute reading, reported by the decoder's sensor model rather than guessed.
         settings.asShotTemperatureAbsolute = filter.neutralTemperature
         settings.asShotTintAbsolute = filter.neutralTint
         settings.whiteBalanceMode = .asShot
+        // M11.2: whether this file's decoder exposes Raw Details at all, and what it does on its own, read here
+        // from a filter nothing has been developed through yet.
+        settings.supportsRawDetail = filter.isDetailSupported || filter.isSharpnessSupported
+            || filter.isContrastSupported || filter.isMoireReductionSupported
+        settings.rawDetailDefaults = RawDetailBaseline(filter)
         return settings
     }
 
@@ -203,8 +297,22 @@ nonisolated enum RawImporter {
         // camera's own rendering uses, so a project without a profile develops exactly as it always did.
         filter.boostAmount = settings.colorProfile.kind == .linear ? 0 : settings.boost
         if settings.supportsNoiseReduction { filter.luminanceNoiseReductionAmount = settings.noiseReduction }
+        if settings.supportsColorNoiseReduction { filter.colorNoiseReductionAmount = settings.colorNoiseReduction }
         if settings.supportsLensCorrection { filter.isLensCorrectionEnabled = settings.lensCorrection }
         if settings.supportsHighlightRecovery { filter.isHighlightRecoveryEnabled = settings.highlightRecovery }
+        // Raw Details: the decoder's own reconstruction, on the sensor data itself. Offsets from the values this
+        // filter already holds, so switching it on without moving a control changes nothing, and zero never removes
+        // the sharpening the camera's own rendering does.
+        let detail = settings.rawDetail.normalized
+        if settings.supportsRawDetail, detail.enabled {
+            // Always from the file's own baseline, never from the filter's current values: a filter that has been
+            // developed holds the last offsets, so reading them back would compound on every slider move.
+            let base = settings.rawDetailDefaults
+            if filter.isDetailSupported { filter.detailAmount = min(3, max(0, base.detail + detail.detail)) }
+            if filter.isSharpnessSupported { filter.sharpnessAmount = min(1, max(0, base.sharpness + detail.sharpness)) }
+            if filter.isContrastSupported { filter.contrastAmount = min(1, max(0, base.contrast + detail.contrast)) }
+            if filter.isMoireReductionSupported { filter.moireReductionAmount = min(3, max(0, base.moire + detail.moire)) }
+        }
         guard let output = filter.outputImage else { return nil }
         if sixteenBit {
             return context.createCGImage(output, from: output.extent.integral, format: .RGBA16,

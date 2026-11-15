@@ -49,6 +49,7 @@ struct RawDevelopSheet: View {
                 slider("Tint", value: $settings.tint, range: -150...150, unit: "", precision: 0)
                 slider("Boost", value: $settings.boost, range: 0...1, unit: "", precision: 2)
                 colorProfileRow
+                rawDetailsRow
                 slider("Noise Reduction", value: $settings.noiseReduction, range: 0...1, unit: "", precision: 2)
                     .disabled(!settings.supportsNoiseReduction)
                     .help(settings.supportsNoiseReduction ? "Smooths grain, at the cost of fine detail"
@@ -97,6 +98,24 @@ struct RawDevelopSheet: View {
         let image = await RawImporter.Queue.shared.develop(file, settings: current, limit: 800)
         guard !Task.isCancelled else { return }
         if let image { preview = image }
+    }
+
+    /// Raw Details at import: the decoder's own reconstruction, at the amounts it already applies. A toggle rather
+    /// than offsets here, because the import sheet's job is to bring the frame in; the amounts are set when the frame
+    /// is refined, in the RAW Develop editor on the layer.
+    private var rawDetailsRow: some View {
+        HStack(spacing: 10) {
+            Text("Raw Details").frame(width: 110, alignment: .leading)
+            Toggle("Decoder detail reconstruction", isOn: Binding(get: { settings.rawDetail.enabled },
+                                                                 set: { settings.rawDetail.enabled = $0 }))
+                .disabled(!settings.supportsRawDetail)
+                .help(settings.supportsRawDetail
+                      ? "Asks the RAW decoder for its own detail reconstruction, on the sensor data before it becomes "
+                        + "pixels. Off leaves the camera's own decode exactly as it was."
+                      : "This file's decoder does not offer detail reconstruction.")
+                .accessibilityIdentifier("rawImportRawDetails")
+            Spacer(minLength: 0)
+        }
     }
 
     /// As Shot / Auto / Custom. Auto solves the frame's neutral through the decoder's own sensor model, so the

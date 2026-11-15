@@ -859,9 +859,11 @@ var rawDevelopEditorLayerID: UUID?
     @discardableResult
     func updateRawDevelopmentSettings(layerID: UUID, exposure: Float? = nil, temperature: Float? = nil,
                                       tint: Float? = nil, boost: Float? = nil, noiseReduction: Float? = nil,
+                                      colorNoiseReduction: Float? = nil,
                                       lensCorrection: Bool? = nil, highlightRecovery: Bool? = nil,
                                       whiteBalanceMode: RawWhiteBalanceMode? = nil,
-                                      colorProfile: RawColorProfile? = nil) -> Bool {
+                                      colorProfile: RawColorProfile? = nil,
+                                      rawDetail: RawDetailSettings? = nil) -> Bool {
         guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
               var draft = rawDrafts[layerID] ?? document?.layers[index].rawDevelopment else { return false }
         if let exposure { draft.settings.exposure = exposure }
@@ -869,6 +871,7 @@ var rawDevelopEditorLayerID: UUID?
         if let tint { draft.settings.tint = tint }
         if let boost { draft.settings.boost = boost }
         if let noiseReduction { draft.settings.noiseReduction = noiseReduction }
+        if let colorNoiseReduction { draft.settings.colorNoiseReduction = colorNoiseReduction }
         if let lensCorrection { draft.settings.lensCorrection = lensCorrection }
         if let highlightRecovery { draft.settings.highlightRecovery = highlightRecovery }
         if let whiteBalanceMode {
@@ -884,6 +887,12 @@ var rawDevelopEditorLayerID: UUID?
             draft.settings.colorProfile = RawDevelopmentSettingsPersistentState.ColorProfile(
                 kind: normalized.kind.rawValue, name: normalized.name, strength: normalized.strength,
                 iccData: normalized.iccData)
+        }
+        if let rawDetail {
+            let normalized = rawDetail.normalized
+            draft.settings.rawDetail = RawDevelopmentSettingsPersistentState.RawDetail(
+                enabled: normalized.enabled, detail: normalized.detail, sharpness: normalized.sharpness,
+                contrast: normalized.contrast, moire: normalized.moire)
         }
         // Validate the completed draft, not only the previous state.
         guard draft.settings.isValid() else { return false }
@@ -1437,7 +1446,8 @@ var rawDevelopEditorLayerID: UUID?
                 if RawImporter.matches(url) {
                     guard let size = RawImporter.pixelSize(url) else { throw ImageImportError.unreadable }
                     guard size.width <= DocumentLimits.maxSide, size.height <= DocumentLimits.maxSide,
-                          size.width * size.height <= DocumentLimits.documentPixelBudget - usedPixels else { throw ImageImportError.tooLarge }
+                          size.width * size.height <= DocumentLimits.documentPixelBudget - usedPixels
+                    else { throw ImageImportError.tooLarge }
                     guard let settings = await developRaw(url) else { continue }
                     defer { if rawImporting { endRawDevelop() } }
                     // Seconds of work: off the main actor, or pressing Import freezes the window.
