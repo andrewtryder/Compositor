@@ -44,7 +44,22 @@ reference added and where each control was placed.
 | Geometry › crop aspect after transform | **M10.9 (done):** `Crop After Transform` subsection — No crop / automatic opaque / manual rect with Free / Original / Fixed aspect, Constrain, Reset, and an armed canvas Edit on Image mode | `CameraRawGeometryCrop.plan`, `CameraRawGeometryExpansion` | **M10.9 (done)** — appended inside Advanced Geometry after Miniature / Tilt-Shift; the de-squeeze row above is also M10.9 |
 | Geometry › anamorphic de-squeeze | **M10.9 (done):** presets Off / 1.33 / 1.5 / 1.6 / 2.0 / Custom ratio | `CameraRawAnamorphicSettings`, `CILanczosScaleTransform` | **M10.9 (done)** — `Anamorphic De-squeeze` subsection appended after Miniature / Tilt-Shift; runs first in the geometry order |
 | Optics / Geometry › Miniature (tilt-shift) | **M10.8 (done):** the engine exposed — its own subsection at the bottom of Advanced Geometry, plus a canvas Move Focus mode | `CameraRawMiniature`, `CameraRawMiniatureSettings` | **M10.8 (done)** — `Miniature / Tilt-Shift` appended after Advanced Perspective Tools; `symmetricPosition` audited, renders nothing, deferred without a control |
-| Presets / Masks panels | Correction stack + ReShape cover the non-destructive story | — | Out of scope: new top-level UI. |
+| Presets / Masks panels | Correction stack + ReShape cover the non-destructive story | — | **M11.3 (done):** a `Masks` group below the ten sections. Not a new top-level section; the order is untouched. |
+
+
+## 2a. Milestones 11.0 – 11.3, added after the M10 series
+
+Full report: `M11_0_TO_M11_3_INTEGRATED_DEVELOPMENT.md`.
+
+| Adobe feature | Exists in Compositor? | Reusable engine | Additive placement chosen |
+| --- | --- | --- | --- |
+| Lens Blur with a depth-based focus | **M11.0 (done):** an optional `Depth Focus` mode beside the untouched Focus Region, with Focal Depth, Depth Range, Show Depth, Set Focus and an explicit Prepare Depth Model button | `DepthModel` (already used by Volumetric Light), `CameraRawLensBlur`, `MetalBokeh` | **M11.0 (done)** — inside the existing Lens Blur subgroup at the end of Optics |
+| White Balance presets as Kelvin | **M11.1 (done):** As Shot / Auto / Custom in the RAW development editor, on the decoder's own absolute coordinates | `CIRAWFilter.neutralTemperature` / `neutralTint`, `RawSourceAsset` retained bytes | **M11.1 (done)** — replacing "not applicable" above; the Camera Raw Filter's relative Temperature and Tint are unchanged and still say they are relative |
+| Photographic color profiles | **M11.1 (done):** Camera Default, Linear, and an ICC profile the person supplies with a strength; DCP identified and refused | `CIRAWFilter`, `RawDevelopmentRenderer` | **M11.1 (done)** — beside White Balance in the RAW development editor |
+| Denoise (AI) | **M11.2: researched, blocked.** No Apple denoise model or API exists; `MetalNonlocalMeans` is classical, not learned, and is not relabelled | — | No control shipped |
+| Raw Details | **M11.2 (done):** the decoder's own detail reconstruction as relative offsets from the camera's baseline, with the baseline stored for reproducibility | `CIRAWFilter.detailAmount` / `sharpnessAmount` / `contrastAmount` / `moireReductionAmount` | **M11.2 (done)** — a Raw Details group in the RAW development editor |
+| Super Resolution | **M11.2: researched, blocked.** `CIRAWFilter.scaleFactor` is documented 0…1 and clamps to 1, measured here; Lanczos enlargement is not Super Resolution | — | No control shipped |
+| Masks (local adjustments) | **M11.3 (done):** Selection, Object (Vision foreground), Color Range, Layer Mask, Linear and Radial gradients, each carrying Exposure → Dehaze; add / select / rename / delete / enable / invert / feather / overlay, warped through geometry and crop | `DocumentSelection`, `ObjectSelection`, `color_range_mask`, `LayerMask`, `CameraRawTables`, `LayerCorrectionStack` | **M11.3 (done)** — a `Masks` group below Calibration; the ten sections keep their order |
 
 
 ## 3. Milestone 10.1 — Light › Auto
@@ -167,6 +182,10 @@ only its controls were missing. The rest shifts by one. M10.5 is now complete as
 | M10.7 | **Done.** Advanced ReShape interaction — transform modes, topology controls, selection, tool-local undo. See `M10_7_ADVANCED_RESHAPE_INTERACTION.md`. |
 | M10.8 | **Done.** Miniature / Tilt-Shift exposed — Geometry subsection, canvas Move Focus mode, `symmetricPosition` audit, canvas acceptance gates assessed. See `M10_8_MINIATURE_AND_CANVAS_ACCEPTANCE.md`. |
 | M10.9 | **Done.** Anamorphic De-squeeze and Geometry-Aware Crop — de-squeeze presets with true pixel transform and placement, `Crop After Transform` subsection with automatic / manual / aspect-constrained crop and an armed canvas Edit on Image mode, deep-layer precision refusals. See `M10_9_ANAMORPHIC_AND_GEOMETRY_CROP.md`. |
+| M11.0 | **Done.** Depth Focus in Optics › Lens Blur — an optional depth-based focus mode beside the untouched Focus Region, using the existing `DepthModel` and `MetalBokeh`. See `M11_0_TO_M11_3_INTEGRATED_DEVELOPMENT.md`. |
+| M11.1 | **Done.** Photographic color profiles (Camera Default / Linear / ICC, DCP refused) and sensor-aware absolute white balance (As Shot / Auto / Custom) in RAW development. |
+| M11.2 | **Done in part.** Raw Details and sensor-stage chroma reduction are implemented and verified; AI Denoise and Super Resolution are researched and blocked, with no control shipped for either. |
+| M11.3 | **Done.** Camera Raw local masks — Selection, Object, Color Range, Layer Mask and both gradients, each with its own Exposure → Dehaze, warped through geometry, crop and de-squeeze, and carried non-destructively in the correction stack. A Brush kind is not offered. |
 
 ### Superseded scope, recorded so it is not started again
 
