@@ -264,6 +264,11 @@ final class TransformOverlay: NSView {
             let rect = CGRect(x: view.x - radius, y: view.y - radius, width: radius * 2, height: radius * 2)
             if selected {
                 NSColor.systemYellow.setFill()
+                // A faint halo keeps a multi-selection legible without shouting over the mesh.
+                NSColor.systemYellow.withAlphaComponent(0.25).setStroke()
+                let halo = NSBezierPath(ovalIn: rect.insetBy(dx: -3, dy: -3))
+                halo.lineWidth = hairline
+                halo.stroke()
             } else if mesh.stickyBorders, mesh.isCorner(index) {
                 NSColor.secondaryLabelColor.setFill()
             } else if mesh.stickyBorders, mesh.isBorder(index) {
@@ -279,6 +284,66 @@ final class TransformOverlay: NSView {
             ring.stroke()
         }
         context.restoreGState()
+        drawMeshWarpDrafts(edit: edit, document: document, hairline: hairline)
+    }
+
+    /// The selection marquee, the Four Point destination rectangle and the Horizon reference line,
+    /// while they are being drawn or stand committed.
+    private func drawMeshWarpDrafts(edit: MeshWarpEdit, document: CanvasDocument?, hairline: CGFloat) {
+        guard let context = NSGraphicsContext.current?.cgContext, let document else { return }
+        func viewPoint(_ documentPoint: CGPoint) -> CGPoint {
+            session.viewport.viewPoint(from: documentPoint, documentSize: document.size)
+        }
+        context.saveGState()
+        context.setLineWidth(hairline)
+        if let marquee = edit.marqueeDraft {
+            context.setStrokeColor(NSColor.white.withAlphaComponent(0.9).cgColor)
+            context.addRect(viewRect(documentRect: marquee))
+            context.strokePath()
+        }
+        if let quad = edit.quadDraft {
+            let rect = CGRect(x: min(quad.start.x, quad.end.x), y: min(quad.start.y, quad.end.y),
+                              width: abs(quad.end.x - quad.start.x), height: abs(quad.end.y - quad.start.y))
+            context.setStrokeColor(NSColor.systemYellow.withAlphaComponent(0.9).cgColor)
+            context.addRect(viewRect(documentRect: rect))
+            context.strokePath()
+        } else if let quad = edit.drawnQuadDestination {
+            context.setStrokeColor(NSColor.systemYellow.withAlphaComponent(0.9).cgColor)
+            context.setLineDash(phase: 0, lengths: [4, 3])
+            context.addRect(viewRect(documentRect: quad))
+            context.strokePath()
+            context.setLineDash(phase: 0, lengths: [])
+        }
+        let horizon = edit.horizonReferenceDraft ?? edit.horizonReference.map {
+            (start: CGPoint(x: CGFloat($0.a.x), y: CGFloat($0.a.y)), end: CGPoint(x: CGFloat($0.b.x), y: CGFloat($0.b.y)))
+        }
+        if let horizon {
+            // The committed line is stored in layer UV; map it back to document space to draw it.
+            let start: CGPoint, end: CGPoint
+            if edit.horizonReferenceDraft != nil {
+                start = viewPoint(horizon.start)
+                end = viewPoint(horizon.end)
+            } else {
+                let unitA = edit.transform.point(CGPoint(x: horizon.start.x, y: horizon.start.y))
+                let unitB = edit.transform.point(CGPoint(x: horizon.end.x, y: horizon.end.y))
+                start = viewPoint(unitA)
+                end = viewPoint(unitB)
+            }
+            context.setStrokeColor(NSColor.systemMint.withAlphaComponent(0.9).cgColor)
+            context.move(to: start)
+            context.addLine(to: end)
+            context.strokePath()
+        }
+        context.restoreGState()
+    }
+
+    /// A document rectangle through the viewport, as an overlay rect.
+    private func viewRect(documentRect: CGRect) -> CGRect {
+        guard let document = session.document else { return .zero }
+        let a = session.viewport.viewPoint(from: documentRect.origin, documentSize: document.size)
+        let b = session.viewport.viewPoint(from: CGPoint(x: documentRect.maxX, y: documentRect.maxY),
+                                           documentSize: document.size)
+        return CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
     }
 
     /// A Marquee's or shape's size, a line's length, or a resized layer's size, as it's dragged: in a dark label just

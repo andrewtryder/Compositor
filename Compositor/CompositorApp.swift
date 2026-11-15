@@ -277,13 +277,23 @@ struct CompositorApp: App {
                     Button("All") {
                         if NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil) { return }
                         guard session.document != nil else { return }
-                        session.selectAll()
+                        if session.meshWarpEdit != nil {
+                            session.meshWarpSelectAll()
+                        } else {
+                            session.selectAll()
+                        }
                     }
                         // Never disabled: on macOS this menu item is what binds Cmd-A to selectAll:, so
                         // switching it off takes Select All away from every text field too. With no
                         // document and nothing being edited the action simply does nothing.
                         .configuredKeyboardShortcut("a")
-                    Button("Deselect") { session.deselect() }
+                    Button("Deselect") {
+                        if session.meshWarpEdit != nil {
+                            session.meshWarpClearSelection()
+                        } else {
+                            session.deselect()
+                        }
+                    }
                         .configuredKeyboardShortcut("d").disabled(session.selection == nil || !session.canEditSelection)
                     Button("Inverse") { session.invertSelection() }
                         .configuredKeyboardShortcut("i", modifiers: [.command, .shift])

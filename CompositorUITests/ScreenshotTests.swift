@@ -151,8 +151,35 @@ final class ScreenshotTests: XCTestCase {
 
         dismiss(app)
 
+        // Milestone 10.7: the ReShape tool header with the appended selection, transform-mode,
+        // Subdivide/Merge and Local Corrections controls, in the same bar the original controls
+        // have always lived in. XCUITest cannot drive a mesh vertex drag (the canvas is a
+        // layer-backed view; see §5.3 of the M10.5 report), so these captures show the reachable
+        // controls; the interaction itself is evidenced by `MeshWarpEvidenceTests`.
+        let reshape = app.descendants(matching: .any).matching(identifier: "reshapeGridPreset").firstMatch
+        // Select the ReShape tool through its tool-rail button, found by its accessibility label.
+        let railButton = app.buttons["ReShape"].firstMatch
+        if railButton.exists {
+            railButton.click()
+        }
+        if reshape.waitForExistence(timeout: 5) {
+            shoot("21 ReShape header", window)
+            // The Local Corrections menu, open: what one-shot corrections and drawn drafts offer.
+            let localCorrections = app.descendants(matching: .any).matching(identifier: "reshapeLocalCorrections").firstMatch
+            if localCorrections.exists {
+                localCorrections.click()
+                shoot("22 ReShape Local Corrections menu")
+                app.typeKey(.escape, modifierFlags: [])
+            }
+            // Leave the session cleanly: Escape twice cancels any gesture and then the tool.
+            app.typeKey(.escape, modifierFlags: [])
+            app.typeKey(.escape, modifierFlags: [])
+        } else {
+            shoot("21 ReShape header MISSING", window)
+        }
+
         app.typeKey("n", modifierFlags: .command)
-        shoot("20 Second tab", window)
+        shoot("23 Second tab", window)
     }
 
     /// Chooses one Advanced Perspective tool from the open subsection's menu, by its stable identifier suffix.

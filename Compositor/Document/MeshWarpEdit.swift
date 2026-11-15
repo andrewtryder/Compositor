@@ -42,6 +42,29 @@ final class MeshWarpEdit {
     @ObservationIgnored var gestureBasePositions: [SIMD2<Float>]?
     @ObservationIgnored var gestureBaseSelection = MeshWarpSelection()
     @ObservationIgnored private var gestureDidMutate = false
+    /// Where the pointer first landed on the selection at gesture start: the anchor Rotate and Scale read
+    /// their angle and ratio against, so a drag is always measured from the beginning of the gesture.
+    @ObservationIgnored var gestureAnchorUV: SIMD2<Float>?
+
+    // Transient canvas drafts, in document points. Never persisted and never part of history;
+    // the marquee and the drafts under them are what the overlay draws while they are live.
+    // The two armed flags are observed so the header's buttons can reflect them.
+    /// Marquee selection rectangle being dragged.
+    @ObservationIgnored var marqueeDraft: CGRect?
+    /// The Four Point destination rectangle being dragged.
+    @ObservationIgnored var quadDraft: (start: CGPoint, end: CGPoint)?
+    /// The Local Horizon reference line being dragged.
+    @ObservationIgnored var horizonReferenceDraft: (start: CGPoint, end: CGPoint)?
+    /// Armed: the next canvas drag draws the Four Point destination rectangle.
+    var isDrawingQuadDestination = false
+    /// The committed Four Point destination rectangle, until applied or redrawn.
+    var drawnQuadDestination: CGRect?
+    /// Armed: the next canvas drag draws the Local Horizon reference line.
+    var isDrawingHorizonReference = false
+    /// The committed Local Horizon reference endpoints, in layer pixels, until applied or redrawn.
+    var horizonReference: (a: SIMD2<Float>, b: SIMD2<Float>)?
+    /// Whether the marquee being dragged adds to the selection (Shift held at its start).
+    @ObservationIgnored var meshWarpMarqueeAdditive = false
 
     @ObservationIgnored private var gpuSession: MetalMeshWarpSession?
 
@@ -190,9 +213,27 @@ final class MeshWarpEdit {
         gestureDidMutate = false
     }
 
+    /// Puts the mesh and selection back to where the gesture began, dropping any rejected state.
+    func cancelGesture() {
+        guard let base = gestureBasePositions else { return }
+        mesh.positions = base
+        mesh.topology.writeBack(positions: base)
+        selection = gestureBaseSelection
+        gestureBasePositions = nil
+        gestureBaseSelection = MeshWarpSelection()
+        gestureAnchorUV = nil
+        gestureDidMutate = false
+        lastWarning = nil
+        previewImage = nil
+        previewCIImage = nil
+    }
+
+    /// Pushes one history entry for a completed mutating gesture and clears its base.
     func endGesture() {
         defer {
             gestureBasePositions = nil
+            gestureBaseSelection = MeshWarpSelection()
+            gestureAnchorUV = nil
             gestureDidMutate = false
         }
         guard gestureDidMutate, let base = gestureBasePositions else { return }
@@ -218,6 +259,7 @@ final class MeshWarpEdit {
                             scale: Float = 1) -> Bool {
         let selected = selection.indices(in: mesh)
         guard !selected.isEmpty, let base = gestureBasePositions,
+              // The pivot reads from the gesture base so mid-gesture rejection trials never move it.
               let pivot = MeshWarpGrid.barycenter(indices: selected, in: base) else { return false }
         let ok = mesh.applySelectionTransform(selected: selected, imageWidth: width, imageHeight: height, base: base) { point in
             switch mode {
@@ -653,6 +695,232 @@ extension EditorSession {
         guard let edit = meshWarpEdit else { return }
         _ = edit.mergeSelection()
         brushRevision += 1
+    }
+
+    // MARK: - Selection drawing and transform modes
+
+    /// Begins dragging the selection marquee from a document point.
+    func meshWarpBeginMarquee(at documentPoint: CGPoint, additive: Bool) {
+        guard let edit = meshWarpEdit else { return }
+        edit.meshWarpMarqueeAdditive = additive
+        edit.marqueeDraft = CGRect(origin: documentPoint, size: .zero)
+        brushRevision += 1
+    }
+
+    func meshWarpContinueMarquee(to documentPoint: CGPoint) {
+        guard let edit = meshWarpEdit, let start = edit.marqueeDraft?.origin else { return }
+        edit.marqueeDraft = CGRect(x: min(start.x, documentPoint.x), y: min(start.y, documentPoint.y),
+                                   width: abs(documentPoint.x - start.x), height: abs(documentPoint.y - start.y))
+        brushRevision += 1
+    }
+
+    /// Commits the marquee into the selection; a rectangle smaller than a pixel just deselects.
+    func meshWarpEndMarquee() {
+        guard let edit = meshWarpEdit else { return }
+        defer {
+            edit.marqueeDraft = nil
+            edit.meshWarpMarqueeAdditive = false
+        }
+        guard let rect = edit.marqueeDraft, rect.width > 0.5, rect.height > 0.5 else {
+            if !(edit.marqueeDraft ?? .zero).isNull { meshWarpClearSelection() }
+            return
+        }
+        edit.selection.selectMarquee(uvRect: meshWarpUVRect(documentRect: rect), mesh: edit.mesh,
+                                     additive: edit.meshWarpMarqueeAdditive)
+        edit.selectedIndex = edit.selection.indices(in: edit.mesh).sorted().first
+        brushRevision += 1
+    }
+
+    /// The marquee's document rectangle as a UV rectangle on the edited layer.
+    private func meshWarpUVRect(documentRect: CGRect) -> CGRect {
+        guard let edit = meshWarpEdit else { return .zero }
+        let inverse = edit.transform.unitToDocument.inverted()
+        let a = documentRect.origin.applying(inverse)
+        let b = CGPoint(x: documentRect.maxX, y: documentRect.maxY).applying(inverse)
+        return CGRect(x: min(a.x, b.x), y: min(a.y, b.y),
+                      width: abs(a.x - b.x), height: abs(a.y - b.y))
+    }
+
+    func meshWarpSetTransformMode(_ mode: MeshWarpTransformMode) {
+        guard let edit = meshWarpEdit else { return }
+        edit.transformMode = mode
+        brushRevision += 1
+    }
+
+    /// Rotate the selected vertices by `radians` around their barycenter, from the gesture base.
+    @discardableResult
+    func meshWarpRotateSelection(by radians: Float) -> Bool {
+        guard let edit = meshWarpEdit, !edit.selection.indices(in: edit.mesh).isEmpty else { return false }
+        let ok = edit.transformSelection(mode: .rotate, rotationRadians: radians)
+        if !ok { edit.lastWarning = "That rotation would fold the mesh." }
+        return ok
+    }
+
+    /// Scale the selected vertices by `factor` from their barycenter, from the gesture base.
+    @discardableResult
+    func meshWarpScaleSelection(by factor: Float) -> Bool {
+        guard let edit = meshWarpEdit, !edit.selection.indices(in: edit.mesh).isEmpty,
+              factor.isFinite, factor > 0 else { return false }
+        let ok = edit.transformSelection(mode: .scale, scale: factor)
+        if !ok { edit.lastWarning = "That scale would fold the mesh." }
+        return ok
+    }
+
+    /// Nudges an in-progress tool-local gesture back to its start and clears the base.
+    /// Escape during a drag uses this: nothing is recorded in history and no preview change stays.
+    func meshWarpCancelGesture() {
+        meshWarpEdit?.cancelGesture()
+        brushRevision += 1
+    }
+
+    // MARK: - Four Point destination rectangle
+
+    /// Arms the Four Point destination rectangle so the next canvas drag draws it.
+    func meshWarpBeginQuadDestination() {
+        guard let edit = meshWarpEdit else { return }
+        edit.isDrawingQuadDestination = true
+        edit.drawnQuadDestination = nil
+        edit.quadDraft = nil
+        brushRevision += 1
+    }
+
+    func meshWarpBeginQuadDrag(at documentPoint: CGPoint) {
+        guard let edit = meshWarpEdit, edit.isDrawingQuadDestination else { return }
+        edit.quadDraft = (start: documentPoint, end: documentPoint)
+    }
+
+    func meshWarpContinueQuadDrag(to documentPoint: CGPoint) {
+        guard let edit = meshWarpEdit, let start = edit.quadDraft?.start else { return }
+        edit.quadDraft = (start: start, end: documentPoint)
+        brushRevision += 1
+    }
+
+    /// Finishes the destination rectangle. A rectangle too small to carry four distinct corners is discarded.
+    func meshWarpEndQuadDrag() {
+        guard let edit = meshWarpEdit, let draft = edit.quadDraft else { return }
+        edit.quadDraft = nil
+        edit.isDrawingQuadDestination = false
+        let rect = CGRect(x: min(draft.start.x, draft.end.x), y: min(draft.start.y, draft.end.y),
+                          width: abs(draft.end.x - draft.start.x), height: abs(draft.end.y - draft.start.y))
+        edit.drawnQuadDestination = rect.width > 1 && rect.height > 1 ? rect : nil
+        brushRevision += 1
+    }
+
+    /// Applies the drawn Four Point rectangle as a local perspective correction on the selection.
+    /// The four selected vertices are the source quad, ordered TL, TR, BR, BL by rest position;
+    /// the drawn rectangle is the destination.
+    @discardableResult
+    func meshWarpApplyQuadDestination() -> MeshWarpLocalStatus {
+        guard let edit = meshWarpEdit, let rect = edit.drawnQuadDestination else {
+            return .rejected("no destination rectangle drawn")
+        }
+        edit.drawnQuadDestination = nil
+        guard edit.width > 1, edit.height > 1 else { return .rejected("no image to map the rectangle into") }
+        let selected = edit.selection.indices(in: edit.mesh).sorted {
+            edit.mesh.rest[$0].y == edit.mesh.rest[$1].y
+                ? edit.mesh.rest[$0].x < edit.mesh.rest[$1].x
+                : edit.mesh.rest[$0].y < edit.mesh.rest[$1].y
+        }
+        guard selected.count == 4 else {
+            return .rejected("Four Point needs exactly four selected vertices (\(selected.count) selected)")
+        }
+        // Top row by rest y, then left-to-right: TL, TR, BR, BL.
+        let source = [selected[0], selected[1], selected[3], selected[2]].map {
+            MeshWarpGrid.pixel(fromUV: edit.mesh.positions[$0], width: edit.width, height: edit.height)
+        }
+        let uvRect = meshWarpUVRect(documentRect: rect)
+        let destination = [
+            SIMD2(Float(uvRect.minX), Float(uvRect.minY)),
+            SIMD2(Float(uvRect.maxX), Float(uvRect.minY)),
+            SIMD2(Float(uvRect.maxX), Float(uvRect.maxY)),
+            SIMD2(Float(uvRect.minX), Float(uvRect.maxY)),
+        ].map { MeshWarpGrid.pixel(fromUV: $0, width: edit.width, height: edit.height) }
+        return applyMeshWarpLocalCorrection(.perspective(MeshWarpLocalPerspective(
+            mode: .fourPoint, sourceQuad: source, destinationQuad: destination, amount: 1)))
+    }
+
+    /// Clears the armed state without drawing anything.
+    func meshWarpCancelQuadDestination() {
+        guard let edit = meshWarpEdit else { return }
+        edit.isDrawingQuadDestination = false
+        edit.quadDraft = nil
+        edit.drawnQuadDestination = nil
+        brushRevision += 1
+    }
+
+    // MARK: - Local Horizon reference line
+
+    /// Arms the Local Horizon reference line so the next canvas drag draws it.
+    func meshWarpBeginHorizonReference() {
+        guard let edit = meshWarpEdit else { return }
+        edit.isDrawingHorizonReference = true
+        edit.horizonReferenceDraft = nil
+        brushRevision += 1
+    }
+
+    func meshWarpBeginHorizonDrag(at documentPoint: CGPoint) {
+        guard let edit = meshWarpEdit, edit.isDrawingHorizonReference else { return }
+        edit.horizonReferenceDraft = (start: documentPoint, end: documentPoint)
+    }
+
+    func meshWarpContinueHorizonDrag(to documentPoint: CGPoint) {
+        guard let edit = meshWarpEdit, let start = edit.horizonReferenceDraft?.start else { return }
+        edit.horizonReferenceDraft = (start: start, end: documentPoint)
+        brushRevision += 1
+    }
+
+    /// Commits the drawn line into layer pixels. A line too short to read its angle is discarded.
+    func meshWarpEndHorizonDrag() {
+        guard let edit = meshWarpEdit, let draft = edit.horizonReferenceDraft else { return }
+        edit.horizonReferenceDraft = nil
+        edit.isDrawingHorizonReference = false
+        edit.horizonReference = hypot(draft.end.x - draft.start.x, draft.end.y - draft.start.y) > 2
+            ? meshWarpReferencePixels(from: draft) : nil
+        brushRevision += 1
+    }
+
+    /// The reference endpoints in layer pixels, through the same inverse `meshWarpUV` uses.
+    private func meshWarpReferencePixels(from draft: (start: CGPoint, end: CGPoint)) -> (a: SIMD2<Float>, b: SIMD2<Float>) {
+        func uv(_ document: CGPoint) -> SIMD2<Float> {
+            guard let edit = meshWarpEdit else { return .zero }
+            let inverse = edit.transform.unitToDocument.inverted()
+            let unit = document.applying(inverse)
+            return SIMD2(Float(unit.x), Float(unit.y))
+        }
+        let a = uv(draft.start), b = uv(draft.end)
+        return (a, b)
+    }
+
+    func meshWarpCancelHorizonReference() {
+        guard let edit = meshWarpEdit else { return }
+        edit.isDrawingHorizonReference = false
+        edit.horizonReferenceDraft = nil
+        brushRevision += 1
+    }
+
+    // MARK: - Local corrections
+
+    /// Applies one local correction to the current selection through the tool-local history.
+    @discardableResult
+    func applyMeshWarpLocalCorrection(_ correction: MeshWarpLocalCorrection,
+                                      policy: MeshWarpDisjointRegionPolicy = .independent) -> MeshWarpLocalStatus {
+        guard let edit = meshWarpEdit else { return .rejected("no ReShape session") }
+        let status = edit.applyLocalCorrection(correction, policy: policy)
+        brushRevision += 1
+        return status
+    }
+
+    /// The Horizon correction the current settings describe, or nil when nothing would change.
+    func meshWarpLocalHorizonCorrection(mode: MeshWarpLocalHorizonMode, angleDegrees: Float,
+                                        amount: Float) -> MeshWarpLocalHorizon? {
+        guard let edit = meshWarpEdit else { return nil }
+        var horizon = MeshWarpLocalHorizon(mode: mode, angleDegrees: angleDegrees, amount: amount)
+        if mode != .angle {
+            guard let reference = edit.horizonReference else { return nil }
+            horizon.referenceA = reference.a
+            horizon.referenceB = reference.b
+        }
+        return horizon
     }
 }
 

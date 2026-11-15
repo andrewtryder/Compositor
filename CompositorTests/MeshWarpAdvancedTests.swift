@@ -281,6 +281,374 @@ struct MeshWarpAdvancedTests {
         #expect(mesh.isAdaptive)
     }
 
+    // MARK: - Exposed selection and transform interaction (M10.7)
+
+    private func sessionWithMesh(width: Int = 96, height: Int = 72) throws -> (EditorSession, MeshWarpEdit) {
+        let source = try checkerboard(width: width, height: height)
+        let session = EditorSession()
+        session.createDocument(width: width, height: height)
+        session.insert(ImportedImage(image: source, thumbnail: source, name: "Expose"))
+        session.beginMeshWarp(preset: .points8)
+        let edit = try #require(session.meshWarpEdit)
+        return (session, edit)
+    }
+
+    /// UV of a lattice vertex in document points for a document sized to the source image.
+    private func documentPoint(_ edit: MeshWarpEdit, column: Int, row: Int) -> CGPoint {
+        // transform.point maps UV (0…1) into document space; build the UV directly.
+        let uv = CGPoint(x: CGFloat(column) / CGFloat(edit.mesh.pointColumns - 1),
+                         y: CGFloat(row) / CGFloat(edit.mesh.pointRows - 1))
+        return edit.transform.point(uv)
+    }
+
+    @Test func marqueeSelectsAndClearsThroughSession() throws {
+        let (session, edit) = try sessionWithMesh(width: 96, height: 96)
+        // The lattice spans the whole layer, whose transform fills the 96×96 document, so a vertex
+        // at rest UV (c/7, r/7) sits at (c/7·96, r/7·96) points. A window over columns 2–4, rows 2–4
+        // catches exactly those nine vertices.
+        let spacing = 96.0 / 7.0
+        let rect = CGRect(x: spacing * 1.9, y: spacing * 1.9,
+                          width: spacing * 2.2, height: spacing * 2.2)
+        session.meshWarpSelectMarquee(documentRect: rect, additive: false)
+        #expect(edit.selection.indices(in: edit.mesh).count == 9,
+                "the window covers the 3×3 block of vertices, corners included")
+
+        session.meshWarpClearSelection()
+        #expect(edit.selection.indices(in: edit.mesh).isEmpty)
+        #expect(edit.selectedIndex == nil)
+    }
+
+    @Test func marqueeDragThroughSessionSelectsRegion() throws {
+        let (session, edit) = try sessionWithMesh(width: 96, height: 96)
+        let spacing = 96.0 / 7.0
+        session.meshWarpBeginMarquee(at: CGPoint(x: spacing * 1.9, y: spacing * 1.9), additive: false)
+        session.meshWarpContinueMarquee(to: CGPoint(x: spacing * 4.1, y: spacing * 4.1))
+        #expect(edit.marqueeDraft != nil, "the overlay has a rectangle to draw while the drag runs")
+        session.meshWarpEndMarquee()
+        #expect(edit.marqueeDraft == nil)
+        #expect(edit.selection.indices(in: edit.mesh).count == 9)
+    }
+
+    @Test func shiftClickTogglesThroughSession() throws {
+        let (session, edit) = try sessionWithMesh(width: 96, height: 96)
+        let a = edit.mesh.index(column: 3, row: 3)
+        let pixel = documentPoint(edit, column: 3, row: 3)
+        #expect(session.meshWarpBeginDrag(at: pixel, viewRadius: 6, viewportScale: 1, shift: false))
+        session.meshWarpEndDrag()
+        #expect(edit.selection.indices(in: edit.mesh) == [a])
+
+        let b = edit.mesh.index(column: 4, row: 3)
+        let pixelB = documentPoint(edit, column: 4, row: 3)
+        #expect(session.meshWarpBeginDrag(at: pixelB, viewRadius: 6, viewportScale: 1, shift: true))
+        #expect(edit.selection.contains(index: b, in: edit.mesh), "Shift adds the second point")
+        session.meshWarpEndDrag()
+        #expect(edit.selection.count == 2)
+
+        // Shift again removes it.
+        #expect(session.meshWarpBeginDrag(at: pixelB, viewRadius: 6, viewportScale: 1, shift: true))
+        #expect(!edit.selection.contains(index: b, in: edit.mesh))
+        session.meshWarpEndDrag()
+        #expect(edit.selection.count == 1)
+    }
+
+    @Test func selectAllThenMoveMovesWholeInterior() throws {
+        let (session, edit) = try sessionWithMesh(width: 96, height: 96)
+        session.meshWarpSelectAll()
+        #expect(edit.selection.count == edit.mesh.pointCount)
+
+        edit.beginGesture()
+        let handle = edit.mesh.index(column: 4, row: 4)
+        let moved = edit.transformSelection(mode: .move, translation: SIMD2(0.03, 0.02))
+        #expect(moved)
+        edit.endGesture()
+        #expect(edit.history.canUndo)
+        // Corners stay pinned under sticky borders; interior points moved.
+        #expect(edit.mesh.positions[0] == edit.mesh.rest[0])
+        #expect(edit.mesh.positions[handle] != edit.mesh.rest[handle])
+    }
+
+    @Test func rotateAndScaleFromBarycenterWithoutDrift() throws {
+        let (session, edit) = try sessionWithMesh(width: 128, height: 128)
+        for row in 2...5 {
+            for column in 2...5 {
+                edit.selection.add(edit.mesh.vertexID(edit.mesh.index(column: column, row: row)))
+            }
+        }
+        edit.mesh.stickyBorders = false
+        edit.beginGesture()
+        // Ten half-angle steps from the same base must land exactly where ten full halves do:
+        // the session's gesture-base rule means each update re-measures from the gesture start.
+        let half: Float = .pi / 24
+        for _ in 0..<10 {
+            #expect(session.meshWarpRotateSelection(by: half))
+        }
+        edit.endGesture()
+        let rotated = edit.mesh.positions
+
+        var fresh = MeshWarpGrid.identity(preset: .points8, stickyBorders: false,
+                                          propagation: edit.mesh.propagation)
+        let base = fresh.positions
+        let selected = Set((2...5).flatMap { row in (2...5).map { fresh.index(column: $0, row: row) } })
+        let pivot = MeshWarpGrid.barycenter(indices: selected, in: base)!
+        _ = fresh.applySelectionTransform(selected: selected, imageWidth: 128, imageHeight: 128, base: base) { point in
+            let relative = point - pivot
+            let c = cos(half), s = sin(half)
+            return pivot + SIMD2(relative.x * c - relative.y * s, relative.x * s + relative.y * c)
+        }
+        #expect(rotated == fresh.positions, "the last write equals the single-step result exactly")
+    }
+
+    @Test func foldingRotationIsRefusedAndLeavesMeshUnchanged() throws {
+        let (session, edit) = try sessionWithMesh(width: 64, height: 64)
+        let selected: Set<Int> = [edit.mesh.index(column: 3, row: 3), edit.mesh.index(column: 4, row: 3)]
+        for index in selected { edit.selection.add(edit.mesh.vertexID(index)) }
+        edit.mesh.stickyBorders = false
+        let before = edit.mesh.positions
+        edit.beginGesture()
+        #expect(!session.meshWarpRotateSelection(by: .pi), "a half-turn folds the two-cell strip")
+        // The refused gesture leaves the mesh where it was and records nothing.
+        #expect(edit.mesh.positions == before)
+        #expect(edit.history.canUndo == false)
+        edit.cancelGesture()
+    }
+
+    @Test func scaleGestureFromBarycenterScalesSelection() throws {
+        let (session, edit) = try sessionWithMesh(width: 128, height: 128)
+        for row in 3...4 {
+            for column in 3...4 {
+                edit.selection.add(edit.mesh.vertexID(edit.mesh.index(column: column, row: row)))
+            }
+        }
+        edit.beginGesture()
+        #expect(session.meshWarpScaleSelection(by: 1.2))
+        edit.endGesture()
+        #expect(edit.history.canUndo)
+        let a = edit.mesh.index(column: 3, row: 3)
+        let b = edit.mesh.index(column: 4, row: 3)
+        let before = MeshWarpGrid.pixelDistance(edit.mesh.rest[a], edit.mesh.rest[b], width: 128, height: 128)
+        let after = MeshWarpGrid.pixelDistance(edit.mesh.positions[a], edit.mesh.positions[b], width: 128, height: 128)
+        #expect(abs(after - before * 1.2) < 0.5, "the two selected columns are 1.2× farther apart in pixels")
+        #expect(edit.toolUndo())
+        #expect(edit.mesh.positions[a] == edit.mesh.rest[a], "Undo puts the gesture back")
+    }
+
+    @Test func escapeCancelsInFlightGestureWithoutHistory() throws {
+        let (session, edit) = try sessionWithMesh(width: 96, height: 96)
+        let handle = edit.mesh.index(column: 3, row: 3)
+        edit.beginGesture()
+        #expect(edit.moveSelected(toPrimaryDestination: edit.mesh.positions[handle] + SIMD2(0.08, 0.06),
+                                  primary: handle))
+        #expect(!edit.mesh.isIdentity)
+        // The canvas maps Escape here; the session call it makes is what the test exercises.
+        session.meshWarpCancelGesture()
+        #expect(edit.mesh.isIdentity, "the dragged state is gone")
+        #expect(edit.history.canUndo == false, "a cancelled gesture records nothing")
+        #expect(edit.gestureBasePositions == nil)
+    }
+
+    @Test func nonFiniteRotateAndScaleAreRefused() throws {
+        let (session, edit) = try sessionWithMesh(width: 64, height: 64)
+        edit.selection.add(edit.mesh.vertexID(edit.mesh.index(column: 3, row: 3)))
+        edit.beginGesture()
+        let before = edit.mesh.positions
+        #expect(!session.meshWarpRotateSelection(by: .nan))
+        #expect(!session.meshWarpScaleSelection(by: .nan))
+        #expect(!session.meshWarpScaleSelection(by: 0))
+        #expect(!session.meshWarpScaleSelection(by: -1.5))
+        #expect(edit.mesh.positions == before)
+        edit.cancelGesture()
+    }
+
+    @Test func toolUndoRedoRestoresSelection() throws {
+        let (session, edit) = try sessionWithMesh(width: 96, height: 96)
+        let handle = edit.mesh.index(column: 3, row: 3)
+        edit.selection.selectOnly(index: handle, in: edit.mesh)
+        edit.beginGesture()
+        #expect(edit.moveSelected(toPrimaryDestination: edit.mesh.positions[handle] + SIMD2(0.05, -0.04),
+                                  primary: handle))
+        edit.endGesture()
+        let movedSelection = edit.selection
+        #expect(movedSelection.count == 1)
+
+        session.meshWarpClearSelection()
+        #expect(edit.selection.isEmpty)
+        #expect(edit.toolUndo())
+        #expect(edit.selection == movedSelection, "Undo restores the selection alongside the mesh")
+        #expect(edit.toolRedo())
+        #expect(edit.selection.isEmpty, "Redo replays the clear")
+    }
+
+    @Test func subdivideMergeButtonsRouteThroughSessionWithReasons() throws {
+        let (session, edit) = try sessionWithMesh(width: 96, height: 96)
+        // No selection: the button reports a meaningful refusal rather than silently doing nothing.
+        let empty = edit.subdivideSelection()
+        #expect(empty.succeeded.isEmpty)
+
+        // A single interior vertex subdivides only the cells it touches.
+        edit.selection.selectOnly(index: edit.mesh.index(column: 4, row: 4), in: edit.mesh)
+        let leavesBefore = edit.mesh.topology.leafFaceIDs.count
+        let result = edit.subdivideSelection()
+        #expect(!result.succeeded.isEmpty)
+        #expect(edit.mesh.topology.leafFaceIDs.count > leavesBefore)
+        #expect(edit.mesh.topology.leafFaceIDs.count == leavesBefore + 12,
+                "four faces each split 1→4 (net +3 leaves each)")
+        #expect(edit.history.canUndo)
+
+        // Merge needs a complete child group; a fresh lattice has none, so the reason says so.
+        let merge = edit.mergeSelection()
+        #expect(merge.succeeded.isEmpty)
+        #expect(!merge.rejected.isEmpty)
+
+        // Selecting the subdivided parent's four children completes the group and merges back.
+        let parent = result.succeeded[0]
+        let children = edit.mesh.topology.faces[parent]!.children!
+        edit.selection.clear()
+        for child in children {
+            for corner in edit.mesh.topology.faces[child]!.corners {
+                edit.selection.add(corner)
+            }
+        }
+        let mergeComplete = edit.mergeSelection()
+        #expect(mergeComplete.succeeded.contains(parent))
+        #expect(edit.mesh.topology.faces[parent]?.isLeaf == true)
+    }
+
+    @Test func localCorrectionsApplyToSelectionOnly() throws {
+        let (session, edit) = try sessionWithMesh(width: 128, height: 128)
+        edit.mesh.stickyBorders = false
+        edit.mesh.propagation = 0
+        var ids: Set<MeshWarpVertexID> = []
+        for row in 3...4 {
+            for column in 3...4 {
+                ids.insert(edit.mesh.vertexID(edit.mesh.index(column: column, row: row)))
+            }
+        }
+        edit.selection = MeshWarpSelection()
+        for id in ids { edit.selection.add(id) }
+        let far = edit.mesh.index(column: 1, row: 6)
+        let farBefore = edit.mesh.positions[far]
+
+        let perspective = session.applyMeshWarpLocalCorrection(
+            .perspective(MeshWarpLocalPerspective(mode: .vertical, amount: 0.3)))
+        #expect(perspective.ok, "\(perspective.reason)")
+        #expect(edit.history.canUndo)
+
+        let horizon = session.applyMeshWarpLocalCorrection(
+            .horizon(MeshWarpLocalHorizon(mode: .angle, angleDegrees: 4, amount: 0.5)))
+        #expect(horizon.ok, "\(horizon.reason)")
+
+        let volume = session.applyMeshWarpLocalCorrection(
+            .volume(MeshWarpLocalVolume(mode: .combined, strength: 0.15, strengthVertical: 0.1)))
+        #expect(volume.ok, "\(volume.reason)")
+
+        // Propagation 0: the untouched corner stays exactly where it was.
+        #expect(edit.mesh.positions[far] == farBefore)
+
+        // Three completed operations, three undo steps.
+        #expect(edit.toolUndo())
+        #expect(edit.toolUndo())
+        #expect(edit.toolUndo())
+        #expect(edit.mesh.isIdentity, "three undos return the mesh to rest")
+    }
+
+    @Test func horizonReferenceDragFeedsLocalHorizon() throws {
+        let (session, edit) = try sessionWithMesh(width: 96, height: 96)
+        for row in 3...4 {
+            for column in 3...4 {
+                edit.selection.add(edit.mesh.vertexID(edit.mesh.index(column: column, row: row)))
+            }
+        }
+        edit.mesh.stickyBorders = false
+
+        // Armed, the next drag draws the reference; the canvas calls these three in order.
+        session.meshWarpBeginHorizonReference()
+        session.meshWarpBeginHorizonDrag(at: CGPoint(x: 20, y: 40))
+        session.meshWarpContinueHorizonDrag(to: CGPoint(x: 70, y: 30))
+        session.meshWarpEndHorizonDrag()
+        #expect(edit.horizonReference != nil, "a long enough line commits")
+        #expect(edit.horizonReferenceDraft == nil)
+        #expect(edit.isDrawingHorizonReference == false)
+
+        let correction = try #require(session.meshWarpLocalHorizonCorrection(
+            mode: .horizontalReference, angleDegrees: 0, amount: 0.4))
+        // The drawn line rises to the right in document space (y down), so levelling turns clockwise
+        // in image pixels; the endpoints arrive in layer pixels either way.
+        #expect(correction.referenceA != correction.referenceB)
+        let status = session.applyMeshWarpLocalCorrection(.horizon(correction))
+        #expect(status.ok, "\(status.reason)")
+
+        // A second, too-short line is discarded rather than committed.
+        session.meshWarpBeginHorizonReference()
+        session.meshWarpBeginHorizonDrag(at: CGPoint(x: 30, y: 40))
+        session.meshWarpContinueHorizonDrag(to: CGPoint(x: 30.5, y: 40))
+        session.meshWarpEndHorizonDrag()
+        #expect(edit.horizonReference == nil, "a line too short to read an angle is dropped")
+    }
+
+    @Test func fourPointNeedsFourSelectedVerticesAndApplies() throws {
+        let (session, edit) = try sessionWithMesh(width: 128, height: 128)
+        edit.mesh.stickyBorders = false
+        // One vertex only: the action refuses with a reason instead of guessing.
+        edit.selection.selectOnly(index: edit.mesh.index(column: 3, row: 3), in: edit.mesh)
+        session.meshWarpBeginQuadDestination()
+        session.meshWarpBeginQuadDrag(at: CGPoint(x: 20, y: 20))
+        session.meshWarpContinueQuadDrag(to: CGPoint(x: 60, y: 60))
+        session.meshWarpEndQuadDrag()
+        let refused = session.meshWarpApplyQuadDestination()
+        #expect(!refused.ok)
+        #expect(refused.reason.contains("four"))
+
+        // Four vertices of one cell: the drawn rectangle becomes the destination quad. The source
+        // quad is those four points as they stand, so a modestly moved rectangle maps into them
+        // without inverting anything.
+        let spacing = 128.0 / 7.0
+        let cell = edit.mesh.topology.rootFaceIDs[3 * 7 + 3]
+        edit.selection.clear()
+        for corner in edit.mesh.topology.faces[cell]!.corners {
+            edit.selection.add(corner)
+        }
+        let sourceRect = CGRect(x: spacing * 2.6, y: spacing * 2.6, width: spacing * 0.8, height: spacing * 0.8)
+        session.meshWarpBeginQuadDestination()
+        session.meshWarpBeginQuadDrag(at: sourceRect.origin)
+        session.meshWarpContinueQuadDrag(to: CGPoint(x: sourceRect.maxX, y: sourceRect.maxY))
+        session.meshWarpEndQuadDrag()
+        #expect(edit.drawnQuadDestination != nil)
+        let applied = session.meshWarpApplyQuadDestination()
+        #expect(applied.ok, "\(applied.reason)")
+        #expect(!edit.mesh.isIdentity)
+        #expect(edit.history.canUndo)
+        #expect(edit.drawnQuadDestination == nil, "the committed rectangle is cleared")
+    }
+
+    @Test func applyAndCancelStillBehave() throws {
+        let (session, edit) = try sessionWithMesh(width: 64, height: 64)
+        let handle = edit.mesh.index(column: 3, row: 3)
+        edit.beginGesture()
+        #expect(edit.moveSelected(toPrimaryDestination: edit.mesh.positions[handle] + SIMD2(0.05, 0.04),
+                                  primary: handle))
+        edit.endGesture()
+
+        // Cancel leaves the layer untouched.
+        let before = try MeshWarpRaster.rgba8Bytes(from: try #require(session.activeLayer?.asset?.image))
+        session.cancelMeshWarp()
+        #expect(session.meshWarpEdit == nil)
+        #expect(try MeshWarpRaster.rgba8Bytes(from: try #require(session.activeLayer?.asset?.image)) == before)
+
+        // Apply makes the one document entry, as before.
+        session.beginMeshWarp(preset: .points8)
+        let second = try #require(session.meshWarpEdit)
+        let undoBefore = session.history.undoCount
+        let index = second.mesh.index(column: 3, row: 3)
+        second.beginGesture()
+        #expect(second.moveSelected(toPrimaryDestination: second.mesh.positions[index] + SIMD2(0.05, 0.04),
+                                    primary: index))
+        second.endGesture()
+        session.applyMeshWarp()
+        #expect(session.history.undoCount == undoBefore + 1)
+        #expect(session.history.undoName == "ReShape")
+        #expect(session.activeLayer?.reshape != nil)
+    }
+
     // MARK: - Parity still holds with new propagation
 
     @Test func cpuGpuParityWithLinearPropagation() throws {

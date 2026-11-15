@@ -2253,8 +2253,23 @@ final class CanvasView: NSView {
             beginCropDrag(at: point)
         } else if session.tool == .reshape, let document = session.document {
             let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
-            meshDragging = session.meshWarpBeginDrag(at: pixel, viewRadius: 10,
-                                                     viewportScale: session.viewport.pointsPerPixel)
+            // An armed draft owns the drag first: the Four Point rectangle or the Horizon reference.
+            if session.meshWarpEdit?.isDrawingQuadDestination == true {
+                session.meshWarpBeginQuadDrag(at: pixel)
+                meshDragging = true
+            } else if session.meshWarpEdit?.isDrawingHorizonReference == true {
+                session.meshWarpBeginHorizonDrag(at: pixel)
+                meshDragging = true
+            } else if session.meshWarpBeginDrag(at: pixel, viewRadius: 10,
+                                                viewportScale: session.viewport.pointsPerPixel,
+                                                shift: event.modifierFlags.contains(.shift)) {
+                meshDragging = true
+            } else {
+                // A press on empty mesh ground starts a marquee; Shift adds to the selection.
+                session.meshWarpBeginMarquee(at: pixel,
+                                             additive: event.modifierFlags.contains(.shift))
+                meshDragging = true
+            }
             synchronizeDisplay()
         } else if session.tool == .move {
             // Double-click live text to edit it, without switching to the Type tool first.
@@ -2389,7 +2404,15 @@ final class CanvasView: NSView {
         }
         if meshDragging, session.tool == .reshape, let document = session.document {
             let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
-            session.meshWarpDrag(to: pixel)
+            if session.meshWarpEdit?.quadDraft != nil {
+                session.meshWarpContinueQuadDrag(to: pixel)
+            } else if session.meshWarpEdit?.horizonReferenceDraft != nil {
+                session.meshWarpContinueHorizonDrag(to: pixel)
+            } else if session.meshWarpEdit?.marqueeDraft != nil {
+                session.meshWarpContinueMarquee(to: pixel)
+            } else {
+                session.meshWarpDrag(to: pixel)
+            }
             synchronizeDisplay()
             return
         }
@@ -2588,7 +2611,15 @@ final class CanvasView: NSView {
         }
         if meshDragging {
             meshDragging = false
-            session.meshWarpEndDrag()
+            if session.meshWarpEdit?.marqueeDraft != nil {
+                session.meshWarpEndMarquee()
+            } else if session.meshWarpEdit?.quadDraft != nil {
+                session.meshWarpEndQuadDrag()
+            } else if session.meshWarpEdit?.horizonReferenceDraft != nil {
+                session.meshWarpEndHorizonDrag()
+            } else {
+                session.meshWarpEndDrag()
+            }
             synchronizeDisplay()
         }
         if session.brushStroke != nil || session.warpStroke != nil, !session.isProjectBusy {
@@ -2691,6 +2722,20 @@ final class CanvasView: NSView {
             }
             if event.keyCode != 49 { super.keyDown(with: event); return }
         }
+        // While ReShape is open, ⌘Z and ⇧⌘Z step the tool-local mesh history rather than the document's,
+        // as Photoshop's Warp does; ⌘⌥Z and ⌘⇧⌥Z still reach the document.
+        if session.meshWarpEdit != nil, event.keyCode == 6,
+           event.modifierFlags.contains(.command), event.modifierFlags.intersection([.control]) == [] {
+            if event.modifierFlags.contains(.option) {
+                if event.modifierFlags.contains(.shift) { session.redo() } else { session.undo() }
+            } else if event.modifierFlags.contains(.shift) {
+                session.meshWarpToolRedo()
+            } else {
+                session.meshWarpToolUndo()
+            }
+            synchronizeDisplay()
+            return
+        }
         if session.brushStroke != nil || session.warpStroke != nil {
             if event.keyCode == 53 && !session.isProjectBusy { session.cancelBrush(); synchronizeDisplay() }
             return
@@ -2717,9 +2762,19 @@ final class CanvasView: NSView {
             cropDrag = nil
             Task { await session.commitCrop() }
         } else if session.meshWarpEdit != nil, event.keyCode == 53 {
-            meshDragging = false
-            session.cancelMeshWarp()
-            session.selectTool(.move)
+            // An in-progress gesture is undone first; Escape again cancels the whole session.
+            if meshDragging || session.meshWarpEdit?.gestureBasePositions != nil
+                    || session.meshWarpEdit?.marqueeDraft != nil
+                    || session.meshWarpEdit?.quadDraft != nil
+                    || session.meshWarpEdit?.horizonReferenceDraft != nil {
+                meshDragging = false
+                session.meshWarpCancelGesture()
+                session.meshWarpCancelQuadDestination()
+                session.meshWarpCancelHorizonReference()
+            } else {
+                session.cancelMeshWarp()
+                session.selectTool(.move)
+            }
             synchronizeDisplay()
         } else if session.meshWarpEdit != nil, [36, 76].contains(event.keyCode) {
             meshDragging = false

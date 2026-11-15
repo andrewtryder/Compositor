@@ -63,6 +63,9 @@ struct CommandPaletteView: View {
         .background(chosen ? Color.accentColor.opacity(0.35) : .clear, in: RoundedRectangle(cornerRadius: 6))
         .foregroundStyle(entry.isEnabled ? .primary : .tertiary)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("commandPaletteRow_"
+            + entry.id.map { $0.isLetter || $0.isNumber ? $0 : "_" })
     }
 }
 

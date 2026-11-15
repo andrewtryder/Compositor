@@ -227,3 +227,18 @@ branch, worktree or PR.
 
 ## 12. Verification per milestone
 
+## 11c. Verification record — M10.7
+
+| What | Result |
+| --- | --- |
+| Architecture | **Exposure only.** Every new control calls the existing ReShape engine (`MeshWarpEdit`, `MeshWarpTopology`, `MeshWarpLocalGeometry`, `MeshWarpHistory`); no solver moved, no second solver created |
+| Controls added | Transform picker (Move/Rotate/Scale), Subdivide, Merge, Local Corrections menu (Perspective / Horizon / Volume), Clear Selection, selected-count text — appended inside the existing ReShape header, hidden when no mesh is open |
+| Selection exposure | Shift-click additive/toggle, marquee (drag on empty canvas, Shift extends), ⌘A / ⌘D routed to the mesh while ReShape is open, live count in the header |
+| Tool-local Undo/Redo | ⌘Z / ⇧⌘Z step the mesh history while ReShape is open; ⌘⌥Z / ⌘⇧⌥Z still reach the document; Escape cancels the gesture first, the session second; Return applies |
+| Focused suites | `MeshWarpTests`, `MeshWarpAdvancedTests`, `MeshWarpTopologyTests`, `MeshWarpLocalGeometryTests`, `MeshWarpPersistenceTests`, `MeshWarpEvidenceTests` — 99 tests, pass |
+| Rendered evidence | `work/camera-raw-parity/screenshots/m10_7-rendered/` — move / rotate / scale / subdivide / merge / local perspective / horizon / volume on `stone-house.jpg`, with `reshape-evidence.csv` |
+| UI captures | `work/camera-raw-parity/screenshots/m10_7-ui/` — 22 captures from real automation; steps 21–22 show the appended controls and the open Local Corrections menu |
+| Canvas drag evidence | **not captured** — the same XCUITest limitation as M10.5 §5.3; mesh gestures are proven at model level and through the real render pipeline; manual checklist in §9 of the report |
+| Open gates carried | M9.1.6 Guided Upright and M10.5 Advanced Perspective canvas drag remain pending, unchanged. (Automation Mode is now enabled on this machine, unblocking future capture attempts) |
+| Full regression | see the M10.7 line below |
+
