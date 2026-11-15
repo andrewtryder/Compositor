@@ -94,7 +94,10 @@ struct CameraRawResetTests {
         edit.showsCameraRawEffects = false
         session.resetCameraRaw(.effects)
         #expect(session.filterEdit === edit)
-        #expect(edit.settings.cameraRaw == edited().resetting(.effects))
+        // The panel normalizes what it stores, and normalization (since the advanced perspective tools)
+        // refreshes the keystone mirror in `perspectiveTools` from the sliders it mirrors, so the
+        // expectation is the reset settings as normalized, not as handed to `updateFilter`.
+        #expect(edit.settings.cameraRaw == edited().resetting(.effects).normalized)
         #expect(edit.showsCameraRawEffects)
         edit.committing = true
         session.resetCameraRaw(.light)

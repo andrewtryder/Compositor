@@ -184,6 +184,15 @@ final class LensfunDatabaseManager {
         }
     }
 
+    /// What an edit's snapshot needs before it is taken: a database installed on disk but not yet read
+    /// in this session has to be read now, or the first Camera Raw edit would render as if Lensfun were
+    /// absent until some panel happened to open. Cheap when the folder is empty (one directory listing),
+    /// and a no-op once loaded, so the parse cost lands once per session, not per edit.
+    func ensureLoadedForEdit() {
+        guard !isInstalled, store.isInstalled else { return }
+        refresh()
+    }
+
     /// Installs what the user chose. Returns true when the database is now usable.
     @discardableResult
     func install(from sources: [URL]) -> Bool {

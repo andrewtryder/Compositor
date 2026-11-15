@@ -19,6 +19,12 @@ nonisolated final class LensfunXMLParser: NSObject, XMLParserDelegate {
     private var currentCalibration = LensfunCalibrations()
     private var currentCalibratedFocals: [Double] = []
     private var currentVignettePoints: [LensfunVignettePoint] = []
+    private var currentDistortions: [LensfunDistortion] = []
+    private var currentTCAs: [LensfunTCA] = []
+    private var currentVignettings: [LensfunVignetting] = []
+    /// The attributes of the element most recently started, so a translated variant (`<model lang="en">`)
+    /// can be told from the primary name, which is what matching goes by.
+    private var currentAttributes: [String: String] = [:]
 
     /// The format versions this reader understands. Lensfun 0.3 and later write 1; 2 adds the `acm` models but no
     /// structure this reader depends on. Version 0 predates the tags used here and is refused rather than guessed at.
@@ -57,6 +63,7 @@ nonisolated final class LensfunXMLParser: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
                 qualifiedName: String?, attributes: [String: String] = [:]) {
         text = ""
+        currentAttributes = attributes
         switch elementName {
         case "lensdatabase":
             path.append("lensdatabase")
@@ -78,20 +85,45 @@ nonisolated final class LensfunXMLParser: NSObject, XMLParserDelegate {
             currentCalibration = LensfunCalibrations()
             currentCalibratedFocals = []
             currentVignettePoints = []
+            currentDistortions = []
+            currentTCAs = []
+            currentVignettings = []
         case "distortion":
             guard insideCalibration, let model = attributes["model"], model != "none" else { return }
             currentCalibration.distortion = true
             if let focal = Self.number(attributes["focal"]) { currentCalibratedFocals.append(focal) }
+            // The measured coefficients are kept, not just the fact of them, so the calibrated engine can use
+            // them. An unknown or absent model is recorded as unsupported rather than guessed at.
+            if let distortion = LensfunDistortion(attributes: attributes, number: Self.number) {
+                currentDistortions.append(distortion)
+            } else {
+                currentCalibration.hasUnsupportedDistortion = true
+            }
         case "tca":
             guard insideCalibration, let model = attributes["model"], model != "none" else { return }
             currentCalibration.tca = true
             if let focal = Self.number(attributes["focal"]) { currentCalibratedFocals.append(focal) }
+            if let tca = LensfunTCA(attributes: attributes, number: Self.number) {
+                currentTCAs.append(tca)
+            } else {
+                currentCalibration.hasUnsupportedTCA = true
+            }
         case "vignetting":
             guard insideCalibration, let model = attributes["model"], model != "none" else { return }
             currentCalibration.vignetting = true
             if let focal = Self.number(attributes["focal"]), let aperture = Self.number(attributes["aperture"]) {
                 currentVignettePoints.append(LensfunVignettePoint(focal: focal, aperture: aperture))
             }
+            if let vignetting = LensfunVignetting(attributes: attributes, number: Self.number) {
+                currentVignettings.append(vignetting)
+            } else {
+                currentCalibration.hasUnsupportedVignetting = true
+            }
+        case "center":
+            guard insideLens, var lens = currentLens else { return }
+            lens.center.x = Self.number(attributes["x"]) ?? 0
+            lens.center.y = Self.number(attributes["y"]) ?? 0
+            currentLens = lens
         case "focal":
             guard insideLens, var lens = currentLens else { return }
             if let value = Self.number(attributes["value"]) {
@@ -146,6 +178,9 @@ nonisolated final class LensfunXMLParser: NSObject, XMLParserDelegate {
                 lens.calibrations = currentCalibration
                 lens.calibratedFocals = currentCalibratedFocals
                 lens.vignettePoints = currentVignettePoints
+                lens.distortions = currentDistortions
+                lens.tcas = currentTCAs
+                lens.vignettings = currentVignettings
                 database.lenses.append(lens)
             }
             currentLens = nil
@@ -157,8 +192,13 @@ nonisolated final class LensfunXMLParser: NSObject, XMLParserDelegate {
             if insideCamera { currentCamera?.maker = value }
             else if insideLens { currentLens?.maker = value }
         case "model":
-            if insideCamera { currentCamera?.model = value }
-            else if insideLens { currentLens?.model = value }
+            // A translated variant carries a lang attribute; only the untranslated name is the identity
+            // the photograph's metadata is matched against, so a variant never overwrites it.
+            if insideCamera {
+                if currentAttributes["lang"] == nil { currentCamera?.model = value }
+            } else if insideLens {
+                if currentAttributes["lang"] == nil { currentLens?.model = value }
+            }
         case "cropfactor":
             if let number = Self.number(value) {
                 if insideCamera { currentCamera?.cropFactor = number }

@@ -97,15 +97,15 @@ struct CameraRawLensProfileTests {
         #expect(settings.isIdentity)
     }
 
-    @Test func aProfileSelectionNeverChangesRenderedPixels() throws {
+    @Test func aProfileSelectionAloneChangesNoPixels() throws {
         let image = try gradient()
         var settings = CameraRawSettings()
-        // Even the most explicit Lensfun choice leaves the pixels alone: M10.3 has no calibrated engine.
+        // A Lensfun choice with no metadata, database or render context supplied changes nothing: the
+        // pass only runs when the caller hands the render everything it needs.
         settings.optics.lensProfile.provider = .lensfun
         settings.optics.lensProfile.selection = CameraRawLensProfileSelection(automatic: false,
                                                                              lensID: "Canon|Canon EF 50mm f/1.8 STM|Canon EF",
                                                                              cameraID: "Canon|Canon EOS 5D Mark IV")
-        #expect(!settings.optics.adjusts)
         #expect(try rgba8(try settings.apply(image)) == rgba8(image))
     }
 
@@ -142,7 +142,7 @@ struct CameraRawLensProfileTests {
         let policy = CameraRawLensCorrectionPolicy(source: .redevelopableRaw, provider: .appleNative,
                                                    appleCorrectionActive: true, manualAdjustmentsActive: false)
         #expect(policy.explanation.contains("Apple"))
-        #expect(!policy.canApplyLensfunCorrection, "no calibrated engine yet")
+        #expect(!policy.canApplyLensfunCorrection, "Lensfun is not the provider here")
     }
 
     // MARK: - Installation opt-in
@@ -462,12 +462,18 @@ struct CameraRawLensProfileTests {
 
     // MARK: - Correction policy
 
-    @Test func aRedevelopableRawMayEventuallyTakeALensfunCorrection() {
+    @Test func aRedevelopableRawMayTakeALensfunCorrection() {
         let policy = CameraRawLensCorrectionPolicy(source: .redevelopableRaw, provider: .lensfun,
                                                    appleCorrectionActive: false, manualAdjustmentsActive: false)
-        #expect(policy.canApplyLensfunCorrection == false, "not until the calibrated engine exists")
-        #expect(policy.showsUnavailableNotice)
-        #expect(policy.explanation.contains("next milestone") || policy.explanation.contains("not available"))
+        #expect(policy.canApplyLensfunCorrection, "the calibrated engine exists and the pixels are uncorrected")
+        #expect(!policy.showsUnavailableNotice)
+    }
+
+    @Test func appleCorrectionBeingOnRefusesTheLensfunPass() {
+        let policy = CameraRawLensCorrectionPolicy(source: .redevelopableRaw, provider: .lensfun,
+                                                   appleCorrectionActive: true, manualAdjustmentsActive: false)
+        #expect(!policy.canApplyLensfunCorrection, "correcting Apple-corrected pixels would correct the distortion twice")
+        #expect(policy.explanation.contains("twice"))
     }
 
     @Test func aDevelopedRawAndARenderedImageAreBothRefused() {

@@ -84,10 +84,20 @@ nonisolated struct CameraRawLensProfileSelection: Equatable, Sendable {
 nonisolated struct CameraRawLensProfileSettings: Equatable, Sendable {
     var provider: CameraRawLensProfileProvider = .appleNative
     var selection = CameraRawLensProfileSelection()
+    /// The installed database's digest when this provider and selection were committed. Recorded, never
+    /// gating: rendering is a pure function of the current database, and a difference is reported, not silent.
+    var calibrationDigest = ""
 
-    /// Whether this changes the picture at all. M10.3 discovers and selects profiles; it does not yet correct
-    /// pixels, so the answer is always false until the calibrated engine lands.
-    var adjustsPixels: Bool { false }
+    /// Whether this changes the picture at all. The provider alone does not decide: Lensfun only
+    /// corrects pixels once a database is installed and a profile has been chosen, which the render
+    /// path resolves against the photograph's metadata before it trusts the answer.
+    var adjustsPixels: Bool {
+        switch provider {
+        case .off: return false
+        case .appleNative: return false // Apple's correction lives in the decoder, not in this pass.
+        case .lensfun: return selection.hasChoice
+        }
+    }
 
     /// Whether the settings differ from a brand-new image's, for the section's reset and eye.
     var isDefault: Bool { self == CameraRawLensProfileSettings() }
@@ -127,12 +137,15 @@ nonisolated struct CameraRawLensCorrectionPolicy: Equatable, Sendable {
 
     /// Calibrated Lensfun pixel correction does not exist yet. It is reported rather than assumed, so the panel can
     /// say plainly that a match only describes what a profile could do.
-    static let calibratedCorrectionAvailable = false
+    /// Calibrated Lensfun pixel correction exists: the engine in CameraRawLensfun applies the poly3,
+    /// poly5 and ptlens distortion models, linear and poly3 lateral chromatic aberration, and the pa
+    /// vignetting model, from a user-imported database.
+    static let calibratedCorrectionAvailable = true
 
-    /// Whether Lensfun may correct these pixels without risking a double correction. Only a RAW that can be
-    /// redeveloped qualifies, and only once a calibrated engine exists.
+    /// Whether Lensfun may correct these pixels without risking a double correction. Only a RAW whose
+    /// bytes are still held qualifies, and only while the decoder's own correction is out of the pixels.
     var canApplyLensfunCorrection: Bool {
-        source == .redevelopableRaw && Self.calibratedCorrectionAvailable
+        source == .redevelopableRaw && !appleCorrectionActive && Self.calibratedCorrectionAvailable
     }
 
     /// The plain sentence the panel shows under the provider, describing what is actually happening.
@@ -158,7 +171,9 @@ nonisolated struct CameraRawLensCorrectionPolicy: Equatable, Sendable {
         case .lensfun:
             switch source {
             case .redevelopableRaw:
-                return "A matched profile describes the distortion, vignetting and color fringing this lens has. Calibrated correction arrives in the next milestone; until then nothing is applied to the pixels."
+                return appleCorrectionActive
+                    ? "Apple's lens correction is on in the RAW decoder. Turn it off there first, or the distortion would be corrected twice."
+                    : "The matched profile's calibrated corrections are applied to the pixels."
             case .previouslyDevelopedRaw:
                 return "Lensfun cannot correct this layer safely: the RAW was already developed, so any correction in its pixels is fixed. Redevelop the original first."
             case .renderedImage:
@@ -167,8 +182,9 @@ nonisolated struct CameraRawLensCorrectionPolicy: Equatable, Sendable {
         }
     }
 
-    /// Whether the panel should show its "no calibrated correction yet" notice.
-    var showsUnavailableNotice: Bool { provider == .lensfun }
+    /// Whether the panel should show its "no calibrated correction yet" notice. The calibrated engine
+    /// exists now; the panel reports per-correction status instead.
+    var showsUnavailableNotice: Bool { false }
 }
 
 // MARK: - Reading camera and lens from a file

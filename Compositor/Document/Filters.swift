@@ -247,6 +247,14 @@ nonisolated struct FilterJob: @unchecked Sendable {
     var visualizesPointColor = -1
     /// Option-drag on Sharpening Masking. Preview only.
     var showsSharpenMask = false
+    /// What the calibrated Lensfun pass needs from the layer: its lens metadata, the installed database
+    /// and the double-correction policy facts. Nil database or metadata keeps the pass off; the policy
+    /// facts decide whether it may run at all.
+    var lensMetadata: LensMetadata? = nil
+    var lensfunDatabase: LensfunDatabase? = nil
+    var lensPolicySource: CameraRawLensCorrectionPolicy.Source = .renderedImage
+    /// Whether the decoder's own correction is in these pixels right now.
+    var appleCorrectionActive = false
 }
 
 nonisolated enum PixelFilter {
@@ -365,7 +373,10 @@ nonisolated enum PixelFilter {
             if job.selection != nil { rawSettings.geometry.framingMode = .keepOriginalSize }
             let raw = try rawSettings.applyResult(job.image, clipping: job.cameraRawClipping, scale: job.scale, seed: job.seed,
                                                   visualizePointColor: job.visualizesPointColor, sharpenMask: job.showsSharpenMask,
-                                                  brightness: job.cameraRawBrightness, usesGPU: job.cameraRawUsesGPU)
+                                                  brightness: job.cameraRawBrightness, usesGPU: job.cameraRawUsesGPU,
+                                                  lensMetadata: job.lensMetadata, lensfunDatabase: job.lensfunDatabase,
+                                                  policySource: job.lensPolicySource,
+                                                  appleCorrectionActive: job.appleCorrectionActive)
             image = raw.image
             geometryExpansion = job.selection == nil ? raw.expansion : nil
         // Grain sits in layer pixels; the job's seed gives each application its own pattern.
@@ -618,6 +629,9 @@ final class FilterEdit {
     /// Camera, lens, focal length and aperture of the layer being edited, for Optics › Lens Profile. Empty when the
     /// layer came from a file with no tags.
     var lensMetadata = LensMetadata()
+    /// The optional Lensfun database, captured when the edit began: a mid-edit import does not swap the
+    /// profile under the photograph; the next edit sees the new database.
+    var lensfunDatabase: LensfunDatabase?
     /// The layer's retained RAW development, if it has any: what decides whether the decoder's lens correction can
     /// still be taken back out. Nil for a JPEG, TIFF or any other rendered layer.
     var rawDevelopment: RawDevelopmentPersistentState?
@@ -700,12 +714,13 @@ var cameraRawDragOriginalGuide: CameraRawGeometryGuide?
     /// `growingTo`: a document area the layer's grid should cover (Content-Aware Fill's selection on the canvas).
     /// A blur grows the grid by its own reach instead, and again if its amount is raised.
     init(kind: FilterKind, layer: ImageLayer, selection: SelectionClip?, settings: FilterSettings, growingTo area: CGRect? = nil,
-         canvas: CGSize? = nil) throws {
+         canvas: CGSize? = nil, lensfunDatabase: LensfunDatabase? = nil) throws {
         guard let asset = layer.asset else { throw ProjectError.invalid }
         self.kind = kind
         self.settings = settings.normalized
         layerID = layer.id; original = asset; transform = layer.transform; self.selection = selection
         lensMetadata = asset.lensMetadata
+        self.lensfunDatabase = lensfunDatabase
         rawDevelopment = layer.rawDevelopment
         let ready = try Self.prepared(kind: kind, from: asset.image, placed: layer.transform)
         mapping = ready.mapping
@@ -856,6 +871,10 @@ var cameraRawDragOriginalGuide: CameraRawGeometryGuide?
         if kind == .cameraRaw {
             job.cameraRawBrightness = previewBrightness
             job.cameraRawUsesGPU = previewSource.width * previewSource.height >= MetalCameraRawLookup.minimumPixels
+            job.lensMetadata = lensMetadata
+            job.lensfunDatabase = lensfunDatabase
+            job.lensPolicySource = lensCorrectionSource
+            job.appleCorrectionActive = appleLensCorrectionActive
         }
         return job
     }
@@ -874,6 +893,9 @@ extension EditorSession {
             return
         }
         commitTransform(); cancelCrop(); cancelLasso()
+        // The edit snapshots the Lensfun database; a database installed on disk but not read in this
+        // session must be read now, so the first edit sees it instead of waiting for a panel to open.
+        if kind == .cameraRaw { lensfunDatabase.ensureLoadedForEdit() }
         guard var layer = activeLayer, let document else { return }
         // Destructive filters (Camera Raw included) refuse editable ReShape; bake is explicit.
         if let message = reshapeDestructiveRefusal(for: layer) {
@@ -930,7 +952,7 @@ extension EditorSession {
                 ? selection.map { $0.path.boundingBoxOfPath.intersection(canvas) }.flatMap { $0.isNull || $0.isEmpty ? nil : $0 }
                 : fillsCanvas ? canvas : nil
             let edit = try FilterEdit(kind: kind, layer: layer, selection: selection?.clip(canvas: document.size), settings: settings,
-                                      growingTo: area, canvas: document.size)
+                                      growingTo: area, canvas: document.size, lensfunDatabase: lensfunDatabase.database)
             if fillsCanvas { edit.canvas = canvas }
             edit.startedEmpty = startedEmpty
             edit.repeating = repeating
@@ -1185,6 +1207,12 @@ extension EditorSession {
                             settings: edit.renderSettings(), scale: 1, selection: edit.selection, mapping: mapping, seed: edit.seed)
         job.canvas = edit.canvas
         job.canvasSides = edit.canvasSides
+        if edit.kind == .cameraRaw {
+            job.lensMetadata = edit.lensMetadata
+            job.lensfunDatabase = edit.lensfunDatabase
+            job.lensPolicySource = edit.lensCorrectionSource
+            job.appleCorrectionActive = edit.appleLensCorrectionActive
+        }
         let cached = edit.kind.isAutomatic && edit.preparedSettings == edit.settings ? edit.preparedPreview : nil
         let baseTransform = edit.transform
         do {
@@ -1231,6 +1259,10 @@ extension EditorSession {
                     runJob.canvasSides = job.canvasSides
                     runJob.cameraRawBrightness = job.cameraRawBrightness
                     runJob.cameraRawUsesGPU = job.cameraRawUsesGPU
+                    runJob.lensMetadata = job.lensMetadata
+                    runJob.lensfunDatabase = job.lensfunDatabase
+                    runJob.lensPolicySource = job.lensPolicySource
+                    runJob.appleCorrectionActive = job.appleCorrectionActive
                     let input = try deepGrid.map { try DeepLayer.padded(deep, to: $0.size, inside: $0.inside) } ?? deep
                     var result: CGImage
                     if runJob.kind.runsAtSixteenBits {

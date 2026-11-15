@@ -51,10 +51,12 @@ struct CameraRawLensProfileControls: View {
     }
 
     /// Changing provider is one undoable change, like every other Optics control. Choosing Lensfun does not install
-    /// anything; it only says which source would be consulted.
+    /// anything; it only says which source would be consulted. The database's digest is recorded with the
+    /// selection, so a project can later say its database has changed.
     private func setProvider(_ provider: CameraRawLensProfileProvider) {
         update { settings in
             settings.cameraRaw.optics.lensProfile.provider = provider
+            settings.cameraRaw.optics.lensProfile.calibrationDigest = session.lensfunDatabase.digest
             if provider != .lensfun {
                 // Apple Native and Off have no use for a pinned Lensfun lens; the identity is kept out of the way
                 // rather than silently applied later.
@@ -272,6 +274,7 @@ struct CameraRawLensProfileControls: View {
             selection.lensID = id
             selection.cameraID = database.lens(id: id).flatMap { database.camera(forLens: $0, metadata: metadata)?.id } ?? ""
             settings.cameraRaw.optics.lensProfile.selection = selection
+            settings.cameraRaw.optics.lensProfile.calibrationDigest = session.lensfunDatabase.digest
         }
     }
 
@@ -296,12 +299,68 @@ struct CameraRawLensProfileControls: View {
         }
     }
 
-    /// The honest statement about what happens to pixels: a match describes the lens, and nothing is applied yet.
-    private var calibratedNotice: some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "info.circle").foregroundStyle(.secondary).font(.caption2).accessibilityHidden(true)
-            Text("Calibrated Lensfun correction is not available in this version. A match describes what this profile could correct; no pixels are changed by it.")
-                .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    /// The honest statement about what happens to pixels: which corrections the resolved profile will
+    /// actually apply, or why none of it runs.
+    @ViewBuilder private var calibratedNotice: some View {
+        let edit = session.filterEdit
+        let database = edit?.lensfunDatabase
+        let metadata = edit?.lensMetadata ?? LensMetadata()
+        let policy = edit?.lensCorrectionPolicy ?? CameraRawLensCorrectionPolicy(
+            source: .renderedImage, provider: profile.provider, appleCorrectionActive: false,
+            manualAdjustmentsActive: raw.optics.adjusts)
+        let resolution = CameraRawLensfun.resolve(settings: profile, metadata: metadata, database: database,
+                                                  policySource: policy.source,
+                                                  appleCorrectionActive: policy.appleCorrectionActive)
+        if profile.provider != .lensfun {
+            EmptyView()
+        } else if let correction = resolution.correction {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "checkmark.circle").foregroundStyle(.green).font(.caption2).accessibilityHidden(true)
+                    Text("Applying \(correction.correctionNames.joined(separator: ", ").lowercased()) from \(correction.lensDescription).")
+                        .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                if profile.calibrationDigest != "", profile.calibrationDigest != session.lensfunDatabase.digest {
+                    Text("The database has changed since this project was saved; the correction now comes from its current measurements.")
+                        .font(.caption2).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        } else {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption2).accessibilityHidden(true)
+                Text(Self.refusalText(resolution.issues, database: database, policy: policy))
+                    .font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The sentence for each way a calibrated correction can fail to run, in the order the gates were met
+    /// or missed. A database issue and a profile issue are both possible at once; the first that blocks
+    /// rendering leads.
+    private static func refusalText(_ issues: [CameraRawLensfun.LensfunResolutionIssue], database: LensfunDatabase?,
+                                    policy: CameraRawLensCorrectionPolicy) -> String {
+        if issues.isEmpty { return "No calibrated correction applies to these pixels." }
+        switch issues[0] {
+        case .noDatabase:
+            return "No Lensfun database is installed. Import one in the Lens Profile section to enable calibrated correction."
+        case .noUsableProfile:
+            return "No profile in the database matches this photograph's camera and lens."
+        case .refusedByPolicy:
+            return policy.explanation
+        case .noFocalLength:
+            return "This photograph's file carries no focal length, so a calibrated correction has nothing to work from."
+        case .unsupportedModel(let name):
+            return "This profile's \(name) calibration uses a model this version does not apply, so nothing is corrected with it."
+        case .noCalibrationForShot:
+            return "The profile's measurements do not cover this shot's focal length and aperture closely enough to correct it."
+        case .vignettingNeedsAperture:
+            return "The profile's vignetting calibration needs this photograph's f-number, which the file does not carry."
+        case .vignettingDistanceUnknown:
+            return "The profile measured vignetting at several focus distances, so this shot's correction is not determined. Vignetting stays off."
+        case .invalidData(let name):
+            return "The profile's \(name) data is incomplete or out of range, so nothing is corrected with it."
+        case .noCropFactor:
+            return "Neither the lens entry nor its camera names a crop factor, so the correction cannot be scaled to this photograph."
         }
     }
 

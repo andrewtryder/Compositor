@@ -29,8 +29,8 @@ Effects, the non-destructive correction stack (`cameraRawFull` node) and ReShape
 
 ## 2. What Adobe Camera Raw 2026 has that Compositor does not surface
 
-Rows M10.1–M10.5 are now **done**; they are kept here because the table is the record of what the
-reference added and where each control was placed. The two rows still open are M10.6 and M10.7.
+Rows M10.1–M10.6 are now **done**; they are kept here because the table is the record of what the
+reference added and where each control was placed. The one row still open is M10.7.
 
 | Adobe feature | Exists in Compositor? | Reusable engine | Additive placement chosen |
 | --- | --- | --- | --- |
@@ -38,7 +38,7 @@ reference added and where each control was placed. The two rows still open are M
 | Optics › Lens Blur (focus-area blur, aperture shape) | Engine only, GUI deferred | `CameraRawMiniature.blurMask`, `MetalBokeh`, `BokehShape` | **M10.2 (done)** — `Lens Blur` sub-group at the end of Optics |
 | Color › White Balance presets (Kelvin list) | Not applicable: Compositor's WB is relative, not Kelvin | — | Deferred. A Kelvin list needs a sensor baseline Compositor does not have. |
 | Detail › Denoise (AI) | Already: Noise Reduction runs `MetalNonlocalMeans` | — | Nothing to add. |
-| Optics › camera-specific lens profiles | Discovery only (M10.3): the provider and matcher exist, no correction is applied | `LensfunDatabaseManager`, `CameraRawLensProfileSettings` | **M10.6** — calibrated correction behind the M10.3 provider |
+| Optics › camera-specific lens profiles | **M10.6 (done):** calibrated distortion / lateral CA / vignetting from a user-imported Lensfun XML, behind the M10.3 provider and off unless selected | `LensfunDatabaseManager`, `CameraRawLensProfileSettings`, `CameraRawLensfun`, `lensfun_correct` in `LensPixels.c` | **M10.6 (done)** — inside the existing Lens Profile subgroup; Apple Native still the default |
 | Geometry › Horizon (independent of Upright) | Engine only before M10.4 | `CameraRawHorizon`, `CameraRawHorizonSettings` | **M10.4 (done)** — `Horizon` appended inside Advanced Geometry |
 | Geometry › perspective guide kinds (Vertical / Horizontal / Combined / Rectangle / Eight Point) | Already: exposed by M10.5 | `CameraRawPerspectiveTools`, `CameraRawPerspectiveToolState` | **M10.5 (done)** — `Advanced Perspective Tools` appended after Horizon |
 | Geometry › crop aspect after transform | Engine only (`CameraRawGeometryCrop`) | `CameraRawGeometryCrop.plan` | Deferred: changes output size, needs placement work. |
@@ -162,7 +162,7 @@ only its controls were missing. The rest shifts by one. M10.5 is now complete as
 | Milestone | Scope |
 | --- | --- |
 | M10.5 | **Done.** Advanced Perspective Tool UI — the existing Rectangle, Eight Point, and Vertical / Horizontal / Combined guide kinds, plus Manual Keystone. See `M10_5_ADVANCED_PERSPECTIVE_TOOLS.md`. |
-| M10.6 | Calibrated Lensfun corrections, behind the M10.3 provider, with user opt-in and no Apple double correction |
+| M10.6 | **Done.** Calibrated Lensfun optical corrections — poly3 / poly5 / ptlens distortion, linear / poly3 lateral CA, PA vignetting — behind the M10.3 provider, user opt-in, no Apple double correction. See `M10_6_CALIBRATED_LENSFUN_CORRECTIONS.md`. |
 | M10.7 | Miniature (tilt-shift) controls, and Adaptive ReShape framing and crop behaviour |
 
 ### Superseded scope, recorded so it is not started again
@@ -209,6 +209,21 @@ branch, worktree or PR.
 | Screenshots | `ScreenshotTests` steps `12`–`19`, 20 captures in `work/camera-raw-parity/screenshots/m10_5-ui/`. Suite runtime cut from 327 s to 108 s (§6 of the report) |
 | Canvas drag evidence | **not captured.** XCUITest drag synthesis does not reach the canvas; the panel's own counter stayed at zero. Stated as a gap in §5.3 of the report, not claimed as passing. The behaviour is proven at the model level instead |
 | CI | **no evidence exists** for the same reason as M10.4; `scripts/ci-tests.sh` was corrected and exercised locally |
+
+## 11b. Verification record — M10.6
+
+| What | Result |
+| --- | --- |
+| Selected architecture | **A** — built-in Compositor correction code reading the user-imported Lensfun XML; no third-party binary, no runtime download, library validation intact (§3 of the report) |
+| Calibration models | Distortion poly3 / poly5 / ptlens; lateral CA linear / poly3; vignetting `pa`. `acm` and decentered lenses parsed, named and refused |
+| Pixel pass | One fused per-pixel kernel (`lensfun_correct` in `LensPixels.c`): vignetting multiplier, then green-sampled destination-to-source distortion, then per-channel CA shifts, bilinear on a premultiplied surface — vignetting → CA → distortion, before geometry, in a single resampling |
+| Double-correction gate | `CameraRawLensfun.resolve` refuses Apple-corrected decodes and non-redevelopable sources; a redevelopable RAW is redeveloped with Apple correction off before the Lensfun pass touches it. Provider Apple → Lensfun → Apple round-trips with no accumulated pass (test: `providerSwitchingLeavesNoAccumulatedPass`) |
+| Numerical comparison | Reference evaluator `work/camera-raw-parity/reports/.m10_6_scratch.py` (mirrors the Lensfun library formulas); `#expect` on exact doubles in `CameraRawLensfunTests` for rescaling, interpolation and the mapping direction; pixel pass checked against hand-computed expected channels |
+| Real photographs | `work/camera-raw-parity/screenshots/m10_6-rendered/` — `window-wall.jpg` (Sigma 24-70 Art, distortion + vignetting + CA), `stone-house.jpg` (Tokina 16-28, distortion + CA), `sigma-40art-sample.CR2` (real RAW; vignetting, with Apple-off redevelop), each with corner crops and `lensfun-evidence.csv` / `raw-evidence.csv` |
+| UI preservation | Ten Camera Raw sections in order (`CameraRawSectionOrderTests`); real automation captures in `work/camera-raw-parity/screenshots/m10_6-ui/` — Apple Native default, Lensfun without a database, Provider Off, matched profile with the TIFF double-correction refusal |
+| Focused suites | `CameraRawLensfunTests` 35, `CameraRawLensProfileTests` 42, `CameraRawLensfunEvidenceTests` 2, `CameraRawLensfunRawEvidenceTests` 1 — all pass |
+| Full regression | **run: 1289 tests, 1288 passed, 0 failed, 1 skipped** (environment-gated RAW fixture), bundle `work/camera-raw-parity/regression-m10_6.xcresult`. One pre-existing M10.5-era flake (`resetInThePanelShowsTheSectionAgain`) found via baseline re-run and fixed without touching tolerances |
+| Persistence | Provider, lens selection and a database digest persist; legacy documents decode; a changed database is detected and re-resolved, never silently substituted; projects older than the digest load unchanged |
 
 ## 12. Verification per milestone
 

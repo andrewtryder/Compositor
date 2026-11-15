@@ -122,6 +122,7 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     var isIdentity: Bool {
         !adjustsLight && !adjustsColor && !adjustsEffects && !adjustsCurve && !adjustsMixer && !adjustsGrading
             && !adjustsDetail && !adjustsOptics && !adjustsGeometry && !adjustsCalibration
+            && !optics.lensProfile.adjustsPixels
     }
     var isValid: Bool {
         Self.exposureRange.contains(exposure) && exposure.isFinite
@@ -231,12 +232,22 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
                         sharpenMask: sharpenMask, brightness: known, usesGPU: usesGPU).image
     }
 
-    /// Same as `apply`, plus Expand to Fit placement metadata for FilterEdit / commit.
+    /// Same as `apply`, plus Expand to Fit placement metadata for FilterEdit / commit. `lensMetadata` and
+    /// `lensfunDatabase` carry what the calibrated Lensfun pass needs: without them (or with no database
+    /// installed) the pass never runs and the render is exactly what it was before M10.6.
     func applyResult(_ image: CGImage, clipping: CameraRawClipping? = nil, scale: CGFloat = 1, seed: UInt32 = 0,
                      visualizePointColor: Int = -1, sharpenMask: Bool = false,
-                     brightness known: CameraRawTables.Brightness? = nil, usesGPU: Bool = false) throws -> CameraRawGeometryResult {
+                     brightness known: CameraRawTables.Brightness? = nil, usesGPU: Bool = false,
+                     lensMetadata: LensMetadata? = nil, lensfunDatabase: LensfunDatabase? = nil,
+                     policySource: CameraRawLensCorrectionPolicy.Source = .renderedImage,
+                     appleCorrectionActive: Bool = false) throws -> CameraRawGeometryResult {
         let settings = normalized
-        if settings.isIdentity && clipping == nil && visualizePointColor < 0 && !sharpenMask {
+        // A Lensfun selection can correct on its own, and whether it does is only known by resolving
+        // against the photograph's metadata and the installed database — which happens below, not here.
+        // The early return therefore stands aside whenever the provider is selected: the pass itself
+        // leaves the pixels alone when no profile qualifies.
+        let lensfunSelected = settings.optics.lensProfile.provider == .lensfun
+        if settings.isIdentity && !lensfunSelected && clipping == nil && visualizePointColor < 0 && !sharpenMask {
             return CameraRawGeometryResult(image: image, expansion: nil)
         }
         guard settings.isValid else { throw ProjectError.invalid }
@@ -252,6 +263,18 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         let paintDetailOptics = clipping == nil && (settings.adjustsDetail || settings.adjustsOptics || sharpenMask)
         var source = image
         var geometryExpansion: CameraRawGeometryExpansion?
+        // The calibrated Lensfun pass, before any geometry: vignetting, lateral CA and distortion in one
+        // resample. It only runs when the caller supplied what it needs and the double-correction policy
+        // allows it — the resolution is nil otherwise, and then nothing here changes.
+        if clipping == nil && !sharpenMask && visualizePointColor < 0,
+           let lensMetadata, let lensfunDatabase {
+            let resolution = CameraRawLensfun.resolve(settings: settings.optics.lensProfile, metadata: lensMetadata,
+                                                      database: lensfunDatabase, policySource: policySource,
+                                                      appleCorrectionActive: appleCorrectionActive)
+            if let correction = resolution.correction {
+                source = try CameraRawLensfun.apply(source, correction: correction)
+            }
+        }
         // Distortion → volume → perspective → crop, then the grade. Distortion moves early only when
         // geometry runs, so an optics-only grade keeps its previous order. The late pass skips distortion
         // when this already applied it, including a lens profile's share of the same k.

@@ -20,8 +20,16 @@ nonisolated struct LensfunCalibrations: Equatable, Sendable {
     /// Vignetting needs focal length, aperture and focus distance together, so it is reported separately.
     var vignetting = false
     var tca = false
+    /// A sample of that kind whose model this build does not apply (acm, or a malformed one). The panel
+    /// names it, and the calibrated engine refuses the correction rather than approximating it.
+    var hasUnsupportedDistortion = false
+    var hasUnsupportedTCA = false
+    var hasUnsupportedVignetting = false
 
     var any: Bool { distortion || vignetting || tca }
+
+    /// Whether every calibration the entry carries is one this build can apply.
+    var fullySupported: Bool { !(hasUnsupportedDistortion || hasUnsupportedTCA || hasUnsupportedVignetting) }
 
     /// The names to show, in the order the panel lists them.
     var names: [String] {
@@ -31,31 +39,217 @@ nonisolated struct LensfunCalibrations: Equatable, Sendable {
         if tca { result.append("Lateral chromatic aberration") }
         return result
     }
+
+    /// The names of the models a sample carries but this build does not apply, for the panel's warning.
+    var unsupportedNames: [String] {
+        var result: [String] = []
+        if hasUnsupportedDistortion { result.append("an unsupported distortion model") }
+        if hasUnsupportedVignetting { result.append("an unsupported vignetting model") }
+        if hasUnsupportedTCA { result.append("an unsupported chromatic-aberration model") }
+        return result
+    }
 }
 
-/// A vignetting sample's position in the profile's own calibration grid.
+// MARK: - Calibration measurements
+
+/// The distortion model a calibration sample uses. The names are the XML's own; `.acm` and anything newer is
+/// parsed and reported, never applied, so a profile with an unsupported model is described honestly rather than
+/// corrected with the wrong equation.
+nonisolated enum LensfunDistortionModel: String, Equatable, Sendable {
+    case poly3
+    case poly5
+    case ptlens
+    case acm
+}
+
+/// One `<distortion>` sample: the focal length it was measured at, the model's coefficients as written, and the
+/// real focal length the calibration names (`real-focal`), which Lensfun derives from the model when absent.
+nonisolated struct LensfunDistortion: Equatable, Sendable {
+    var focal: Double
+    var model: LensfunDistortionModel
+    /// poly3: [k1]; poly5: [k1, k2]; ptlens: [a, b, c]; acm: [k1…k5] (carried, never applied).
+    var terms: [Double]
+    var realFocal: Double
+
+    /// The real focal length a sample without `real-focal` works out to, following Lensfun's own derivation
+    /// (database.cpp): ptlens shrinks the center by 1 − a − b − c, poly3 by 1 − k1, everything else not at all.
+    static func derivedRealFocal(focal: Double, model: LensfunDistortionModel, terms: [Double]) -> Double {
+        switch model {
+        case .ptlens where terms.count >= 3:
+            return focal * (1 - terms[0] - terms[1] - terms[2])
+        case .poly3 where !terms.isEmpty:
+            return focal * (1 - terms[0])
+        default:
+            return focal
+        }
+    }
+}
+
+/// The lateral chromatic-aberration model a sample uses.
+nonisolated enum LensfunTCAModel: String, Equatable, Sendable {
+    case linear
+    case poly3
+    case acm
+}
+
+/// One `<tca>` sample. `linear` names kr and kb; `poly3` also carries the quadratic (c) and cubic (b) terms per
+/// channel; `acm` is parsed and reported but never applied.
+nonisolated struct LensfunTCA: Equatable, Sendable {
+    var focal: Double
+    var model: LensfunTCAModel
+    /// Red channel terms, red first: linear [kr]; poly3 [vr, cr, br].
+    var red: [Double]
+    /// Blue channel terms, blue first: linear [kb]; poly3 [vb, cb, bb].
+    var blue: [Double]
+}
+
+/// The vignetting model a sample uses.
+nonisolated enum LensfunVignettingModel: String, Equatable, Sendable {
+    case pa
+    case acm
+}
+
+/// One `<vignetting>` sample of the `pa` model: the multiplier polynomial's coefficients over radius squared,
+/// measured at one focal length, aperture and focus distance. `acm` samples are parsed and reported, never applied.
+nonisolated struct LensfunVignetting: Equatable, Sendable {
+    var focal: Double
+    var aperture: Double
+    var distance: Double
+    var model: LensfunVignettingModel
+    /// pa: [k1, k2, k3] over r², r⁴, r⁶.
+    var terms: [Double]
+}
+
+nonisolated extension LensfunDistortion {
+    /// A sample from a `<distortion>` element's attributes, or nil when the model is unrecognized or a
+    /// required attribute is missing. Nothing is filled in: a sample the engine cannot use is reported as
+    /// unsupported rather than approximated.
+    init?(attributes: [String: String], number: (String?) -> Double?) {
+        guard let focal = number(attributes["focal"]), focal > 0,
+              let name = attributes["model"] else { return nil }
+        guard let model = LensfunDistortionModel(rawValue: name) else { return nil }
+        let parsed: [Double]
+        switch model {
+        case .poly3:
+            guard let k1 = number(attributes["k1"]) ?? number(attributes["a"]) else { return nil }
+            parsed = [k1]
+        case .poly5:
+            guard let k1 = number(attributes["k1"]), let k2 = number(attributes["k2"]) else { return nil }
+            parsed = [k1, k2]
+        case .ptlens:
+            guard let a = number(attributes["a"]), let b = number(attributes["b"]),
+                  let c = number(attributes["c"]) else { return nil }
+            parsed = [a, b, c]
+        case .acm:
+            // Parsed so the panel can name the model; the engine never applies it.
+            parsed = [number(attributes["k1"]) ?? 0, number(attributes["k2"]) ?? 0, number(attributes["k3"]) ?? 0,
+                      number(attributes["k4"]) ?? 0, number(attributes["k5"]) ?? 0]
+        }
+        self.init(focal: focal, model: model, terms: parsed,
+                  realFocal: number(attributes["real-focal"]) ?? 0)
+    }
+
+    /// The real focal length the correction math works from: the measured one when the file names it,
+    /// Lensfun's own derivation when it does not, and the nominal focal when neither holds together.
+    var effectiveRealFocal: Double {
+        realFocal > 0 ? realFocal : Self.derivedRealFocal(focal: focal, model: model, terms: terms)
+    }
+}
+
+nonisolated extension LensfunTCA {
+    /// A sample from a `<tca>` element's attributes, or nil when the model is unrecognized. The two linear
+    /// scale terms default to 1, as Lensfun's own reader sets them before the attributes are read.
+    init?(attributes: [String: String], number: (String?) -> Double?) {
+        guard let focal = number(attributes["focal"]), focal > 0,
+              let name = attributes["model"] else { return nil }
+        guard let model = LensfunTCAModel(rawValue: name) else { return nil }
+        let red: [Double], blue: [Double]
+        switch model {
+        case .linear:
+            red = [number(attributes["kr"]) ?? number(attributes["vr"]) ?? 1]
+            blue = [number(attributes["kb"]) ?? number(attributes["vb"]) ?? 1]
+        case .poly3:
+            red = [number(attributes["vr"]) ?? 1, number(attributes["cr"]) ?? 0, number(attributes["br"]) ?? 0]
+            blue = [number(attributes["vb"]) ?? 1, number(attributes["cb"]) ?? 0, number(attributes["bb"]) ?? 0]
+        case .acm:
+            // Carried for the panel; the engine never applies it.
+            red = [number(attributes["alpha0"]) ?? 1, number(attributes["alpha1"]) ?? 0,
+                   number(attributes["alpha2"]) ?? 0, number(attributes["alpha3"]) ?? 0,
+                   number(attributes["alpha4"]) ?? 0, number(attributes["alpha5"]) ?? 0]
+            blue = [number(attributes["beta0"]) ?? 1, number(attributes["beta1"]) ?? 0,
+                    number(attributes["beta2"]) ?? 0, number(attributes["beta3"]) ?? 0,
+                    number(attributes["beta4"]) ?? 0, number(attributes["beta5"]) ?? 0]
+        }
+        self.init(focal: focal, model: model, red: red, blue: blue)
+    }
+}
+
+nonisolated extension LensfunVignetting {
+    /// A sample from a `<vignetting>` element's attributes, or nil when the model is unrecognized, an
+    /// attribute is missing, or a value is not finite. A pa sample needs all three coefficients and all
+    /// three shot parameters; Lensfun's reader would read an absent distance as 0, which cannot be
+    /// interpolated against honestly, so such a sample is reported as unsupported instead.
+    init?(attributes: [String: String], number: (String?) -> Double?) {
+        guard let focal = number(attributes["focal"]), focal > 0,
+              let aperture = number(attributes["aperture"]), aperture > 0,
+              let distance = number(attributes["distance"]), distance > 0,
+              let name = attributes["model"] else { return nil }
+        guard let model = LensfunVignettingModel(rawValue: name) else { return nil }
+        let parsed: [Double]
+        switch model {
+        case .pa:
+            guard let k1 = number(attributes["k1"]), let k2 = number(attributes["k2"]),
+                  let k3 = number(attributes["k3"]) else { return nil }
+            parsed = [k1, k2, k3]
+        case .acm:
+            parsed = [number(attributes["alpha1"]) ?? 0, number(attributes["alpha2"]) ?? 0,
+                      number(attributes["alpha3"]) ?? 0]
+        }
+        self.init(focal: focal, aperture: aperture, distance: distance, model: model, terms: parsed)
+    }
+}
+
+/// A vignetting sample's position in the profile's own calibration grid. Kept for the panel's coverage report;
+/// the measured values themselves are on `LensfunVignetting`.
 nonisolated struct LensfunVignettePoint: Equatable, Sendable {
     var focal: Double
     var aperture: Double
 }
 
-/// A lens entry, with the calibration coverage the panel reports.
+/// A lens entry's optical center: fractions of the smaller image side from the middle, as the file names them.
+/// Zero on both axes is the centered lens every correction here assumes.
+nonisolated struct LensfunCenter: Equatable, Sendable {
+    var x = 0.0
+    var y = 0.0
+}
+
+/// A lens entry, with the calibration coverage the panel reports and the measurements the correction engine
+/// consumes. The measurements are kept exactly as the database wrote them: nothing is invented where a file
+/// omitted an attribute.
 nonisolated struct LensfunLens: Equatable, Sendable {
     var maker = ""
     var model = ""
     var mounts: [String] = []
-    var cropFactor = 0.0
-    /// The lens's own focal range in mm. `focalMin == focalMax` for a prime; both zero when the file omits it.
+    var cropFactor = 0.0    /// The lens's own focal range in mm. `focalMin == focalMax` for a prime; both zero when the file omits it.
     var focalMin = 0.0
     var focalMax = 0.0
     /// The lens's aperture range as f-numbers. Both zero when the file omits it.
     var apertureMin = 0.0
     var apertureMax = 0.0
+    /// The optical center as a fraction of the smaller image side from the middle, when the file names one.
+    /// Nonzero centers are reported but not applied: the correction refuses rather than guessing.
+    var center = LensfunCenter()
     /// The focal lengths the distortion and TCA samples were measured at.
     var calibratedFocals: [Double] = []
     /// The focal lengths and apertures the vignetting samples were measured at.
     var vignettePoints: [LensfunVignettePoint] = []
     var calibrations = LensfunCalibrations()
+    /// Every `<distortion>` sample in the file's order, coefficients as written.
+    var distortions: [LensfunDistortion] = []
+    /// Every `<tca>` sample in the file's order.
+    var tcas: [LensfunTCA] = []
+    /// Every `<vignetting>` sample in the file's order.
+    var vignettings: [LensfunVignetting] = []
 
     var id: String { "\(maker)|\(model)|\(mounts.joined(separator: "+"))" }
     var description: String { [maker, model].filter { !$0.isEmpty }.joined(separator: " ") }

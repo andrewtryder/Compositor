@@ -66,6 +66,9 @@
                <Test
                   Identifier = "ScreenshotTests">
                </Test>
+               <Test
+                  Identifier = "LensfunScreenshotTests">
+               </Test>
             </SelectedTests>
          </TestableReference>
       </Testables>

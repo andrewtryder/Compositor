@@ -141,8 +141,26 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
             var automatic: Bool = true
             var lensID: String = ""
             var cameraID: String = ""
+            /// A digest of the installed database files when this provider and selection were committed.
+            /// Empty when nothing was recorded (older projects, or Apple Native). It never gates rendering:
+            /// a changed database still renders, deterministically, and the panel reports the difference.
+            var calibrationDigest: String = ""
 
             init() {}
+
+            private enum Keys: String, CodingKey {
+                case provider, automatic, lensID, cameraID, calibrationDigest
+            }
+
+            init(from decoder: Decoder) throws {
+                let values = try decoder.container(keyedBy: Keys.self)
+                let base = Self()
+                provider = try values.decodeIfPresent(String.self, forKey: .provider) ?? base.provider
+                automatic = try values.decodeIfPresent(Bool.self, forKey: .automatic) ?? base.automatic
+                lensID = try values.decodeIfPresent(String.self, forKey: .lensID) ?? base.lensID
+                cameraID = try values.decodeIfPresent(String.self, forKey: .cameraID) ?? base.cameraID
+                calibrationDigest = try values.decodeIfPresent(String.self, forKey: .calibrationDigest) ?? base.calibrationDigest
+            }
         }
 
         init() {}
@@ -279,6 +297,7 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         optics.lensProfile.automatic = s.optics.lensProfile.selection.automatic
         optics.lensProfile.lensID = s.optics.lensProfile.selection.lensID
         optics.lensProfile.cameraID = s.optics.lensProfile.selection.cameraID
+        optics.lensProfile.calibrationDigest = s.optics.lensProfile.calibrationDigest
         geometry = s.geometry
         calibration = Calibration(process: s.calibration.process.rawValue, shadowTint: s.calibration.shadowTint,
                                   redHue: s.calibration.redHue, redSaturation: s.calibration.redSaturation,
@@ -463,6 +482,7 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         settings.optics.lensProfile.selection = CameraRawLensProfileSelection(automatic: optics.lensProfile.automatic,
                                                                             lensID: optics.lensProfile.lensID,
                                                                             cameraID: optics.lensProfile.cameraID).normalized
+        settings.optics.lensProfile.calibrationDigest = optics.lensProfile.calibrationDigest
         settings.geometry = geometry
         settings.calibration.process = CameraRawProcessVersion(rawValue: calibration.process) ?? .version6
         settings.calibration.shadowTint = calibration.shadowTint

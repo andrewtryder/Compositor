@@ -955,6 +955,9 @@ var rawDevelopEditorLayerID: UUID?
         }
         asset.focalLengthMm = focalLengthMm
         asset.sensorWidthMm = sensorWidthMm
+        // The redeveloped pixels keep the lens identity, so Camera Raw's Lens Profile panel keeps
+        // describing and correcting the same lens after a redevelop.
+        asset.lensMetadata = LensMetadata(cameraMetadata: source.cameraMetadata)
 
         // Begin undo step, preserving layer identity/masks/transforms.
         beginEdit("Apply RAW Development")
@@ -1024,8 +1027,13 @@ var rawDevelopEditorLayerID: UUID?
         var settings = FilterSettings()
         settings.cameraRaw = stack.nodes[nodeIndex].cameraRawFull
 
+        // The panel's Lens Profile section reads the installed database through the edit; a node edit
+        // renders the stack's baked pixels, where the policy refuses a Lensfun pass regardless, but it
+        // must still report the database that is actually installed rather than "none".
+        lensfunDatabase.ensureLoadedForEdit()
         do {
-            let edit = try FilterEdit(kind: .cameraRaw, layer: layer, selection: nil, settings: settings)
+            let edit = try FilterEdit(kind: .cameraRaw, layer: layer, selection: nil, settings: settings,
+                                      lensfunDatabase: lensfunDatabase.database)
             edit.cameraRawTargetNodeID = nodeID
             filterEdit = edit
         } catch {
