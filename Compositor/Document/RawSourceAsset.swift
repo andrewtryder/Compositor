@@ -218,8 +218,58 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
     var supportsNoiseReduction: Bool = false
     var supportsLensCorrection: Bool = false
     var supportsHighlightRecovery: Bool = false
+    /// White balance mode (M11.1). Absent in older projects, which decode to As Shot — the mode they were saved in.
+    var whiteBalanceMode: String = RawWhiteBalanceMode.asShot.rawValue
+    var asShotTemperatureAbsolute: Float = 5000
+    var asShotTintAbsolute: Float = 0
+    /// Photographic profile (M11.1). Absent in older projects, which decode to Camera Default.
+    var colorProfile: ColorProfile = ColorProfile()
+
+    nonisolated struct ColorProfile: Codable, Equatable, Sendable {
+        var kind: String = RawColorProfileKind.cameraDefault.rawValue
+        var name: String = ""
+        var strength: Double = 100
+        /// The ICC bytes, base64 in JSON. Absent for the decoder's own profiles.
+        var iccData: Data?
+    }
+
+    private enum Keys: String, CodingKey {
+        case schemaVersion, exposure, temperature, tint, boost, noiseReduction, lensCorrection, highlightRecovery,
+             asShotTemperature, asShotTint, asShotNoiseReduction, asShotLensCorrection, asShotHighlightRecovery,
+             supportsNoiseReduction, supportsLensCorrection, supportsHighlightRecovery,
+             whiteBalanceMode, asShotTemperatureAbsolute, asShotTintAbsolute, colorProfile
+    }
 
     init() {}
+
+    /// Every field defaults to the rendering an older project was saved with, so a state written before a field
+    /// existed decodes unchanged rather than failing.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: Keys.self)
+        let base = Self()
+        schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? base.schemaVersion
+        exposure = try values.decodeIfPresent(Float.self, forKey: .exposure) ?? base.exposure
+        temperature = try values.decodeIfPresent(Float.self, forKey: .temperature) ?? base.temperature
+        tint = try values.decodeIfPresent(Float.self, forKey: .tint) ?? base.tint
+        boost = try values.decodeIfPresent(Float.self, forKey: .boost) ?? base.boost
+        noiseReduction = try values.decodeIfPresent(Float.self, forKey: .noiseReduction) ?? base.noiseReduction
+        lensCorrection = try values.decodeIfPresent(Bool.self, forKey: .lensCorrection) ?? base.lensCorrection
+        highlightRecovery = try values.decodeIfPresent(Bool.self, forKey: .highlightRecovery) ?? base.highlightRecovery
+        asShotTemperature = try values.decodeIfPresent(Float.self, forKey: .asShotTemperature) ?? base.asShotTemperature
+        asShotTint = try values.decodeIfPresent(Float.self, forKey: .asShotTint) ?? base.asShotTint
+        asShotNoiseReduction = try values.decodeIfPresent(Float.self, forKey: .asShotNoiseReduction) ?? base.asShotNoiseReduction
+        asShotLensCorrection = try values.decodeIfPresent(Bool.self, forKey: .asShotLensCorrection) ?? base.asShotLensCorrection
+        asShotHighlightRecovery = try values.decodeIfPresent(Bool.self, forKey: .asShotHighlightRecovery) ?? base.asShotHighlightRecovery
+        supportsNoiseReduction = try values.decodeIfPresent(Bool.self, forKey: .supportsNoiseReduction) ?? base.supportsNoiseReduction
+        supportsLensCorrection = try values.decodeIfPresent(Bool.self, forKey: .supportsLensCorrection) ?? base.supportsLensCorrection
+        supportsHighlightRecovery = try values.decodeIfPresent(Bool.self, forKey: .supportsHighlightRecovery) ?? base.supportsHighlightRecovery
+        // M11.1 and M11.2: absent means the rendering the project was saved with.
+        whiteBalanceMode = try values.decodeIfPresent(String.self, forKey: .whiteBalanceMode) ?? base.whiteBalanceMode
+        asShotTemperatureAbsolute = try values.decodeIfPresent(Float.self, forKey: .asShotTemperatureAbsolute)
+            ?? asShotTemperature
+        asShotTintAbsolute = try values.decodeIfPresent(Float.self, forKey: .asShotTintAbsolute) ?? asShotTint
+        colorProfile = try values.decodeIfPresent(ColorProfile.self, forKey: .colorProfile) ?? base.colorProfile
+    }
 
     init(_ settings: RawDevelopSettings) {
         exposure = settings.exposure
@@ -237,6 +287,11 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
         supportsNoiseReduction = settings.supportsNoiseReduction
         supportsLensCorrection = settings.supportsLensCorrection
         supportsHighlightRecovery = settings.supportsHighlightRecovery
+        whiteBalanceMode = settings.whiteBalanceMode.rawValue
+        asShotTemperatureAbsolute = settings.asShotTemperatureAbsolute
+        asShotTintAbsolute = settings.asShotTintAbsolute
+        colorProfile = ColorProfile(kind: settings.colorProfile.kind.rawValue, name: settings.colorProfile.name,
+                                    strength: settings.colorProfile.strength, iccData: settings.colorProfile.iccData)
     }
 
     /// Converts back to the live `RawDevelopSettings` used by `RawImporter`.
@@ -257,21 +312,32 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
         settings.supportsNoiseReduction = supportsNoiseReduction
         settings.supportsLensCorrection = supportsLensCorrection
         settings.supportsHighlightRecovery = supportsHighlightRecovery
+        settings.whiteBalanceMode = RawWhiteBalanceMode(rawValue: whiteBalanceMode) ?? .asShot
+        settings.asShotTemperatureAbsolute = asShotTemperatureAbsolute
+        settings.asShotTintAbsolute = asShotTintAbsolute
+        settings.colorProfile = RawColorProfile(kind: RawColorProfileKind(rawValue: colorProfile.kind) ?? .cameraDefault,
+                                               iccData: colorProfile.iccData, name: colorProfile.name,
+                                               strength: colorProfile.strength).normalized
         return settings
     }
 
     /// Whether all values are finite and within sane bounds.
     func isValid() -> Bool {
         [exposure, temperature, tint, boost, noiseReduction,
-         asShotTemperature, asShotTint, asShotNoiseReduction].allSatisfy { $0.isFinite }
+         asShotTemperature, asShotTint, asShotNoiseReduction,
+         asShotTemperatureAbsolute, asShotTintAbsolute].allSatisfy { $0.isFinite }
             && boost >= 0
             && (0...1).contains(Double(noiseReduction))
+            && RawColorProfileKind(rawValue: colorProfile.kind) != nil
+            && colorProfile.strength.isFinite
+            && RawWhiteBalanceMode(rawValue: whiteBalanceMode) != nil
     }
 
     var isAsShot: Bool {
         exposure == 0 && boost == 1 && temperature == asShotTemperature && tint == asShotTint
             && noiseReduction == asShotNoiseReduction && lensCorrection == asShotLensCorrection
-            && highlightRecovery == asShotHighlightRecovery
+            && highlightRecovery == asShotHighlightRecovery && whiteBalanceMode == RawWhiteBalanceMode.asShot.rawValue
+            && colorProfile.kind == RawColorProfileKind.cameraDefault.rawValue
     }
 
     mutating func reset() {

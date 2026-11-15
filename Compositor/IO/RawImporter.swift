@@ -32,11 +32,20 @@ nonisolated struct RawDevelopSettings: Equatable, Sendable, Codable {
     var supportsNoiseReduction = false
     var supportsLensCorrection = false
     var supportsHighlightRecovery = false
+    /// How the white balance was arrived at. As Shot uses the camera's own reading; Auto has been solved from the
+    /// frame; Custom is what the Kelvin and Tint sliders were set to (M11.1).
+    var whiteBalanceMode: RawWhiteBalanceMode = .asShot
+    /// The camera's own absolute reading, kept so As Shot has somewhere to return to after a solve.
+    var asShotTemperatureAbsolute: Float = 5000
+    var asShotTintAbsolute: Float = 0
+    /// The photographic profile: the decoder's camera rendering, its linear decode, or an ICC profile.
+    var colorProfile = RawColorProfile()
 
     var isAsShot: Bool {
         exposure == 0 && boost == 1 && temperature == asShotTemperature && tint == asShotTint
             && noiseReduction == asShotNoiseReduction && lensCorrection == asShotLensCorrection
-            && highlightRecovery == asShotHighlightRecovery
+            && highlightRecovery == asShotHighlightRecovery && whiteBalanceMode == .asShot
+            && !colorProfile.adjusts
     }
     mutating func reset() {
         exposure = 0
@@ -46,7 +55,14 @@ nonisolated struct RawDevelopSettings: Equatable, Sendable, Codable {
         noiseReduction = asShotNoiseReduction
         lensCorrection = asShotLensCorrection
         highlightRecovery = asShotHighlightRecovery
+        whiteBalanceMode = .asShot
+        colorProfile = RawColorProfile()
     }
+
+    /// The Kelvin and tint to develop at. The mode labels how they were arrived at (As Shot, Auto, Custom) and
+    /// Reset restores the camera's own reading; the pixels come from these two values alone, so a project saved
+    /// before the mode existed develops exactly as it did.
+    var developmentBalance: (temperature: Float, tint: Float) { (temperature, tint) }
 }
 
 nonisolated enum RawImporter {
@@ -115,7 +131,50 @@ nonisolated enum RawImporter {
         settings.supportsNoiseReduction = filter.isLuminanceNoiseReductionSupported
         settings.supportsLensCorrection = filter.isLensCorrectionSupported
         settings.supportsHighlightRecovery = filter.isHighlightRecoverySupported
+        // M11.1: the camera's own absolute reading, reported by the decoder's sensor model rather than guessed.
+        settings.asShotTemperatureAbsolute = filter.neutralTemperature
+        settings.asShotTintAbsolute = filter.neutralTint
+        settings.whiteBalanceMode = .asShot
         return settings
+    }
+
+    /// The retained RAW bytes written to a temporary file, for `CIRAWFilter(imageURL:)`. The caller removes it.
+    static func temporaryFile(for source: RawSourceAsset) throws -> URL {
+        let ext = source.fileExtension.lowercased()
+        let known: Set<String> = ["dng", "cr2", "nef", "arw", "rw2", "orf", "pef", "sr2", "erf", "k25", "dcr", "mrw"]
+        let name = "compositor-raw-\(UUID().uuidString).\(known.contains(ext) ? ext : "dng")"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        try source.rawData.write(to: url, options: .atomic)
+        return url
+    }
+
+    /// The camera's own balance, without decoding beyond what the filter reports cheaply.
+    static func asShotBalance(_ url: URL) -> (temperature: Float, tint: Float)? {
+        guard let filter = CIRAWFilter(imageURL: url) else { return nil }
+        return (filter.neutralTemperature, filter.neutralTint)
+    }
+
+    /// The balance whose developed frame is closest to gray, searched through the decoder's own sensor model.
+    /// `limit` keeps the search to a small preview: each measurement decodes one frame, so this is a handful of
+    /// small decodes rather than any number of full ones. Nil when the file cannot be developed.
+    static func solveWhiteBalance(_ url: URL, startingAt start: (temperature: Float, tint: Float),
+                                  limit: CGFloat = 512) -> RawWhiteBalanceSolution? {
+        guard let filter = CIRAWFilter(imageURL: url) else { return nil }
+        let longest = max(filter.nativeSize.width, filter.nativeSize.height)
+        if longest > limit {
+            filter.scaleFactor = Float(limit / longest)
+            filter.isDraftModeEnabled = true
+        }
+        var settings = RawDevelopSettings()
+        settings.boost = 1
+        settings.whiteBalanceMode = .custom
+        return RawWhiteBalance.solve(startingAt: start) { temperature, tint in
+            settings.temperature = temperature
+            settings.tint = tint
+            let balance = settings
+            guard let image = render(filter, settings: balance) else { return nil }
+            return RawWhiteBalance.cast(of: image)
+        }
     }
 
     /// The developed image. `limit` caps the long edge for the preview the sheet shows while the
@@ -137,9 +196,12 @@ nonisolated enum RawImporter {
     /// Applies the settings to a filter that already holds the decoded frame, and reads the pixels out.
     fileprivate static func render(_ filter: CIRAWFilter, settings: RawDevelopSettings, sixteenBit: Bool = false) -> CGImage? {
         filter.exposure = settings.exposure
-        filter.neutralTemperature = settings.temperature
-        filter.neutralTint = settings.tint
-        filter.boostAmount = settings.boost
+        let balance = settings.developmentBalance
+        filter.neutralTemperature = balance.temperature
+        filter.neutralTint = balance.tint
+        // A linear profile is the decoder's decode with its tone curve taken out; anything else keeps the curve the
+        // camera's own rendering uses, so a project without a profile develops exactly as it always did.
+        filter.boostAmount = settings.colorProfile.kind == .linear ? 0 : settings.boost
         if settings.supportsNoiseReduction { filter.luminanceNoiseReductionAmount = settings.noiseReduction }
         if settings.supportsLensCorrection { filter.isLensCorrectionEnabled = settings.lensCorrection }
         if settings.supportsHighlightRecovery { filter.isHighlightRecoveryEnabled = settings.highlightRecovery }

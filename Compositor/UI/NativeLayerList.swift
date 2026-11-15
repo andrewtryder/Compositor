@@ -320,7 +320,7 @@ struct NativeLayerList: NSViewRepresentable {
             // Assign the layer ID before showing the sheet, so the sheet binds to the
             // actually-right-clicked layer and not a previously active one.
             session.rawDevelopEditorLayerID = id
-            session.beginRawDevelopmentEdit(layerID: id)
+            _ = session.beginRawDevelopmentEdit(layerID: id)
             session.showRawDevelopEditor = true
         }
 

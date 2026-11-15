@@ -859,7 +859,9 @@ var rawDevelopEditorLayerID: UUID?
     @discardableResult
     func updateRawDevelopmentSettings(layerID: UUID, exposure: Float? = nil, temperature: Float? = nil,
                                       tint: Float? = nil, boost: Float? = nil, noiseReduction: Float? = nil,
-                                      lensCorrection: Bool? = nil, highlightRecovery: Bool? = nil) -> Bool {
+                                      lensCorrection: Bool? = nil, highlightRecovery: Bool? = nil,
+                                      whiteBalanceMode: RawWhiteBalanceMode? = nil,
+                                      colorProfile: RawColorProfile? = nil) -> Bool {
         guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
               var draft = rawDrafts[layerID] ?? document?.layers[index].rawDevelopment else { return false }
         if let exposure { draft.settings.exposure = exposure }
@@ -869,10 +871,50 @@ var rawDevelopEditorLayerID: UUID?
         if let noiseReduction { draft.settings.noiseReduction = noiseReduction }
         if let lensCorrection { draft.settings.lensCorrection = lensCorrection }
         if let highlightRecovery { draft.settings.highlightRecovery = highlightRecovery }
+        if let whiteBalanceMode {
+            draft.settings.whiteBalanceMode = whiteBalanceMode.rawValue
+            // Back to the camera's own reading: the sliders show it, and the decoder develops at it.
+            if whiteBalanceMode == .asShot {
+                draft.settings.temperature = draft.settings.asShotTemperatureAbsolute
+                draft.settings.tint = draft.settings.asShotTintAbsolute
+            }
+        }
+        if let colorProfile {
+            let normalized = colorProfile.normalized
+            draft.settings.colorProfile = RawDevelopmentSettingsPersistentState.ColorProfile(
+                kind: normalized.kind.rawValue, name: normalized.name, strength: normalized.strength,
+                iccData: normalized.iccData)
+        }
         // Validate the completed draft, not only the previous state.
         guard draft.settings.isValid() else { return false }
         rawDrafts[layerID] = draft
         return true
+    }
+
+    /// Solves the white balance the developed frame itself calls for: a small preview is decoded at each candidate
+    /// balance until the frame's mean color is as close to gray as the decoder's sensor model allows. Written to the
+    /// draft as Custom with absolute Kelvin and tint, so the sliders show what was solved and Reset returns to As Shot.
+    /// Nil when the layer is not RAW-backed, cannot be developed, or the draft changed while solving.
+    @discardableResult
+    func solveRawDevelopmentWhiteBalance(layerID: UUID) async -> RawWhiteBalanceSolution? {
+        guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
+              let draft = rawDrafts[layerID] ?? document?.layers[index].rawDevelopment else { return nil }
+        let source = draft.source
+        let beginning = (temperature: draft.settings.temperature, tint: draft.settings.tint)
+        let solution: RawWhiteBalanceSolution? = await Task.detached(priority: .userInitiated) {
+            guard let url = try? RawImporter.temporaryFile(for: source) else { return nil }
+            defer { try? FileManager.default.removeItem(at: url) }
+            return RawImporter.solveWhiteBalance(url, startingAt: beginning)
+        }.value
+        guard let solution,
+              var current = rawDrafts[layerID],
+              current.source.sourceID == source.sourceID else { return nil }
+        current.settings.whiteBalanceMode = RawWhiteBalanceMode.custom.rawValue
+        current.settings.temperature = solution.temperature
+        current.settings.tint = solution.tint
+        guard current.settings.isValid() else { return nil }
+        rawDrafts[layerID] = current
+        return solution
     }
 
     /// Resets RAW development draft settings on the given layer to As Shot
@@ -932,9 +974,18 @@ var rawDevelopEditorLayerID: UUID?
             return false
         }
 
+        // The photographic profile that is not the decoder's own: an ICC look is applied to the developed pixels
+        // once, here, so a project reopens with exactly the rendering it was saved with. The decoder's profiles
+        // were already applied while developing, above.
+        var rendered = developedImage
+        if settings.colorProfile.adjusts, settings.colorProfile.kind == .icc {
+            do { rendered = try settings.colorProfile.applying(to: developedImage) }
+            catch { return false }
+        }
+
         // Build the 16-bit asset; do not report success if the asset can't be made.
         var asset: ImportedImage
-        do { asset = try DeepLayer.asset(developedImage, name: source.fileName()) }
+        do { asset = try DeepLayer.asset(rendered, name: source.fileName()) }
         catch { return false }
 
         // Preserve lens geometry from the source metadata (EXIF focal length, inferred sensor width).
@@ -1416,7 +1467,16 @@ var rawDevelopEditorLayerID: UUID?
                         }
                         detectedColorSpace = "extendedLinearSRGB"
                     }
-                    var asset = try DeepLayer.asset(developed, name: url.deletingPathExtension().lastPathComponent)
+                    // A photographic profile that is not the decoder's own is applied once, to the developed pixels,
+                    // exactly as the re-edit path does, so a project reopens with the rendering it was saved with.
+                    var rendered = developed
+                    if settings.colorProfile.adjusts, settings.colorProfile.kind == .icc {
+                        guard let applied = try? settings.colorProfile.applying(to: developed) else {
+                            throw ImageImportError.unreadable
+                        }
+                        rendered = applied
+                    }
+                    var asset = try DeepLayer.asset(rendered, name: url.deletingPathExtension().lastPathComponent)
                     let lens = RawImporter.lensGeometry(url)
                     asset.focalLengthMm = lens.focalLengthMm
                     asset.sensorWidthMm = lens.sensorWidthMm

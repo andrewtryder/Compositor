@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Editor sheet for re-developing an existing RAW-backed layer. Uses the original RAW bytes
 /// embedded in the project, not the external file. Slider changes update the draft via the
@@ -11,6 +13,9 @@ struct RawDevelopEditorSheet: View {
     @State private var working = true
     @State private var revision = 0
     @State private var sourceInfo: String = ""
+    @State private var solvingBalance = false
+    @State private var profileIssue: String?
+
 
     init(session: EditorSession, layerID: UUID, persistentState: RawDevelopmentPersistentState) {
         self.session = session
@@ -55,10 +60,16 @@ struct RawDevelopEditorSheet: View {
             Group {
                 slider("Exposure", value: $settings.exposure, range: -3...3, unit: " EV", precision: 2,
                        onChange: { session.updateRawDevelopmentSettings(layerID: layerID, exposure: $0) })
-                slider("Temperature", value: $settings.temperature, range: 2000...12000, unit: " K", precision: 0,
-                       onChange: { session.updateRawDevelopmentSettings(layerID: layerID, temperature: $0) })
+                whiteBalanceControls
+                slider("Temperature", value: $settings.temperature, range: 2000...50000, unit: " K", precision: 0,
+                       onChange: { value in
+                           session.updateRawDevelopmentSettings(layerID: layerID, temperature: value,
+                                                                whiteBalanceMode: .custom)
+                       })
                 slider("Tint", value: $settings.tint, range: -150...150, unit: "", precision: 0,
-                       onChange: { session.updateRawDevelopmentSettings(layerID: layerID, tint: $0) })
+                       onChange: { value in
+                           session.updateRawDevelopmentSettings(layerID: layerID, tint: value, whiteBalanceMode: .custom)
+                       })
                 slider("Boost", value: $settings.boost, range: 0...2, unit: "", precision: 2,
                        onChange: { session.updateRawDevelopmentSettings(layerID: layerID, boost: $0) })
                 slider("Noise Reduction", value: $settings.noiseReduction, range: 0...1, unit: "", precision: 2,
@@ -85,6 +96,7 @@ struct RawDevelopEditorSheet: View {
                 }
                 .padding(.leading, 120)
 
+                profileControls
                 HStack {
                     Button("Reset to As Shot") {
                         session.resetRawDevelopmentToAsShot(layerID: layerID)
@@ -149,6 +161,138 @@ struct RawDevelopEditorSheet: View {
         let image = await RawImporter.Queue.shared.develop(tmpURL, settings: current, limit: 800)
         guard !Task.isCancelled else { return }
         if let image { preview = image }
+    }
+
+    /// As Shot / Auto / Custom, and the fact that these readings are absolute: the decoder re-develops the sensor
+    /// data at them, rather than shifting an already-developed picture as Camera Raw's own Temperature does.
+    private var whiteBalanceControls: some View {
+        HStack(spacing: 10) {
+            Text("White Balance").frame(width: 110, alignment: .leading)
+            Picker("White Balance", selection: Binding(
+                get: { RawWhiteBalanceMode(rawValue: settings.whiteBalanceMode) ?? .asShot },
+                set: setWhiteBalanceMode)) {
+                ForEach(RawWhiteBalanceMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .labelsHidden()
+            .frame(width: 150)
+            .help("As Shot is the camera's own reading. Auto solves the frame's neutral through the sensor model. "
+                  + "Custom follows the Kelvin and Tint sliders.")
+            .accessibilityIdentifier("rawWhiteBalanceMode")
+            if solvingBalance {
+                ProgressView().controlSize(.mini)
+            } else {
+                Text(String(format: "As Shot %.0f K", settings.asShotTemperatureAbsolute))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// The photographic profile: the decoder's own camera rendering, a linear decode, or an ICC profile. A DCP is
+    /// refused with the reason rather than accepted and ignored.
+    private var profileControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Text("Profile").frame(width: 110, alignment: .leading)
+                Picker("Profile", selection: Binding(
+                    get: { RawColorProfileKind(rawValue: settings.colorProfile.kind) ?? .cameraDefault },
+                    set: setProfileKind)) {
+                    ForEach(RawColorProfileKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 150)
+                .help("Camera Default is the decoder's own rendering for this camera. Linear removes its tone curve. "
+                      + "ICC Profile interprets the developed pixels through a profile you choose.")
+                .accessibilityIdentifier("rawColorProfileKind")
+                Button("Choose ICC…") { chooseICCProfile() }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .help("Reads an ICC profile from disk and keeps it inside this project.")
+                    .accessibilityIdentifier("rawColorProfileChoose")
+                Spacer(minLength: 0)
+            }
+            if (RawColorProfileKind(rawValue: settings.colorProfile.kind) ?? .cameraDefault) == .icc {
+                if let data = settings.colorProfile.iccData,
+                   let space = RawColorProfile.validatedColorSpace(from: data) {
+                    Text("\(settings.colorProfile.name.isEmpty ? "ICC profile" : settings.colorProfile.name)  •  \(space.name as String? ?? "unregistered")")
+                        .font(.caption).foregroundStyle(.secondary)
+                    slider("Strength", value: Binding(
+                        get: { Float(settings.colorProfile.strength) },
+                        set: { value in
+                            var profile = persistedProfile
+                            profile.strength = Double(value)
+                            session.updateRawDevelopmentSettings(layerID: layerID, colorProfile: profile)
+                        }), range: 0...100, unit: "%", precision: 0, onChange: { _ in })
+                } else {
+                    Text("Choose an ICC profile to use. A DCP profile cannot be read: it needs Adobe's own profile "
+                         + "data and a parser that cannot ship here, so it is refused rather than approximated.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text(profileHelp)
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let profileIssue {
+                Text(profileIssue).font(.caption).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var profileHelp: String {
+        switch RawColorProfileKind(rawValue: settings.colorProfile.kind) ?? .cameraDefault {
+        case .cameraDefault: return "The decoder's own color rendering for this camera, as every earlier version developed it."
+        case .linear: return "The decoder's decode without its tone curve: linear sensor color, for a grade that starts from the data."
+        case .icc: return ""
+        }
+    }
+
+    private var persistedProfile: RawColorProfile {
+        session.rawDrafts[layerID]?.settings.makeSettings().colorProfile ?? RawColorProfile()
+    }
+
+    private func setWhiteBalanceMode(_ mode: RawWhiteBalanceMode) {
+        switch mode {
+        case .asShot:
+            session.updateRawDevelopmentSettings(layerID: layerID, whiteBalanceMode: .asShot)
+            if let draft = session.rawDrafts[layerID] { settings = draft.settings }
+        case .custom:
+            session.updateRawDevelopmentSettings(layerID: layerID, whiteBalanceMode: .custom)
+        case .auto:
+            solvingBalance = true
+            Task {
+                await session.solveRawDevelopmentWhiteBalance(layerID: layerID)
+                if let draft = session.rawDrafts[layerID] { settings = draft.settings }
+                solvingBalance = false
+            }
+        }
+    }
+
+    private func setProfileKind(_ kind: RawColorProfileKind) {
+        var profile = persistedProfile
+        profile.kind = kind
+        if kind == .icc, profile.iccData == nil { profile.iccData = nil }
+        session.updateRawDevelopmentSettings(layerID: layerID, colorProfile: profile)
+        if let draft = session.rawDrafts[layerID] { settings = draft.settings }
+        profileIssue = nil
+    }
+
+    private func chooseICCProfile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "icc") ?? .data, .init(filenameExtension: "icm") ?? .data,
+                                     .init(filenameExtension: "dcp") ?? .data]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose an ICC profile. A DCP profile is refused: it needs Adobe's own profile data."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let read = try RawColorProfile.read(url: url)
+            session.updateRawDevelopmentSettings(layerID: layerID, colorProfile: read.profile)
+            if let draft = session.rawDrafts[layerID] { settings = draft.settings }
+            profileIssue = nil
+            revision += 1
+        } catch {
+            profileIssue = error.localizedDescription
+        }
     }
 
     private func slider(_ title: String, value: Binding<Float>, range: ClosedRange<Float>,
