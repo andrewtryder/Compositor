@@ -158,6 +158,8 @@ extension EditorSession {
             edit.cameraRawPerspectiveCornerDraft = nil
             edit.cameraRawPerspectiveDragTarget = nil
             edit.cameraRawPerspectiveDragOriginalPoint = nil
+            edit.movesCameraRawMiniatureFocus = false
+            edit.cameraRawMiniatureDragOriginalCenter = nil
         }
         updateFilter(settings, preview: edit.preview)
     }

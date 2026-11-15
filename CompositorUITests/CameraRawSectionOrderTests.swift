@@ -114,6 +114,41 @@ final class CameraRawSectionOrderTests: XCTestCase {
         XCTAssertLessThan(perspectiveAmount.frame.minY, horizonHeader.frame.minY,
                           "Perspective Amount keeps its place above Horizon")
 
+        // Milestone 10.8: Miniature / Tilt-Shift is appended after the advanced tools, still inside
+        // Advanced Geometry, collapsed by default, with every exposed control reachable by identifier.
+        let miniatureDisclosure = app.descendants(matching: .any).matching(identifier: "miniatureDisclosure").firstMatch
+        XCTAssertTrue(miniatureDisclosure.waitForExistence(timeout: 5), "Miniature / Tilt-Shift is present")
+        let advancedPerspectiveDisclosure = app.descendants(matching: .any).matching(identifier: "advancedPerspectiveDisclosure").firstMatch
+        if advancedPerspectiveDisclosure.exists {
+            XCTAssertLessThan(advancedPerspectiveDisclosure.frame.minY, miniatureDisclosure.frame.minY,
+                              "Miniature follows the advanced tools, which follow Horizon")
+        }
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "miniatureShapePicker").firstMatch.exists,
+                       "the subsection starts collapsed")
+        miniatureDisclosure.click()
+        Thread.sleep(forTimeInterval: 0.8)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "miniatureShapePicker").firstMatch.exists,
+                      "the shape picker appears when the subsection opens")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "miniatureAmount").firstMatch.exists,
+                      "an Amount control")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "miniatureFocusSize").firstMatch.exists,
+                      "a Focus Size control")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "miniatureCenterX").firstMatch.exists,
+                      "a Center X control")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "miniatureCenterY").firstMatch.exists,
+                      "a Center Y control")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "miniatureAngle").firstMatch.exists,
+                      "Linear shows the Angle control")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "miniatureSymmetricBlur").firstMatch.exists,
+                      "a Symmetric Blur control")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "miniatureMoveFocus").firstMatch.exists,
+                      "a Move Focus control")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "miniatureReset").firstMatch.exists,
+                      "a Reset control")
+        // No control is exposed for the deferred `symmetricPosition`: it renders nothing today.
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "miniatureSymmetricPosition").firstMatch.exists,
+                       "the deferred symmetricPosition has no toggle")
+
         app.buttons["Cancel"].firstMatch.click()
     }
 

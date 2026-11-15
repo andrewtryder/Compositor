@@ -29,8 +29,8 @@ Effects, the non-destructive correction stack (`cameraRawFull` node) and ReShape
 
 ## 2. What Adobe Camera Raw 2026 has that Compositor does not surface
 
-Rows M10.1–M10.6 are now **done**; they are kept here because the table is the record of what the
-reference added and where each control was placed. The one row still open is M10.7.
+Rows M10.1–M10.8 are now **done**; they are kept here because the table is the record of what the
+reference added and where each control was placed.
 
 | Adobe feature | Exists in Compositor? | Reusable engine | Additive placement chosen |
 | --- | --- | --- | --- |
@@ -42,7 +42,7 @@ reference added and where each control was placed. The one row still open is M10
 | Geometry › Horizon (independent of Upright) | Engine only before M10.4 | `CameraRawHorizon`, `CameraRawHorizonSettings` | **M10.4 (done)** — `Horizon` appended inside Advanced Geometry |
 | Geometry › perspective guide kinds (Vertical / Horizontal / Combined / Rectangle / Eight Point) | Already: exposed by M10.5 | `CameraRawPerspectiveTools`, `CameraRawPerspectiveToolState` | **M10.5 (done)** — `Advanced Perspective Tools` appended after Horizon |
 | Geometry › crop aspect after transform | Engine only (`CameraRawGeometryCrop`) | `CameraRawGeometryCrop.plan` | Deferred: changes output size, needs placement work. |
-| Optics / Geometry › Miniature (tilt-shift) | Backend only — no Camera Raw UI | `CameraRawMiniature` | **M10.7** — its own framing problem; not a perspective tool |
+| Optics / Geometry › Miniature (tilt-shift) | **M10.8 (done):** the engine exposed — its own subsection at the bottom of Advanced Geometry, plus a canvas Move Focus mode | `CameraRawMiniature`, `CameraRawMiniatureSettings` | **M10.8 (done)** — `Miniature / Tilt-Shift` appended after Advanced Perspective Tools; `symmetricPosition` audited, renders nothing, deferred without a control |
 | Presets / Masks panels | Correction stack + ReShape cover the non-destructive story | — | Out of scope: new top-level UI. |
 
 
@@ -163,7 +163,8 @@ only its controls were missing. The rest shifts by one. M10.5 is now complete as
 | --- | --- |
 | M10.5 | **Done.** Advanced Perspective Tool UI — the existing Rectangle, Eight Point, and Vertical / Horizontal / Combined guide kinds, plus Manual Keystone. See `M10_5_ADVANCED_PERSPECTIVE_TOOLS.md`. |
 | M10.6 | **Done.** Calibrated Lensfun optical corrections — poly3 / poly5 / ptlens distortion, linear / poly3 lateral CA, PA vignetting — behind the M10.3 provider, user opt-in, no Apple double correction. See `M10_6_CALIBRATED_LENSFUN_CORRECTIONS.md`. |
-| M10.7 | Miniature (tilt-shift) controls, and Adaptive ReShape framing and crop behaviour |
+| M10.7 | **Done.** Advanced ReShape interaction — transform modes, topology controls, selection, tool-local undo. See `M10_7_ADVANCED_RESHAPE_INTERACTION.md`. |
+| M10.8 | **Done.** Miniature / Tilt-Shift exposed — Geometry subsection, canvas Move Focus mode, `symmetricPosition` audit, canvas acceptance gates assessed. See `M10_8_MINIATURE_AND_CANVAS_ACCEPTANCE.md`. |
 
 ### Superseded scope, recorded so it is not started again
 
@@ -239,6 +240,21 @@ branch, worktree or PR.
 | Rendered evidence | `work/camera-raw-parity/screenshots/m10_7-rendered/` — move / rotate / scale / subdivide / merge / local perspective / horizon / volume on `stone-house.jpg`, with `reshape-evidence.csv` |
 | UI captures | `work/camera-raw-parity/screenshots/m10_7-ui/` — 22 captures from real automation; steps 21–22 show the appended controls and the open Local Corrections menu |
 | Canvas drag evidence | **not captured** — the same XCUITest limitation as M10.5 §5.3; mesh gestures are proven at model level and through the real render pipeline; manual checklist in §9 of the report |
-| Open gates carried | M9.1.6 Guided Upright and M10.5 Advanced Perspective canvas drag remain pending, unchanged. (Automation Mode is now enabled on this machine, unblocking future capture attempts) |
-| Full regression | see the M10.7 line below |
+| Open gates carried | M9.1.6 Guided Upright and M10.5 Advanced Perspective canvas drag remained pending at M10.7. M10.8 added `CanvasDragTests` to retry them by posted `CGEvent` with a panel read-back; its first run was blocked by the screen locking mid-session |
+| Full regression | **run: 1305 tests, 1303 passed, 1 failed, 1 skipped** (environment-gated RAW fixture), bundle `work/camera-raw-parity/regression-m10_7.xcresult`. The one failure was the M10.5-era cursor test `leavingTheCanvasRestoresTheArrowWithEveryTool`; its state at M10.8 is recorded there |
+
+## 11d. Verification record — M10.8
+
+| What | Result |
+| --- | --- |
+| Exposure only | Every control calls the existing `CameraRawMiniature` engine; no pixel code moved. The subsection is appended at the bottom of Advanced Geometry, below Advanced Perspective Tools, collapsed by default |
+| Controls added | Shape (Linear/Circular), Amount, Angle (Linear only), Focus Size, Falloff, Center X/Y, Symmetric Blur, Move Focus on Image, Reset Miniature — all with stable identifiers, all through the existing `update`/undo/persistence path |
+| `symmetricPosition` audit | Renders nothing (`blurMask()` never reads it); left internal and documented as deferred, **no control exposed**, guard test asserts the panel never mentions it |
+| Canvas interaction | `movesCameraRawMiniatureFocus` reuses the Lens Blur pattern: exclusive with every other canvas mode, Escape restores the original center with no history step, `.geometry` reset clears it |
+| Persistence | Nothing saved changed: miniature persisted in the v23 correction stack already; `center` is computed over stored `centerX`/`centerY`; `FilterEdit` drag state is session-only. `ProjectManifest.current` stays 25 |
+| Focused suites | `CameraRawMiniatureTests` 26 tests, pass; `CameraRawMiniatureEvidenceTests` 2, pass; panel-order guard extended and passing |
+| Rendered evidence | `work/camera-raw-parity/screenshots/m10_8-rendered/` — before/linear/circular sheets on `stone-house.jpg` and `window-wall.jpg`, copied by `scripts/miniature-evidence.sh` |
+| UI captures | `work/camera-raw-parity/screenshots/m10_8-ui/` — 25 captures; steps 20–22 show the collapsed subsection, the Linear block, and the Circular selection with Angle correctly gone |
+| Canvas drag gates | **all three NOT OBSERVED.** New `CanvasDragTests` (CGEvent with panel read-back) committed. First run was blocked by the screen locking mid-session (`CGSSessionScreenIsLocked`) at app activation; an unlocked re-run then completed and read the counters unchanged after correctly-targeted drags (`0/4 guides`, `0 of 2 lines`) — posted `CGEvent` drags do not reach the layer-backed canvas. Gates A (Guided Upright), B (Advanced Perspective), C (ReShape) stay open; not claimed as passed |
+| Full regression | **run: 1333 tests, 1332 passed, 0 failed, 1 skipped** (environment-gated RAW fixture), bundle `work/camera-raw-parity/regression-m10_8.xcresult`, exit 0. The M10.7 cursor-test failure did not recur |
 

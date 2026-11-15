@@ -24,6 +24,7 @@ struct CameraRawGeometryControls: View {
     @State private var manualTransformationsExpanded = false
     @State private var advancedGeometryExpanded = false
     @State private var advancedPerspectiveExpanded = false
+    @State private var miniatureExpanded = false
     /// The active advanced tool's stored points.
     private var tools: CameraRawPerspectiveToolState { raw.perspectiveTools }
 
@@ -184,6 +185,7 @@ struct CameraRawGeometryControls: View {
             Text("\(geometry.guides.count)/4 guides")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+                .accessibilityIdentifier("geometryGuideCount")
         }
         .padding(.top, 2)
     }
@@ -338,6 +340,10 @@ struct CameraRawGeometryControls: View {
 
                     // Advanced Perspective Tools are appended last, after Horizon.
                     advancedPerspectiveSection
+
+                    // Miniature / Tilt-Shift is appended after the advanced tools, keeping the
+                    // additive order this milestone continues: nothing above moves.
+                    miniatureSection
                 }
                 .padding(.top, 4)
             }
@@ -722,6 +728,171 @@ struct CameraRawGeometryControls: View {
 
     private var activeCount: Int {
         tools.guideCount(for: tools.kind)
+    }
+
+    // MARK: - Miniature / Tilt-Shift (appended last, after the advanced tools)
+
+    /// Compact disclosure for the existing `CameraRawMiniature` engine, which has run in the
+    /// pipeline since before it had controls. Nothing here renders: the section writes
+    /// `CameraRawMiniatureSettings`, and `CameraRawSettings.applyResult` blurs through
+    /// `CIMaskedVariableBlur` after geometry, as it always did. Collapsed by default, so an
+    /// existing workflow is untouched until it is opened.
+    private var miniatureSection: some View {
+        let miniature = raw.miniature
+        return VStack(alignment: .leading, spacing: 5) {
+            Divider().padding(.vertical, 2)
+
+            // The disclosure button and the active state sit side by side, the way the advanced
+            // tools' header reads, so a screenshot and a UI guard see one stable identifier each.
+            HStack(spacing: 6) {
+                Button {
+                    miniatureExpanded.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: miniatureExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .frame(width: 10)
+                        Text("Miniature / Tilt-Shift")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Blurs everything outside a sharp focus band or region, through the existing Core Image miniature engine.")
+                .accessibilityIdentifier("miniatureDisclosure")
+                .accessibilityLabel("Miniature Tilt-Shift")
+                .accessibilityValue(miniatureExpanded ? "Expanded" : "Collapsed")
+
+                Text(miniature.strength > 0 ? "On" : "Off")
+                    .font(.caption2)
+                    .foregroundStyle(miniature.strength > 0 ? Color.accentColor : Color.secondary)
+                    .help("Whether the miniature effect is changing the picture right now.")
+                    .accessibilityIdentifier("miniatureActiveState")
+                    .accessibilityLabel("Miniature State")
+                    .accessibilityValue(miniature.strength > 0 ? "On" : "Off")
+            }
+
+            if miniatureExpanded {
+                miniatureContent
+                    .padding(.top, 4)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    @ViewBuilder
+    private var miniatureContent: some View {
+        let miniature = raw.miniature
+        Picker("Shape", selection: Binding(
+            get: { miniature.shape },
+            set: { shape in update { $0.cameraRaw.miniature.shape = shape } }
+        )) {
+            ForEach(CameraRawMiniatureShape.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help("Linear blurs above and below a sharp band; Circular blurs outside a sharp region.")
+        .accessibilityIdentifier("miniatureShapePicker")
+        .accessibilityLabel("Miniature Shape")
+
+        miniatureSlider("Amount", \.strength, reset: 0,
+                        help: "Blur strength outside the focus. 0 leaves the picture alone.",
+                        identifier: "miniatureAmount")
+
+        // Angle only shapes a linear band; a circular focus has no direction to tilt.
+        if miniature.shape == .linear {
+            miniatureSlider("Angle", \.angleDegrees, reset: 0,
+                            help: "Tilts the focus band. 0° is horizontal.",
+                            identifier: "miniatureAngle")
+        }
+
+        miniatureSlider("Focus Size", \.focusSize, reset: 0.2,
+                        help: "Half-width of the sharp band, or the sharp region's radius, as a share of the longer side.",
+                        identifier: "miniatureFocusSize")
+        miniatureSlider("Falloff", \.falloff, reset: 40,
+                        help: "How gradually the sharp focus gives way to the blur.")
+        miniatureSlider("Center X", \.centerX, reset: 0.5,
+                        help: "The focus band or region's center, across the picture.",
+                        identifier: "miniatureCenterX")
+        miniatureSlider("Center Y", \.centerY, reset: 0.5,
+                        help: "The focus band or region's center, down the picture.",
+                        identifier: "miniatureCenterY")
+
+        Toggle("Symmetric Blur", isOn: Binding(
+            get: { miniature.symmetricBlur },
+            set: { value in update { $0.cameraRaw.miniature.symmetricBlur = value } }
+        ))
+        .font(.system(size: 11))
+        .help("Linear only. On, both sides of the band blur; off, only one side does.")
+        .accessibilityIdentifier("miniatureSymmetricBlur")
+
+        HStack(spacing: 10) {
+            Button {
+                if session.filterEdit?.movesCameraRawMiniatureFocus == true {
+                    session.endCameraRawMiniatureFocusInteraction()
+                } else {
+                    session.beginCameraRawMiniatureFocusInteraction()
+                }
+            } label: {
+                Label("Move Focus", systemImage: "scope")
+            }
+            .buttonStyle(.borderless)
+            .tint(session.filterEdit?.movesCameraRawMiniatureFocus == true ? Color.accentColor : Color.secondary)
+            .help("Click or drag on the preview to move the focus. Escape puts it back.")
+            .accessibilityLabel("Move Miniature Focus")
+            .accessibilityIdentifier("miniatureMoveFocus")
+            .disabled(miniature.strength <= 0)
+            Spacer(minLength: 0)
+            Button("Reset Miniature") {
+                update { $0.cameraRaw.miniature = CameraRawMiniatureSettings() }
+                session.filterEdit?.movesCameraRawMiniatureFocus = false
+                session.filterEdit?.cameraRawMiniatureDragOriginalCenter = nil
+            }
+            .font(.system(size: 11))
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
+            .help("Puts the miniature effect back to Off with its defaults.")
+            .accessibilityIdentifier("miniatureReset")
+            .accessibilityLabel("Reset Miniature")
+        }
+        .opacity(miniature.strength > 0 ? 1 : 0.5)
+    }
+
+    private func miniatureSlider(_ title: String,
+                                 _ key: WritableKeyPath<CameraRawMiniatureSettings, Double>,
+                                 reset resetValue: Double,
+                                 help: String,
+                                 identifier: String? = nil) -> some View {
+        let value = raw.miniature[keyPath: key]
+        let range = key == \.focusSize ? CameraRawMiniatureSettings.sizeRange : CameraRawMiniatureSettings.unitRange
+        let decimals = key == \.focusSize ? 2 : 0
+        return HStack(spacing: 8) {
+            Text(title)
+                .frame(minWidth: 64, alignment: .leading)
+                .help(help)
+                .font(.system(size: 11))
+                .lineLimit(1)
+
+            CameraRawSlider(value: value, range: range, track: .plain, help: help,
+                            onChange: { rawValue in update { $0.cameraRaw.miniature[keyPath: key] = decimals == 0 ? rawValue.rounded() : rawValue } },
+                            onReset: { update { $0.cameraRaw.miniature[keyPath: key] = resetValue } })
+
+            TextField(title,
+                      value: Binding(
+                          get: { raw.miniature[keyPath: key] },
+                          set: { newValue in update { $0.cameraRaw.miniature[keyPath: key] = newValue } }
+                      ),
+                      format: .number.precision(.fractionLength(decimals)))
+                .frame(width: 44)
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .help(help)
+                .font(.system(size: 10, design: .monospaced))
+        }
+        .accessibilityIdentifier(identifier ?? "")
     }
 
     // MARK: - Slider helpers

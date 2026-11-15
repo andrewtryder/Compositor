@@ -7,7 +7,12 @@ nonisolated enum CameraRawMiniatureShape: String, CaseIterable, Sendable, Codabl
     case circular = "Circular"
 }
 
-/// Tilt-shift / miniature settings. Identity when strength is zero. GUI deferred.
+/// Tilt-shift / miniature settings. Identity when strength is zero.
+///
+/// `symmetricPosition` is kept for schema compatibility but currently changes nothing: `blurMask`
+/// places the band symmetrically about the focus center on both sides, and `symmetricBlur` is the
+/// control that shapes the sides. A GUI must not expose a switch with no effect, so it stays
+/// internal; should an off-center band be wanted later, it is the hook for it.
 nonisolated struct CameraRawMiniatureSettings: Equatable, Sendable, Codable {
     var shape: CameraRawMiniatureShape = .linear
     /// 0…100 blur strength. Zero leaves pixels unchanged.
@@ -21,6 +26,7 @@ nonisolated struct CameraRawMiniatureSettings: Equatable, Sendable, Codable {
     var angleDegrees: Double = 0
     /// Half-width of the sharp band (linear) or radius (circular), 0…1 relative to the long side.
     var focusSize: Double = 0.2
+    /// Deferred: reserved for an off-center focus band. No rendering path reads it yet.
     var symmetricPosition = true
     var symmetricBlur = true
 
@@ -56,6 +62,12 @@ nonisolated struct CameraRawMiniatureSettings: Equatable, Sendable, Codable {
         result.focusSize = ImageAdjustmentPixels.clamp(focusSize, Self.sizeRange, 0.2)
         if !result.angleDegrees.isFinite { result.angleDegrees = 0 }
         return result
+    }
+
+    /// The focus center in the same normalized space `cameraRawNormalizedPoint` produces.
+    var center: CGPoint {
+        let safe = normalized
+        return CGPoint(x: safe.centerX, y: safe.centerY)
     }
 
     mutating func reset() {

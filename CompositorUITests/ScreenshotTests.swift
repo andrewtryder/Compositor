@@ -149,6 +149,70 @@ final class ScreenshotTests: XCTestCase {
         scrollIntoView(advancedPerspective, in: app, panel: panel)
         shoot("19 Advanced Perspective manual keystone", panel)
 
+        // Milestone 10.8: Miniature / Tilt-Shift, appended after the advanced tools at the bottom
+        // of Advanced Geometry. The collapsed subsection first — what an existing user sees — then
+        // opened for the Linear controls, then switched to Circular. The Move Focus canvas drag is
+        // NOT in these captures: XCUITest cannot deliver a drag to the layer-backed canvas (§5.3 of
+        // the M10.5 report stands), so there is no honest photograph of one from this harness. The
+        // interaction is proven at model level by CameraRawMiniatureTests, and the rendered effect
+        // by CameraRawMiniatureEvidenceTests.
+        let miniature = app.descendants(matching: .any).matching(identifier: "miniatureDisclosure").firstMatch
+        // Reach the subsection the way CameraRawSectionOrderTests does: the list walked to its end in
+        // small steps. Rows a subsection inserts only publish for a list that has been walked through;
+        // jumping straight to the disclosure leaves the inserted rows invisible to queries.
+        if miniature.waitForExistence(timeout: 5) {
+            scrollIntoView(miniature, in: app, panel: panel)
+        }
+        scrollListInSmallSteps(app)
+        scrollIntoView(miniature, in: app, panel: panel)
+        shoot("20 Miniature collapsed", panel)
+        miniature.click()
+        Thread.sleep(forTimeInterval: 0.8)
+        let shapePicker = app.descendants(matching: .any).matching(identifier: "miniatureShapePicker").firstMatch
+        var published = shapePicker.waitForExistence(timeout: 3)
+        if !published {
+            // A scroll that carried the disclosure out of view recycles the row and resets its
+            // expansion. Open it again and give the rows a moment to publish.
+            if miniature.exists { miniature.click() }
+            Thread.sleep(forTimeInterval: 0.8)
+            published = shapePicker.waitForExistence(timeout: 3)
+        }
+        if published {
+            scrollIntoView(shapePicker, in: app, panel: panel)
+            shoot("21 Miniature linear", panel)
+            // The picker is segmented: Linear | Circular. A segment may or may not surface as a
+            // button, so try the button first and fall back to tapping the right segment in place.
+            let circular = shapePicker.descendants(matching: .any).matching(identifier: "Circular").firstMatch.exists
+                ? shapePicker.descendants(matching: .any).matching(identifier: "Circular").firstMatch
+                : app.buttons["Circular"].firstMatch
+            if circular.exists {
+                circular.click()
+            } else {
+                shapePicker.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5)).tap()
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+            scrollIntoView(shapePicker, in: app, panel: panel)
+            shoot("22 Miniature circular", panel)
+        } else {
+            // Never silent: a missing capture must be visible in the result bundle, not a gap.
+            // Diagnose too: which probes see what, so the next run fixes the query, not the guess.
+            var diagnosis = "probes after opening and walking the list:\n"
+            diagnosis += "miniatureDisclosure: \(miniature.exists), value: \(miniature.value ?? "nil")\n"
+            diagnosis += "shapePicker via descendants: \(shapePicker.exists)\n"
+            diagnosis += "pickers: \(app.pickers.count), segmentedControls: \(app.segmentedControls.count)\n"
+            for line in app.debugDescription.components(separatedBy: "\n") where line.lowercased().contains("miniature") || line.lowercased().contains("shape") {
+                diagnosis += line + "\n"
+            }
+            XCTContext.runActivity(named: "22 Miniature circular: the shape picker was unreachable") { activity in
+                let report = XCTAttachment(string: diagnosis)
+                report.name = "miniature tree diagnosis"
+                report.lifetime = .keepAlways
+                activity.add(report)
+            }
+            scrollIntoView(miniature, in: app, panel: panel)
+            shoot("22 Miniature circular MISSING", panel)
+        }
+
         dismiss(app)
 
         // Milestone 10.7: the ReShape tool header with the appended selection, transform-mode,
@@ -163,23 +227,23 @@ final class ScreenshotTests: XCTestCase {
             railButton.click()
         }
         if reshape.waitForExistence(timeout: 5) {
-            shoot("21 ReShape header", window)
+            shoot("23 ReShape header", window)
             // The Local Corrections menu, open: what one-shot corrections and drawn drafts offer.
             let localCorrections = app.descendants(matching: .any).matching(identifier: "reshapeLocalCorrections").firstMatch
             if localCorrections.exists {
                 localCorrections.click()
-                shoot("22 ReShape Local Corrections menu")
+                shoot("24 ReShape Local Corrections menu")
                 app.typeKey(.escape, modifierFlags: [])
             }
             // Leave the session cleanly: Escape twice cancels any gesture and then the tool.
             app.typeKey(.escape, modifierFlags: [])
             app.typeKey(.escape, modifierFlags: [])
         } else {
-            shoot("21 ReShape header MISSING", window)
+            shoot("23 ReShape header MISSING", window)
         }
 
         app.typeKey("n", modifierFlags: .command)
-        shoot("23 Second tab", window)
+        shoot("25 Second tab", window)
     }
 
     /// Chooses one Advanced Perspective tool from the open subsection's menu, by its stable identifier suffix.
@@ -232,6 +296,16 @@ final class ScreenshotTests: XCTestCase {
         guard scrollView.exists else { return }
         for _ in 0..<12 { scrollView.scroll(byDeltaX: 0, deltaY: -600) }
         Thread.sleep(forTimeInterval: 0.4)
+    }
+
+    /// Walks the panel to its end in small steps, the only walk that publishes lazily inserted rows:
+    /// a large scroll teleports past them and they never enter the accessibility tree. Mirrors the
+    /// ninety small scrolls `CameraRawSectionOrderTests` uses for the same reason.
+    private func scrollListInSmallSteps(_ app: XCUIApplication) {
+        let scrollView = app.scrollViews.firstMatch
+        guard scrollView.exists else { return }
+        for _ in 0..<90 { scrollView.scroll(byDeltaX: 0, deltaY: -60) }
+        Thread.sleep(forTimeInterval: 1)
     }
 
 

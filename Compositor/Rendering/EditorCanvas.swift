@@ -118,6 +118,7 @@ final class CanvasView: NSView {
             || session.filterEdit?.samplesWhiteBalance == true || session.filterEdit?.samplesPointColor == true
             || session.filterEdit?.samplesDefringe == true
             || session.filterEdit?.movesCameraRawLensBlurFocus == true
+            || session.filterEdit?.movesCameraRawMiniatureFocus == true
             || session.filterEdit?.drawingCameraRawGeometryGuide == true
             || session.filterEdit?.drawingCameraRawHorizonReference == true
             || session.filterEdit?.drawingCameraRawPerspectiveTool == true
@@ -135,6 +136,8 @@ final class CanvasView: NSView {
     private var volumetricDrag = false
     /// Camera Raw Lens Blur's focus region being dragged on the canvas.
     private var lensBlurDrag = false
+    /// Camera Raw Miniature's focus being dragged on the canvas.
+    private var miniatureDrag = false
     /// ReShape control-point drag in progress.
     private var meshDragging = false
     private var antsTimer: Timer?
@@ -464,6 +467,27 @@ final class CanvasView: NSView {
     /// Color Range's eyedroppers while Shift (add) or Option (take away) is held, or its + or − one is chosen.
     private static let eyedropperAddCursor = makeEyedropperCursor(badge: "plus")
     private static let eyedropperRemoveCursor = makeEyedropperCursor(badge: "minus")
+    /// A target over a dot, for Miniature's armed focus move: the same scope language as the panel's button.
+    private static let miniatureFocusCursor: NSCursor = {
+        let image = NSImage(size: NSSize(width: 24, height: 24), flipped: false) { _ in
+            let center = CGPoint(x: 12, y: 12)
+            let target = NSBezierPath(ovalIn: CGRect(x: center.x - 6, y: center.y - 6, width: 12, height: 12))
+            NSColor.white.setStroke(); target.lineWidth = 3.2; target.stroke()
+            NSColor.black.setStroke(); target.lineWidth = 1.2; target.stroke()
+            let dot = NSBezierPath(ovalIn: CGRect(x: center.x - 1.5, y: center.y - 1.5, width: 3, height: 3))
+            NSColor.white.setFill(); dot.fill()
+            NSColor.black.setStroke(); dot.lineWidth = 1; dot.stroke()
+            for (dx, dy) in [(CGFloat(0), CGFloat(-9.5)), (0, 9.5), (-9.5, 0), (9.5, 0)] {
+                let tick = NSBezierPath()
+                tick.move(to: CGPoint(x: center.x + dx * 0.7, y: center.y + dy * 0.7))
+                tick.line(to: CGPoint(x: center.x + dx, y: center.y + dy))
+                NSColor.white.setStroke(); tick.lineWidth = 3.2; tick.stroke()
+                NSColor.black.setStroke(); tick.lineWidth = 1.2; tick.stroke()
+            }
+            return true
+        }
+        return NSCursor(image: image, hotSpot: NSPoint(x: 12, y: 12))
+    }()
     private static func makeEyedropperCursor(badge: String?) -> NSCursor {
         let symbol = NSImage(systemSymbolName: "eyedropper", accessibilityDescription: "Sample color")!
         let white = symbol.withSymbolConfiguration(.init(paletteColors: [.white]))!
@@ -650,7 +674,9 @@ final class CanvasView: NSView {
             // cursor here when picking starts or ends. An empty canvas leaves the form's cursor alone.
             if session.document != nil, let window,
                bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
-                if spaceHeld { NSCursor.openHand.set() } else if picking { pickCursor.set() } else { restoreToolCursor() }
+                if spaceHeld { NSCursor.openHand.set() }
+                else if session.filterEdit?.movesCameraRawMiniatureFocus == true { Self.miniatureFocusCursor.set() }
+                else if picking { pickCursor.set() } else { restoreToolCursor() }
             }
             // Color Range's panel appears, and takes the focus, a moment after it opens.
             if session.colorRange != nil { keepColorRangeCursor(); keepColorRangeCursor(after: 0.15) }
@@ -1768,6 +1794,7 @@ final class CanvasView: NSView {
         guard session.document != nil, dragCursor == nil, let window,
               bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) else { return }
         if spaceHeld { NSCursor.openHand.set() }
+        else if session.filterEdit?.movesCameraRawMiniatureFocus == true { Self.miniatureFocusCursor.set() }
         else if picking { pickCursor.set() }
         else { restoreToolCursor() }
     }
@@ -1801,6 +1828,11 @@ final class CanvasView: NSView {
         if picking, !spaceHeld {
             addCursorRect(bounds, cursor: pickCursor)
             keepColorRangeCursor()
+            return
+        }
+        // Miniature's armed focus move gets its own cursor, the way the picking modes do.
+        if session.filterEdit?.movesCameraRawMiniatureFocus == true, !spaceHeld {
+            addCursorRect(bounds, cursor: Self.miniatureFocusCursor)
             return
         }
         if session.hueTargeting { addCursorRect(bounds, cursor: .resizeLeftRight); return }
@@ -1948,6 +1980,7 @@ final class CanvasView: NSView {
             return
         }
         if picking { pickCursor.set(); return }
+        if session.filterEdit?.movesCameraRawMiniatureFocus == true { Self.miniatureFocusCursor.set(); return }
         if session.tool.isSelectionTool {
             // Keys may have changed while the app was in the background.
             session.updateHeldSelectionKeys(shift: event.modifierFlags.contains(.shift), option: event.modifierFlags.contains(.option))
@@ -1984,6 +2017,7 @@ final class CanvasView: NSView {
     override func cursorUpdate(with event: NSEvent) {
         guard session.document != nil else { return }
         if spaceHeld, dragCursor == nil { NSCursor.openHand.set() }
+        else if session.filterEdit?.movesCameraRawMiniatureFocus == true { Self.miniatureFocusCursor.set() }
         else if picking { pickCursor.set() }
         else if session.tool.isSelectionTool, !spaceHeld { lassoCursor.set() }
         // Cursor-update events carry no modifier flags (AppKit sends one after every key change), so read
@@ -2130,6 +2164,13 @@ final class CanvasView: NSView {
         if session.filterEdit?.movesCameraRawLensBlurFocus == true, !spaceHeld, let document = session.document {
             session.moveCameraRawLensBlurFocus(to: session.viewport.documentPoint(from: point, documentSize: document.size))
             lensBlurDrag = true
+            synchronizeDisplay()
+            return
+        }
+        // Miniature's focus move: armed from Geometry, the same pattern as Lens Blur's.
+        if session.filterEdit?.movesCameraRawMiniatureFocus == true, !spaceHeld, let document = session.document {
+            session.moveCameraRawMiniatureFocus(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            miniatureDrag = true
             synchronizeDisplay()
             return
         }
@@ -2318,6 +2359,10 @@ final class CanvasView: NSView {
         }
         if lensBlurDrag, let document = session.document {
             session.moveCameraRawLensBlurFocus(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
+        if miniatureDrag, let document = session.document {
+            session.moveCameraRawMiniatureFocus(to: session.viewport.documentPoint(from: point, documentSize: document.size))
             return
         }
         if let handle = progressiveDrag, let settings = session.filterEdit?.settings, let document = session.document {
@@ -2563,6 +2608,12 @@ final class CanvasView: NSView {
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
             return
         }
+        if miniatureDrag {
+            miniatureDrag = false
+            session.endCameraRawMiniatureFocusInteraction()
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
         if progressiveDrag != nil {
             progressiveDrag = nil
             // The panel keeps the keyboard, for Return and Escape.
@@ -2791,6 +2842,11 @@ final class CanvasView: NSView {
                     || session.filterEdit?.cameraRawPerspectiveCornerDraft != nil {
             // Escape puts a dragged handle back and drops anything unfinished; no document entry is made.
             session.cancelCameraRawPerspectiveDraft()
+            synchronizeDisplay()
+        } else if event.keyCode == 53, session.filterEdit?.movesCameraRawMiniatureFocus == true {
+            // Escape puts the focus back where the drag found it and disarms the mode;
+            // no history entry is made for a canceled gesture.
+            session.cancelCameraRawMiniatureFocusInteraction()
             synchronizeDisplay()
         } else if event.keyCode == 53, session.filterEdit?.drawingCameraRawPerspectiveTool == true {
             session.cancelCameraRawPerspectiveDraft()

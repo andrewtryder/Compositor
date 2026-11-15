@@ -764,6 +764,21 @@ struct CameraRawPerspectiveToolsTests {
             let horizonBody = source[horizon.lowerBound...]
             #expect(advancedBody.count < horizonBody.count + 40_000)
         }
+        // M10.8: the Miniature subsection is appended after the advanced tools and before nothing.
+        // Nothing preexisting moved; the panel still never mentions ReShape.
+        if let advanced, let miniature = source.range(of: "private var miniatureSection") {
+            #expect(advanced.lowerBound < miniature.lowerBound, "Miniature is appended after the advanced tools")
+        } else {
+            Issue.record("the Miniature section is missing from the Geometry panel")
+        }
+        #expect(source.contains("miniatureExpanded = false"), "the Miniature disclosure starts collapsed")
+        for identifier in ["miniatureDisclosure", "miniatureShapePicker", "miniatureAmount", "miniatureAngle",
+                           "miniatureFocusSize", "miniatureCenterX", "miniatureCenterY", "miniatureSymmetricBlur",
+                           "miniatureMoveFocus", "miniatureReset", "miniatureActiveState"] {
+            #expect(source.contains(identifier), "\(identifier) is missing")
+        }
+        // The deferred symmetricPosition must not be exposed: it renders nothing today.
+        #expect(!source.contains("miniatureSymmetricPosition"), "no toggle for the deferred symmetricPosition")
         // ReShape stays its own tool: nothing in the Geometry panel mentions it.
         #expect(!source.contains("ReShape"))
     }

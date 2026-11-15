@@ -626,6 +626,10 @@ final class FilterEdit {
     var samplesDefringe = false
     /// Lens Blur's focus region is being dragged on the preview from the Optics section.
     var movesCameraRawLensBlurFocus = false
+    /// Miniature's focus region is being dragged on the preview from the Geometry section.
+    var movesCameraRawMiniatureFocus = false
+    /// The Miniature focus center captured when a canvas drag began, so Escape can put it back exactly.
+    var cameraRawMiniatureDragOriginalCenter: CGPoint?
     /// Camera, lens, focal length and aperture of the layer being edited, for Optics › Lens Profile. Empty when the
     /// layer came from a file with no tags.
     var lensMetadata = LensMetadata()

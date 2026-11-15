@@ -554,6 +554,56 @@ extension EditorSession {
         updateFilter(settings, preview: edit.preview)
     }
 
+    /// Miniature's focus follows the pointer. Armed from Geometry, then dragged on the preview,
+    /// through the same mapping the Lens Blur move uses.
+    func moveCameraRawMiniatureFocus(to point: CGPoint) {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing,
+              let normalized = cameraRawNormalizedPoint(at: point) else { return }
+        var settings = edit.settings
+        settings.cameraRaw.miniature.centerX = Double(normalized.x)
+        settings.cameraRaw.miniature.centerY = Double(normalized.y)
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Arms Miniature focus dragging, capturing the center so Escape can restore it exactly.
+    /// Exclusive with the other canvas modes, which are ended here rather than left armed.
+    func beginCameraRawMiniatureFocusInteraction() {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return }
+        edit.cameraRawMiniatureDragOriginalCenter = edit.settings.cameraRaw.miniature.center
+        edit.movesCameraRawMiniatureFocus = true
+        edit.drawingCameraRawGeometryGuide = false
+        edit.cameraRawGuideDraft = nil
+        edit.drawingCameraRawPerspectiveTool = false
+        edit.drawingCameraRawHorizonReference = false
+        edit.cameraRawHorizonReferenceDraft = nil
+        edit.cameraRawHorizonDrawingMode = nil
+        brushRevision += 1
+    }
+
+    /// Restores the focus center captured when the drag began, without writing any document entry.
+    func cancelCameraRawMiniatureFocusInteraction() {
+        guard let edit = filterEdit else { return }
+        defer {
+            edit.movesCameraRawMiniatureFocus = false
+            edit.cameraRawMiniatureDragOriginalCenter = nil
+        }
+        guard let original = edit.cameraRawMiniatureDragOriginalCenter else { return }
+        var settings = edit.settings
+        settings.cameraRaw.miniature.centerX = Double(original.x)
+        settings.cameraRaw.miniature.centerY = Double(original.y)
+        edit.settings = settings
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Ends the armed state, keeping wherever the drag left the focus. A drag that moved nothing
+    /// leaves the settings as they were, so no preview render is spent on a no-op.
+    func endCameraRawMiniatureFocusInteraction() {
+        guard let edit = filterEdit else { return }
+        edit.movesCameraRawMiniatureFocus = false
+        edit.cameraRawMiniatureDragOriginalCenter = nil
+        brushRevision += 1
+    }
+
     /// Defringe eyedropper: centers the purple or green hue range on the clicked fringe color.
     func sampleCameraRawDefringe(at point: CGPoint) {
         guard let edit = filterEdit, edit.kind == .cameraRaw, edit.samplesDefringe, !edit.committing,
@@ -708,6 +758,8 @@ extension EditorSession {
         edit.drawingCameraRawHorizonReference = false
         edit.cameraRawHorizonReferenceDraft = nil
         edit.cameraRawHorizonDrawingMode = nil
+        edit.movesCameraRawMiniatureFocus = false
+        edit.cameraRawMiniatureDragOriginalCenter = nil
         edit.drawingCameraRawGeometryGuide = true
         brushRevision += 1
     }
@@ -834,6 +886,8 @@ extension EditorSession {
         edit.drawingCameraRawHorizonReference = false
         edit.cameraRawHorizonReferenceDraft = nil
         edit.cameraRawHorizonDrawingMode = nil
+        edit.movesCameraRawMiniatureFocus = false
+        edit.cameraRawMiniatureDragOriginalCenter = nil
         brushRevision += 1
     }
 
@@ -1090,6 +1144,8 @@ extension EditorSession {
         edit.drawingCameraRawPerspectiveTool = false
         edit.cameraRawPerspectiveDraft = nil
         edit.cameraRawPerspectiveCornerDraft = nil
+        edit.movesCameraRawMiniatureFocus = false
+        edit.cameraRawMiniatureDragOriginalCenter = nil
         brushRevision += 1
     }
 
