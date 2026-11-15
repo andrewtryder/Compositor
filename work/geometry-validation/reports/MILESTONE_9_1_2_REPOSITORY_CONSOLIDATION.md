@@ -386,6 +386,13 @@ Per the milestone instructions, this is documented as a limitation with a manual
 
 **Comparison target:** Existing Adobe Camera Raw 19.0 Geometry panel screenshot (reference for UI layout and behavior parity).
 
+> **Reference note (added later).** ACR 19.0 was the working reference when this was written. The project's
+> authoritative reference is now Photoshop 2026 / Adobe Camera Raw 18.7 —
+> [`REFERENCE_BASELINE_ADOBE_CAMERA_RAW_18_7.md`](../../camera-raw-parity/reports/REFERENCE_BASELINE_ADOBE_CAMERA_RAW_18_7.md).
+> "Parity" here means the honest, additive behaviour described in that document. It does not mean a
+> button-for-button copy, and it never meant the archived 2016 six-mode Transform panel.
+
+
 ### Final comprehensive regression (Phase 5)
 
 A full `CompositorTests` regression was initiated via `xcodebuild test -only-testing:CompositorTests -resultBundlePath /tmp/final_regression.xcresult` but the `xcodebuild` process became stuck (no output written to stdout/stderr, no `.xcresult` bundle produced after extended runtime) and had to be terminated. The regression counts could not be extracted.

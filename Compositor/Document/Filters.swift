@@ -637,6 +637,16 @@ var cameraRawDragOriginalGuide: CameraRawGeometryGuide?
     /// Horizon › Horizontal / Vertical Reference: drag one line on the preview to define the reference.
     /// Reuses the Guided Upright guide hit-testing and coordinate mapping; it never feeds the perspective solver.
     var drawingCameraRawHorizonReference = false
+    /// Advanced Perspective Tools: the selected tool is armed to draw on the preview. Only one of this,
+    /// Guided Upright drawing and Horizon reference drawing may be armed at a time.
+    var drawingCameraRawPerspectiveTool = false
+    /// The unfinished guide for the active advanced tool, normalized like a guide. Nil when nothing is in progress.
+    var cameraRawPerspectiveDraft: (start: CGPoint, end: CGPoint)?
+    /// The handle being dragged, and the point it had when the drag began so Escape can put it back exactly.
+    var cameraRawPerspectiveDragTarget: CameraRawPerspectiveDragTarget?
+    var cameraRawPerspectiveDragOriginalPoint: CGPoint?
+    /// The last committed corner of an unfinished rectangle, so cancelling restores the real corner count.
+    var cameraRawPerspectiveCornerDraft: CGPoint?
     /// The reference line being drawn, normalized image coordinates like a guide.
     var cameraRawHorizonReferenceDraft: (start: CGPoint, end: CGPoint)?
     /// Which Horizon reference mode the line belongs to. Captured when drawing starts so a mode change cannot

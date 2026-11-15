@@ -153,6 +153,11 @@ extension EditorSession {
             edit.drawingCameraRawHorizonReference = false
             edit.cameraRawHorizonReferenceDraft = nil
             edit.cameraRawHorizonDrawingMode = nil
+            edit.drawingCameraRawPerspectiveTool = false
+            edit.cameraRawPerspectiveDraft = nil
+            edit.cameraRawPerspectiveCornerDraft = nil
+            edit.cameraRawPerspectiveDragTarget = nil
+            edit.cameraRawPerspectiveDragOriginalPoint = nil
         }
         updateFilter(settings, preview: edit.preview)
     }

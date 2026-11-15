@@ -3,6 +3,12 @@
 Status: living document. Every milestone is additive. No existing control, section, order or
 default is moved, renamed or removed.
 
+**Reference:** Photoshop 2026 / **Adobe Camera Raw 18.7**, as supplied by the user in six screenshots.
+That is the authoritative baseline — see
+[`REFERENCE_BASELINE_ADOBE_CAMERA_RAW_18_7.md`](REFERENCE_BASELINE_ADOBE_CAMERA_RAW_18_7.md).
+`work/geometry-validation/UI_SPEC_ADOBE_CAMERA_RAW_2016.md` describes Camera Raw 9.6 and is **archived
+historical research**, not a specification; nothing in it is an implementation requirement.
+
 ## 1. What Compositor already has
 
 | Section | Existing controls | Engine behind them |
@@ -15,7 +21,7 @@ default is moved, renamed or removed.
 | Color Mixer | HSL for 8 families, Point Color (8 points, ranges, visualize) | `adjust_camera_raw_curve_color` |
 | Detail | Sharpening (amount/radius/detail/masking), Noise Reduction (luminance/detail/contrast, color/detail/smoothness) | `adjust_camera_raw_detail`, `MetalNonlocalMeans` |
 | Optics | Remove CA, Generic Lens Correction (distortion/vignetting), Manual Distortion, Defringe (eyedropper, hue ranges), Lens Vignetting | `adjust_camera_raw_optics`, `lens_distort` |
-| Geometry | Upright strip (Off/Level/Vertical/Full/Guided), Manual Transformations, Constrain Crop, Advanced (Perspective Amount, Framing, Volume, Auto EXIF, **Horizon**) | `CameraRawGeometrySettings`, `CameraRawPerspective`, `CameraRawHorizon`, `CameraRawUprightEstimation` |
+| Geometry | Upright strip (Off, Auto Level, Auto Vertical, Auto Full, Guided), Manual Transformations, Constrain Crop, Advanced (Perspective Amount, Framing, Volume, Auto EXIF, **Horizon**) | `CameraRawGeometrySettings`, `CameraRawPerspective`, `CameraRawHorizon`, `CameraRawUprightEstimation` |
 | Calibration | Process version, Shadow Tint, RGB primaries | `adjust_camera_raw_calibration` |
 
 Adjacent systems that must stay where they are: the Crop tool, RAW development editor, Lens
@@ -23,15 +29,22 @@ Effects, the non-destructive correction stack (`cameraRawFull` node) and ReShape
 
 ## 2. What Adobe Camera Raw 2026 has that Compositor does not surface
 
+Rows M10.1–M10.5 are now **done**; they are kept here because the table is the record of what the
+reference added and where each control was placed. The two rows still open are M10.6 and M10.7.
+
 | Adobe feature | Exists in Compositor? | Reusable engine | Additive placement chosen |
 | --- | --- | --- | --- |
-| Light › Auto | No | `CameraRawTables.brightness`, `camera_raw_statistics`, histogram code | **M10.1** — `Auto` button at the top of Light |
-| Optics › Lens Blur (focus-area blur, aperture shape) | Engine only, GUI deferred | `CameraRawMiniature.blurMask`, `MetalBokeh`, `BokehShape` | **M10.2** — `Lens Blur` sub-group at the end of Optics |
+| Light › Auto | No | `CameraRawTables.brightness`, `camera_raw_statistics`, histogram code | **M10.1 (done)** — `Auto` button at the top of Light; six sliders keep their order |
+| Optics › Lens Blur (focus-area blur, aperture shape) | Engine only, GUI deferred | `CameraRawMiniature.blurMask`, `MetalBokeh`, `BokehShape` | **M10.2 (done)** — `Lens Blur` sub-group at the end of Optics |
 | Color › White Balance presets (Kelvin list) | Not applicable: Compositor's WB is relative, not Kelvin | — | Deferred. A Kelvin list needs a sensor baseline Compositor does not have. |
 | Detail › Denoise (AI) | Already: Noise Reduction runs `MetalNonlocalMeans` | — | Nothing to add. |
-| Optics › camera-specific lens profiles | Generic profile only (by design) | — | Deferred: needs a profile database. |
+| Optics › camera-specific lens profiles | Discovery only (M10.3): the provider and matcher exist, no correction is applied | `LensfunDatabaseManager`, `CameraRawLensProfileSettings` | **M10.6** — calibrated correction behind the M10.3 provider |
+| Geometry › Horizon (independent of Upright) | Engine only before M10.4 | `CameraRawHorizon`, `CameraRawHorizonSettings` | **M10.4 (done)** — `Horizon` appended inside Advanced Geometry |
+| Geometry › perspective guide kinds (Vertical / Horizontal / Combined / Rectangle / Eight Point) | Already: exposed by M10.5 | `CameraRawPerspectiveTools`, `CameraRawPerspectiveToolState` | **M10.5 (done)** — `Advanced Perspective Tools` appended after Horizon |
 | Geometry › crop aspect after transform | Engine only (`CameraRawGeometryCrop`) | `CameraRawGeometryCrop.plan` | Deferred: changes output size, needs placement work. |
+| Optics / Geometry › Miniature (tilt-shift) | Backend only — no Camera Raw UI | `CameraRawMiniature` | **M10.7** — its own framing problem; not a perspective tool |
 | Presets / Masks panels | Correction stack + ReShape cover the non-destructive story | — | Out of scope: new top-level UI. |
+
 
 ## 3. Milestone 10.1 — Light › Auto
 
@@ -144,13 +157,32 @@ Full report: `M10_4_VIEWPOINT_GEOMETRY_INTEGRATION.md`.
 ## 9. Revised milestone sequence
 
 M10.4 inserted Horizon ahead of the advanced perspective work, because Horizon's backend was finished and
-only its controls were missing. The rest shifts by one:
+only its controls were missing. The rest shifts by one. M10.5 is now complete as well:
 
 | Milestone | Scope |
 | --- | --- |
-| M10.5 | Advanced Perspective Tool UI — expose the existing Rectangle, Eight Point, and Vertical / Horizontal / Combined guide kinds |
+| M10.5 | **Done.** Advanced Perspective Tool UI — the existing Rectangle, Eight Point, and Vertical / Horizontal / Combined guide kinds, plus Manual Keystone. See `M10_5_ADVANCED_PERSPECTIVE_TOOLS.md`. |
 | M10.6 | Calibrated Lensfun corrections, behind the M10.3 provider, with user opt-in and no Apple double correction |
-| M10.7 | Adaptive ReShape GUI, framing and crop behaviour, precision |
+| M10.7 | Miniature (tilt-shift) controls, and Adaptive ReShape framing and crop behaviour |
+
+### Superseded scope, recorded so it is not started again
+
+`COMPOSITOR_GEOMETRY_GAP_ANALYSIS.md` still proposes "Track A — Intensity + framing controls" as the next
+milestone. **Do not start it.** Both halves already exist and are exposed:
+
+| Track A item | Real state |
+| --- | --- |
+| Perspective intensity 0–100% | `CameraRawGeometrySettings.perspectiveAmount`, default 100, blended homography, `amountSlider` in Advanced Geometry |
+| Keep-size vs bounding-box framing | `CameraRawFramingMode.keepOriginalSize` / `.expandToFit`, `Framing` picker in Advanced Geometry |
+| Regression tests for both | `CameraRawPerspectiveIntensityFramingTests`, 15 tests |
+
+The gap analysis was written before those landed. Its engineering advice about ViewPoint (keep Compositor's
+coverage ranking, do not port Hough or DxO thresholds) is still sound; only its "next milestone" line is stale.
+
+Every milestone from here on cites
+[`REFERENCE_BASELINE_ADOBE_CAMERA_RAW_18_7.md`](REFERENCE_BASELINE_ADOBE_CAMERA_RAW_18_7.md) and meets its §7
+acceptance gate. Work happens only in the existing worktree on `integration/compositor-camera-raw`; no new
+branch, worktree or PR.
 
 ## 11. Verification record — M10.4
 
@@ -164,6 +196,19 @@ only its controls were missing. The rest shifts by one:
 | Screenshots | `ScreenshotTests` step `11` captures Geometry, scrolled to its end, showing Horizon and the unchanged controls above it. Not run: `CompositorUITests` is blocked here (§5 of the report) |
 | Regression | **run: 1204 tests, 1198 passed, 5 environment failures (window geometry), 1 fixture skip.** No Geometry or Camera Raw failure |
 | CI | **no evidence exists.** This fork has never triggered Actions. The `ci-tests.sh` selection bug found while auditing it is fixed and verified locally by running the script |
+
+## 11a. Verification record — M10.5
+
+| What | Result |
+| --- | --- |
+| `CameraRawPerspectiveToolsTests` | 44 tests, pass |
+| `CameraRawPerspectiveEvidenceTests` | 2 tests, pass; 11 files written, copied by `scripts/perspective-evidence.sh` |
+| Focused geometry regression (`CameraRawTests`, `CameraRawSliderTests`, `CameraRawPerspectiveToolsTests`, `FloatingPanelTests`, `TiledLayerTests`) | 104 tests, pass once the quiet group is sequenced (§6 of the report) |
+| Before/after on real photographs | `work/camera-raw-parity/screenshots/m10_5-rendered/`, five corrections plus a Perspective Amount blend, with `corrections.csv` |
+| Section order and reachability | `CompositorUITests/CameraRawSectionOrderTests` — `testAdvancedPerspectiveToolsAreReachable` drives Geometry › Advanced Geometry › Advanced Perspective Tools and confirms all seven kinds, by identifier, in a running app. **This ran**: UI automation works on this machine now, unlike during M10.4 |
+| Screenshots | `ScreenshotTests` steps `12`–`19`, 20 captures in `work/camera-raw-parity/screenshots/m10_5-ui/`. Suite runtime cut from 327 s to 108 s (§6 of the report) |
+| Canvas drag evidence | **not captured.** XCUITest drag synthesis does not reach the canvas; the panel's own counter stayed at zero. Stated as a gap in §5.3 of the report, not claimed as passing. The behaviour is proven at the model level instead |
+| CI | **no evidence exists** for the same reason as M10.4; `scripts/ci-tests.sh` was corrected and exercised locally |
 
 ## 12. Verification per milestone
 

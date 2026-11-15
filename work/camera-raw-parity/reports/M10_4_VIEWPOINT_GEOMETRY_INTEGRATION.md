@@ -501,6 +501,11 @@ other two completed cleanly in ~610 s each. Nothing in the suite was ever found 
 
 ## 8. Suggested scope for M10.5 — Advanced Perspective Tool UI
 
+> **Reference:** this scope was written before the reference baseline was settled. M10.5 cites
+> [`REFERENCE_BASELINE_ADOBE_CAMERA_RAW_18_7.md`](REFERENCE_BASELINE_ADOBE_CAMERA_RAW_18_7.md)
+> (Photoshop 2026 / Camera Raw 18.7), not the archived 2016 spec, and must meet that document's §7 gate. In
+> particular it must not restructure the panel to imitate Adobe, and it must not claim calibrated Adobe parity.
+
 Expose what `CameraRawPerspectiveToolState` already computes, in the same additive way this milestone used for
 Horizon. Suggested, in order:
 

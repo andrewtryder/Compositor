@@ -23,6 +23,9 @@ struct CameraRawGeometryControls: View {
     // Which manual transform rows are expanded.
     @State private var manualTransformationsExpanded = false
     @State private var advancedGeometryExpanded = false
+    @State private var advancedPerspectiveExpanded = false
+    /// The active advanced tool's stored points.
+    private var tools: CameraRawPerspectiveToolState { raw.perspectiveTools }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -109,14 +112,23 @@ struct CameraRawGeometryControls: View {
 
         // Exit drawing mode when leaving Guided
         if mode != .guided {
-            edit?.drawingCameraRawGeometryGuide = false
+            session.endCameraRawGeometryGuideDrawing()
         }
 
         // Trigger auto detection for auto modes
         if mode.isAuto {
+            // An automatic mode owns the picture's keystone, so an advanced guide tool cannot also be selected:
+            // returning to Upright Automatic is exactly the path back to the legacy behavior.
+            if edit?.settings.cameraRaw.perspectiveTools.kind != .automatic {
+                session.selectCameraRawPerspectiveTool(.automatic)
+            }
             Task { await session.applyCameraRawUprightDetection() }
         } else if mode == .off {
             edit?.cameraRawUprightDetectionAttempted = false
+        } else if edit?.settings.cameraRaw.perspectiveTools.kind != .automatic {
+            // Guided is the legacy guide path. Choosing it takes the picture back from the advanced tool, which
+            // keeps its own points for when it is selected again.
+            session.selectCameraRawPerspectiveTool(.automatic)
         }
     }
 
@@ -125,8 +137,11 @@ struct CameraRawGeometryControls: View {
     private var guidedModeSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
-                edit?.drawingCameraRawGeometryGuide.toggle()
-                session.brushRevision += 1
+                if edit?.drawingCameraRawGeometryGuide == true {
+                    session.endCameraRawGeometryGuideDrawing()
+                } else {
+                    session.beginCameraRawGeometryGuideDrawing()
+                }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: edit?.drawingCameraRawGeometryGuide == true ? "pencil.line" : "pencil")
@@ -202,7 +217,9 @@ struct CameraRawGeometryControls: View {
                     projectionPickerRow()
 
                     // Adobe order: Vertical, Horizontal, Rotate, Aspect, Scale, Offset X, Offset Y
-                    let keystoneEnabled = geometry.upright == .off
+                    // One owner of the keystone at a time: a solver Upright mode, or an advanced guide tool that
+                    // solves instead of it. Anything else would be a slider that visibly does nothing.
+                    let keystoneEnabled = geometry.upright == .off && !tools.kind.ownsSolver
 
                     geometrySlider("Vertical", \.vertical,
                                   help: "Straightens vertical lines toward the center.",
@@ -224,10 +241,13 @@ struct CameraRawGeometryControls: View {
                                   help: "Moves the picture up or down.")
 
                     if !keystoneEnabled {
-                        Text("Vertical, Horizontal, and Rotate stay off while Guided or Auto is solving the upright.")
+                        Text(tools.kind.ownsSolver
+                             ? "Vertical, Horizontal, and Rotate stay off while \(tools.kind.rawValue) is solving the upright. Choose Automatic to use them again."
+                             : "Vertical, Horizontal, and Rotate stay off while Guided or Auto is solving the upright.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("geometryKeystoneNote")
                     }
                 }
                 .padding(.top, 4)
@@ -315,6 +335,9 @@ struct CameraRawGeometryControls: View {
 
                     // Horizon is appended after every preexisting Advanced Geometry row.
                     horizonSection
+
+                    // Advanced Perspective Tools are appended last, after Horizon.
+                    advancedPerspectiveSection
                 }
                 .padding(.top, 4)
             }
@@ -527,6 +550,178 @@ struct CameraRawGeometryControls: View {
                 .font(.system(size: 10, design: .monospaced))
         }
         .accessibilityIdentifier(identifier)
+    }
+
+    // MARK: - Advanced Perspective Tools (appended last, inside Advanced Geometry)
+
+    /// Compact disclosure for the seven perspective tool kinds. The tools reuse `CameraRawPerspectiveToolState`
+    /// and `CameraRawPerspectiveTools`; nothing here solves a transform, and nothing here is applied until its
+    /// points are valid. Collapsed by default, so an existing workflow is untouched.
+    private var advancedPerspectiveSection: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Divider().padding(.vertical, 2)
+
+            // The disclosure button and the active-tool name sit side by side rather than nested: a SwiftUI button
+            // merges its children into one accessibility element, which swallowed the status identifier and left
+            // no way to read or drive it.
+            HStack(spacing: 6) {
+                Button {
+                    advancedPerspectiveExpanded.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: advancedPerspectiveExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .frame(width: 10)
+                        Text("Advanced Perspective Tools")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Guides, Rectangle, Eight Point and Manual Keystone, on top of Upright.")
+                .accessibilityIdentifier("advancedPerspectiveDisclosure")
+                .accessibilityLabel("Advanced Perspective Tools")
+                .accessibilityValue(advancedPerspectiveExpanded ? "Expanded" : "Collapsed")
+
+                Text(tools.kind == .automatic ? "Off" : tools.kind.rawValue)
+                    .font(.caption2)
+                    .foregroundStyle(tools.kind == .automatic ? Color.secondary : Color.accentColor)
+                    .help("The perspective tool in use right now.")
+                    .accessibilityIdentifier("advancedPerspectiveActiveTool")
+                    .accessibilityLabel("Active Perspective Tool")
+                    .accessibilityValue(tools.kind == .automatic ? "Off" : tools.kind.rawValue)
+            }
+
+            if advancedPerspectiveExpanded {
+                advancedPerspectiveContent
+                    .padding(.top, 4)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    @ViewBuilder
+    private var advancedPerspectiveContent: some View {
+        Picker("Tool", selection: Binding(
+            get: { tools.kind },
+            set: { session.selectCameraRawPerspectiveTool($0) }
+        )) {
+            // Stability first: the menu lists every kind in its declared order, so a screenshot and a UI guard
+            // read the same list. Each row carries its own stable identifier.
+            ForEach(CameraRawPerspectiveToolKind.allCases, id: \.self) { kind in
+                Text(kind.rawValue)
+                    .tag(kind)
+                    .accessibilityIdentifier("advancedPerspectiveTool_\(kind.tagIdentifier)")
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help("Automatic leaves the Upright mode above in charge. Manual Keystone uses the sliders above.")
+        .accessibilityIdentifier("advancedPerspectiveToolPicker")
+        .accessibilityLabel("Perspective Tool")
+        .accessibilityValue(tools.kind.rawValue)
+
+        Text(tools.kind.instructions)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("advancedPerspectiveInstructions")
+
+        if tools.kind.drawsOnCanvas {
+            drawingButton
+            if !activeCountText.isEmpty {
+                Text(activeCountText)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .accessibilityIdentifier("advancedPerspectiveCount")
+            }
+            if let issue = session.cameraRawPerspectiveToolIssue, activeCount > 0 {
+                Text(issue.rawValue)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("advancedPerspectiveIssue")
+            }
+            if activeCount > 0 {
+                Button(tools.kind == .rectangle ? "Clear Rectangle" : "Clear Lines") {
+                    session.clearCameraRawPerspectiveTool()
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .help("Removes only this tool's points. Other tools keep theirs.")
+                .accessibilityIdentifier("advancedPerspectiveClear")
+                .accessibilityLabel("Clear This Tool")
+                .padding(.top, 1)
+            }
+        } else if tools.kind == .manualKeystone {
+            // The sliders themselves live in Manual Transformations; this only reports what they say, so there is
+            // no second set of controls to disagree with the first.
+            Text(String(format: "Vertical %+.0f · Horizontal %+.0f · Rotate %+.1f°",
+                        geometry.vertical, geometry.horizontal, geometry.rotate))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .help("The Manual Transformations sliders above, which stay the one owner of these numbers.")
+                .accessibilityIdentifier("advancedPerspectiveManualSummary")
+            if geometry.upright != .off {
+                // The stored Upright mode is untouched — only the rendered copy stands aside — so switching back to
+                // Automatic brings the Upright correction straight back. Say that, rather than claiming it was turned off.
+                Text("While Manual Keystone is selected, these sliders correct the picture instead of the Upright mode above. Your Upright setting is kept for when you choose Automatic again.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var drawingButton: some View {
+        let drawing = session.filterEdit?.drawingCameraRawPerspectiveTool == true
+        return Button {
+            if drawing {
+                session.endCameraRawPerspectiveToolDrawing()
+            } else {
+                session.beginCameraRawPerspectiveToolDrawing()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: drawing ? "pencil.line" : "pencil")
+                    .font(.system(size: 11, weight: .medium))
+                Text(drawing ? "Stop Drawing" : "Draw on Image")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .background(drawing ? Color.accentColor : Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .foregroundStyle(drawing ? Color.white : Color.primary)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .help("Draws this tool's reference points on the preview. Escape cancels an unfinished one.")
+        .accessibilityIdentifier("advancedPerspectiveDraw")
+        .accessibilityLabel(drawing ? "Stop Drawing" : "Draw on Image")
+    }
+
+    /// The active tool's own point count, in the words that tool uses: guides, corners, or segments.
+    private var activeCountText: String {
+        switch tools.kind {
+        case .automatic, .manualKeystone:
+            return ""
+        case .verticalGuides, .horizontalGuides:
+            return "\(activeCount) of \(CameraRawPerspectiveToolState.capacity(for: .vertical)) lines"
+        case .combinedGuides:
+            return "\(tools.verticalGuides.count) vertical · \(tools.horizontalGuides.count) horizontal"
+        case .rectangle:
+            return "\(activeCount) of 4 corners"
+        case .eightPoint:
+            return "\(activeCount) of 4 segments · \(activeCount * 2) of 8 endpoints"
+        }
+    }
+
+    private var activeCount: Int {
+        tools.guideCount(for: tools.kind)
     }
 
     // MARK: - Slider helpers

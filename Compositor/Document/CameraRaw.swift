@@ -166,6 +166,9 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         result.detail = detail.normalized
         result.optics = optics.normalized
         result.geometry = geometry.normalized
+        // The keystone sliders on `geometry` are the one owner of Vertical / Horizontal / Rotate; the advanced tool's
+        // copy is a mirror, refreshed here so it can never go stale and never disagree with the panel.
+        result.perspectiveTools.synchronizingManual(with: result.geometry)
         result.calibration = calibration.normalized
         result.horizon = horizon.normalized
         result.miniature = miniature.normalized
@@ -672,6 +675,29 @@ extension EditorSession {
         edit.cameraRawGuideDraft = (start: normalized, end: normalized)
     }
 
+    /// Arms Guided Upright drawing. Exclusive with the advanced tools and Horizon reference drawing: only one
+    /// canvas geometry mode may consume the next drag.
+    func beginCameraRawGeometryGuideDrawing() {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return }
+        edit.drawingCameraRawPerspectiveTool = false
+        edit.cameraRawPerspectiveDraft = nil
+        edit.cameraRawPerspectiveCornerDraft = nil
+        edit.drawingCameraRawHorizonReference = false
+        edit.cameraRawHorizonReferenceDraft = nil
+        edit.cameraRawHorizonDrawingMode = nil
+        edit.drawingCameraRawGeometryGuide = true
+        brushRevision += 1
+    }
+
+    func endCameraRawGeometryGuideDrawing() {
+        guard let edit = filterEdit else { return }
+        edit.drawingCameraRawGeometryGuide = false
+        edit.cameraRawGuideDraft = nil
+        edit.cameraRawDraggingGuideIndex = nil
+        edit.cameraRawDraggingEndpoint = false
+        brushRevision += 1
+    }
+
     func continueCameraRawGeometryGuide(to point: CGPoint) {
         guard let edit = filterEdit, edit.drawingCameraRawGeometryGuide, let normalized = cameraRawNormalizedPoint(at: point) else { return }
         guard var draft = edit.cameraRawGuideDraft else { return }
@@ -681,22 +707,19 @@ extension EditorSession {
 
     func commitCameraRawGeometryGuide() {
         guard let edit = filterEdit, let draft = edit.cameraRawGuideDraft else { return }
-        // Prevent malformed or zero-length guides from entering committed settings.
-        guard hypot(draft.end.x - draft.start.x, draft.end.y - draft.start.y) > 0.01 else {
+        defer {
             edit.cameraRawGuideDraft = nil
             edit.cameraRawDraggingGuideIndex = nil
             edit.cameraRawDraggingEndpoint = false
-            return
         }
+        // Prevent malformed or zero-length guides from entering committed settings.
+        guard hypot(draft.end.x - draft.start.x, draft.end.y - draft.start.y) > 0.01 else { return }
         var settings = edit.settings
         // Enforce the maximum of four manual guides.
         guard settings.cameraRaw.geometry.guides.count < 4 else { return }
         settings.cameraRaw.geometry.guides.append(CameraRawGeometryGuide(startX: draft.start.x, startY: draft.start.y,
                                                                          endX: draft.end.x, endY: draft.end.y))
         settings.cameraRaw.geometry.upright = .guided
-        edit.cameraRawGuideDraft = nil
-        edit.cameraRawDraggingGuideIndex = nil
-        edit.cameraRawDraggingEndpoint = false
         updateFilter(settings, preview: edit.preview)
     }
 
@@ -771,6 +794,263 @@ extension EditorSession {
         edit.settings = settings
     }
 
+    // MARK: - Advanced Perspective Tools
+
+    /// Arms the selected advanced tool for drawing on the preview. Refuses the two tools that have no on-image
+    /// handles, and ends Guided Upright and Horizon reference drawing, so exactly one mode owns the next drag.
+    func beginCameraRawPerspectiveToolDrawing() {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return }
+        let tool = edit.settings.cameraRaw.perspectiveTools.kind
+        guard tool.drawsOnCanvas else { return }
+        cancelCameraRawPerspectiveDraft()
+        edit.drawingCameraRawPerspectiveTool = true
+        edit.drawingCameraRawGeometryGuide = false
+        edit.cameraRawGuideDraft = nil
+        edit.cameraRawDraggingGuideIndex = nil
+        edit.cameraRawDraggingEndpoint = false
+        edit.drawingCameraRawHorizonReference = false
+        edit.cameraRawHorizonReferenceDraft = nil
+        edit.cameraRawHorizonDrawingMode = nil
+        brushRevision += 1
+    }
+
+    func endCameraRawPerspectiveToolDrawing() {
+        guard let edit = filterEdit else { return }
+        cancelCameraRawPerspectiveDraft()
+        edit.drawingCameraRawPerspectiveTool = false
+        brushRevision += 1
+    }
+
+    /// Drops an unfinished guide and any in-progress handle drag without touching committed geometry.
+    /// The drag's original point goes back where it was, so the stored correction is exactly as it was before.
+    func cancelCameraRawPerspectiveDraft() {
+        guard let edit = filterEdit else { return }
+        if let target = edit.cameraRawPerspectiveDragTarget,
+           let original = edit.cameraRawPerspectiveDragOriginalPoint {
+            var settings = edit.settings
+            if CameraRawPerspectiveTools.setPoint(original, for: target,
+                                                  in: &settings.cameraRaw.perspectiveTools) {
+                edit.settings = settings
+                updateFilter(settings, preview: edit.preview)
+            }
+        }
+        edit.cameraRawPerspectiveDragTarget = nil
+        edit.cameraRawPerspectiveDragOriginalPoint = nil
+        edit.cameraRawPerspectiveDraft = nil
+        edit.cameraRawPerspectiveCornerDraft = nil
+    }
+
+    /// Registered handles the pointer may grab, converted to document points through the same mapping the overlay
+    /// draws with, so a handle can never be drawn in one place and grabbed in another.
+    func cameraRawHitPerspectiveHandle(at documentPoint: CGPoint,
+                                       zoom: CGFloat) -> CameraRawPerspectiveDragTarget? {
+        guard let edit = filterEdit, edit.kind == .cameraRaw else { return nil }
+        let state = edit.settings.cameraRaw.perspectiveTools
+        guard state.kind.drawsOnCanvas else { return nil }
+        let image = edit.previewSource
+        let tolerance = 12.0 / max(zoom, 0.001)
+        var best: (target: CameraRawPerspectiveDragTarget, distance: CGFloat)?
+        for target in CameraRawPerspectiveTools.dragTargets(for: state) {
+            guard let normalized = CameraRawPerspectiveTools.point(for: target, in: state) else { continue }
+            let pixel = CGPoint(x: normalized.x * CGFloat(image.width), y: normalized.y * CGFloat(image.height))
+            let document = pixel.applying(edit.previewMapping)
+            let distance = hypot(documentPoint.x - document.x, documentPoint.y - document.y)
+            if distance <= tolerance, distance < (best?.distance ?? .greatestFiniteMagnitude) {
+                best = (target, distance)
+            }
+        }
+        return best?.target
+    }
+
+    /// Starts a press on the preview for the armed advanced tool: grab a handle if one is under the pointer,
+    /// otherwise begin a new guide (or place the next rectangle corner).
+    func beginCameraRawPerspectiveToolInteraction(at documentPoint: CGPoint, zoom: CGFloat) {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, edit.drawingCameraRawPerspectiveTool,
+              let normalized = cameraRawNormalizedPoint(at: documentPoint) else { return }
+        // Handles win over starting something new, in Rectangle too: a placed corner must stay draggable.
+        if let target = cameraRawHitPerspectiveHandle(at: documentPoint, zoom: zoom),
+           let point = CameraRawPerspectiveTools.point(for: target, in: edit.settings.cameraRaw.perspectiveTools) {
+            edit.cameraRawPerspectiveDragTarget = target
+            edit.cameraRawPerspectiveDragOriginalPoint = point
+            return
+        }
+        if edit.settings.cameraRaw.perspectiveTools.kind == .rectangle {
+            placeCameraRawPerspectiveCorner(at: normalized)
+            return
+        }
+        edit.cameraRawPerspectiveDraft = (start: normalized, end: normalized)
+    }
+
+    /// Continues a press: moves the grabbed handle, or extends the guide being drawn.
+    func continueCameraRawPerspectiveToolInteraction(to documentPoint: CGPoint) {
+        guard let edit = filterEdit, edit.drawingCameraRawPerspectiveTool,
+              let normalized = cameraRawNormalizedPoint(at: documentPoint) else { return }
+        if let target = edit.cameraRawPerspectiveDragTarget {
+            var settings = edit.settings
+            guard CameraRawPerspectiveTools.setPoint(normalized, for: target,
+                                                     in: &settings.cameraRaw.perspectiveTools) else {
+                // The handle no longer exists (cleared mid-drag): end the drag rather than write to nothing.
+                edit.cameraRawPerspectiveDragTarget = nil
+                edit.cameraRawPerspectiveDragOriginalPoint = nil
+                return
+            }
+            updateFilter(settings, preview: edit.preview)
+            return
+        }
+        guard var draft = edit.cameraRawPerspectiveDraft else { return }
+        draft.end = normalized
+        edit.cameraRawPerspectiveDraft = draft
+        brushRevision += 1
+    }
+
+    /// Ends a press: commits a finished guide, or leaves a handle where it was dragged to.
+    /// A guide that is too short to read is discarded, so a stray click never changes the picture.
+    func endCameraRawPerspectiveToolInteraction() {
+        guard let edit = filterEdit else { return }
+        if edit.cameraRawPerspectiveDragTarget != nil {
+            edit.cameraRawPerspectiveDragTarget = nil
+            edit.cameraRawPerspectiveDragOriginalPoint = nil
+            return
+        }
+        guard let draft = edit.cameraRawPerspectiveDraft else { return }
+        edit.cameraRawPerspectiveDraft = nil
+        guard hypot(draft.end.x - draft.start.x, draft.end.y - draft.start.y) > 0.01 else { return }
+        let tool = edit.settings.cameraRaw.perspectiveTools.kind
+        guard let list = guideList(for: tool, verticalFrom: draft) else { return }
+        var settings = edit.settings
+        let guide = CameraRawGeometryGuide(startX: draft.start.x, startY: draft.start.y,
+                                          endX: draft.end.x, endY: draft.end.y)
+        guard CameraRawPerspectiveTools.appendGuide(guide, to: list,
+                                                    in: &settings.cameraRaw.perspectiveTools) else { return }
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Which list a finished guide belongs in. Combined Guides sorts by the line's own direction so the two lists
+    /// stay meaningful; Vertical and Horizontal Guides take the line as given, whatever its angle.
+    private func guideList(for tool: CameraRawPerspectiveToolKind,
+                           verticalFrom draft: (start: CGPoint, end: CGPoint)) -> CameraRawPerspectiveGuideList? {
+        switch tool {
+        case .verticalGuides: return .vertical
+        case .horizontalGuides: return .horizontal
+        case .combinedGuides:
+            return abs(draft.end.y - draft.start.y) >= abs(draft.end.x - draft.start.x) ? .vertical : .horizontal
+        case .eightPoint: return .eightPoint
+        case .automatic, .rectangle, .manualKeystone: return nil
+        }
+    }
+
+    /// Places the next rectangle corner. The fourth corner completes the quad; an invalid quad is never stored,
+    /// so an unfinished or self-crossing rectangle cannot silently apply a stale correction.
+    func placeCameraRawPerspectiveCorner(at normalized: CGPoint) {
+        guard let edit = filterEdit, edit.settings.cameraRaw.perspectiveTools.kind == .rectangle else { return }
+        var settings = edit.settings
+        var corners = settings.cameraRaw.perspectiveTools.rectangleCorners
+        guard corners.count < 4 else {
+            edit.cameraRawPerspectiveCornerDraft = nil
+            return
+        }
+        corners.append(normalized)
+        settings.cameraRaw.perspectiveTools.rectangleCorners = corners
+        edit.cameraRawPerspectiveCornerDraft = corners.count == 4 ? nil : normalized
+        // Three corners are a construction in progress: they render as handles but must not warp the picture.
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Removes the last placed rectangle corner, or the whole rectangle when it is complete.
+    func removeLastCameraRawPerspectiveCorner() {
+        guard let edit = cameraRawEdit(), edit.settings.cameraRaw.perspectiveTools.kind == .rectangle else { return }
+        var settings = edit.settings
+        var corners = settings.cameraRaw.perspectiveTools.rectangleCorners
+        guard !corners.isEmpty else { return }
+        corners.removeLast()
+        settings.cameraRaw.perspectiveTools.rectangleCorners = corners
+        edit.cameraRawPerspectiveCornerDraft = corners.last
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// The Camera Raw edit that may still be changed, or nil while it is committing or absent.
+    private func cameraRawEdit() -> FilterEdit? {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return nil }
+        return edit
+    }
+
+    /// Deletes the guide or corner under the pointer, if the active tool has one there.
+    func deleteCameraRawPerspectiveHandle(at documentPoint: CGPoint, zoom: CGFloat) -> Bool {
+        guard let edit = cameraRawEdit(),
+              let target = cameraRawHitPerspectiveHandle(at: documentPoint, zoom: zoom) else {
+            return false
+        }
+        var settings = edit.settings
+        var state = settings.cameraRaw.perspectiveTools
+        switch target {
+        case .guide(let list, let index, _):
+            var guides = state.guides(in: list)
+            guard guides.indices.contains(index) else { return false }
+            guides.remove(at: index)
+            state.setGuides(guides, in: list)
+        case .corner(let index):
+            // A rectangle is one object: removing one of four corners would leave a shape that is not a rectangle.
+            // If it is complete, the whole rectangle goes; while it is being drawn, the last corner does.
+            var corners = state.rectangleCorners
+            guard !corners.isEmpty else { return false }
+            if corners.count == 4 {
+                corners = []
+                edit.cameraRawPerspectiveCornerDraft = nil
+            } else if index == corners.count - 1 {
+                corners.removeLast()
+                edit.cameraRawPerspectiveCornerDraft = corners.last
+            } else {
+                return false
+            }
+            state.rectangleCorners = corners
+        }
+        settings.cameraRaw.perspectiveTools = state
+        updateFilter(settings, preview: edit.preview)
+        return true
+    }
+
+    /// Clears the active tool's own points. Other tools' work stays, and the tool stays selected.
+    func clearCameraRawPerspectiveTool() {
+        guard let edit = cameraRawEdit() else { return }
+        var settings = edit.settings
+        let tool = settings.cameraRaw.perspectiveTools.kind
+        CameraRawPerspectiveTools.clear(tool, in: &settings.cameraRaw.perspectiveTools)
+        edit.cameraRawPerspectiveDraft = nil
+        edit.cameraRawPerspectiveCornerDraft = nil
+        edit.cameraRawPerspectiveDragTarget = nil
+        edit.cameraRawPerspectiveDragOriginalPoint = nil
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Selects a tool without disturbing the others' stored points. Leaving a drawing tool ends its drag and
+    /// drops anything unfinished, so a half-drawn guide can never be committed under a different tool.
+    func selectCameraRawPerspectiveTool(_ tool: CameraRawPerspectiveToolKind) {
+        guard let edit = cameraRawEdit() else { return }
+        if edit.settings.cameraRaw.perspectiveTools.kind == tool {
+            if !tool.drawsOnCanvas { endCameraRawPerspectiveToolDrawing() }
+            return
+        }
+        cancelCameraRawPerspectiveDraft()
+        var settings = edit.settings
+        settings.cameraRaw.perspectiveTools.kind = tool
+        // The keystone sliders are the owner; the mirror follows them on every switch.
+        settings.cameraRaw.perspectiveTools.synchronizingManual(with: settings.cameraRaw.geometry)
+        if !tool.drawsOnCanvas { edit.drawingCameraRawPerspectiveTool = false }
+        // Upright stays exactly as it was stored. `applying` gives the selected tool the picture and returns Upright
+        // to it untouched when Automatic is chosen again, so switching tools never costs a Guided correction.
+        updateFilter(settings, preview: edit.preview)
+        brushRevision += 1
+    }
+
+    /// What the panel says about the active tool's stored points right now, if anything is wrong.
+    /// Nil while the tool has nothing to say: incomplete is only a problem for the tools that apply nothing.
+    var cameraRawPerspectiveToolIssue: CameraRawPerspectiveToolIssue? {
+        guard let edit = filterEdit, edit.kind == .cameraRaw else { return nil }
+        let image = edit.previewSource
+        return CameraRawPerspectiveTools.problem(in: edit.settings.cameraRaw.perspectiveTools,
+                                                 width: image.width, height: image.height)
+    }
+
     // MARK: - Horizon reference line
 
     /// Arms Horizon › Horizontal Reference / Vertical Reference so the next drag on the preview defines the line.
@@ -784,6 +1064,9 @@ extension EditorSession {
         edit.cameraRawHorizonReferenceDraft = nil
         edit.drawingCameraRawGeometryGuide = false
         edit.cameraRawGuideDraft = nil
+        edit.drawingCameraRawPerspectiveTool = false
+        edit.cameraRawPerspectiveDraft = nil
+        edit.cameraRawPerspectiveCornerDraft = nil
         brushRevision += 1
     }
 

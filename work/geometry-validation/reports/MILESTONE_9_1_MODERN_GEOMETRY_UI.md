@@ -4,6 +4,14 @@
 
 Corrections to PR #17 (M9.1: Modern Adobe Camera Raw Geometry UI) following independent code review. Fixes Upright mode labeling, Geometry guide coordinate alignment, genuine endpoint dragging, the four-guide limit, and Geometry panel hierarchy. Then verifies the running macOS UI against the Adobe Camera Raw 19.0 Geometry reference.
 
+> **Reference note (added later).** The comparison images named below are **historical citations**, not the
+> project's baseline. The authoritative reference is Photoshop 2026 / Adobe Camera Raw 18.7, described in
+> [`REFERENCE_BASELINE_ADOBE_CAMERA_RAW_18_7.md`](../../camera-raw-parity/reports/REFERENCE_BASELINE_ADOBE_CAMERA_RAW_18_7.md).
+> The decisions this milestone made — five honestly labelled Upright modes rather than six, no cosmetic button,
+> Compositor's own panel structure — remain correct under that baseline. Where this report differs from the ACR
+> 19.0 image, the panel as shipped is what later milestones build on. The 2016 spec is archived and is not a
+> requirement.
+
 **Branch:** `camera-raw-modern-geometry-ui`  
 **Worktree:** `/Users/atr/code/Compositor-geometry-ui`  
 **Current commit:** `44fcf07b5f977107457c344dcde95d8506d20cef`  

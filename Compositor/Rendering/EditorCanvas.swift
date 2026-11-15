@@ -120,6 +120,7 @@ final class CanvasView: NSView {
             || session.filterEdit?.movesCameraRawLensBlurFocus == true
             || session.filterEdit?.drawingCameraRawGeometryGuide == true
             || session.filterEdit?.drawingCameraRawHorizonReference == true
+            || session.filterEdit?.drawingCameraRawPerspectiveTool == true
     }
     /// View point where a targeted-adjustment drag began.
     private var hueTargetStart: CGPoint?
@@ -1471,6 +1472,7 @@ final class CanvasView: NSView {
         }
         drawCameraRawGeometryGuides(context: context, document: document, dirtyRect: dirtyRect)
         drawCameraRawHorizonReference(context: context, document: document, dirtyRect: dirtyRect)
+        drawCameraRawPerspectiveTools(context: context, document: document, dirtyRect: dirtyRect)
         drawTextBoxDraft()
     }
 
@@ -1528,6 +1530,126 @@ final class CanvasView: NSView {
             context.strokePath()
             context.setLineDash(phase: 0, lengths: [])
         }
+        context.restoreGState()
+    }
+
+    /// Draws the active Advanced Perspective tool's handles: guide ends, eight-point segments, and rectangle corners.
+    /// Uses the same image→document→view chain as `drawCameraRawGeometryGuides`, so a handle is drawn exactly where
+    /// `cameraRawHitPerspectiveHandle` will find it.
+    private func drawCameraRawPerspectiveTools(context: CGContext, document: CanvasDocument, dirtyRect: NSRect) {
+        guard let edit = session.filterEdit, edit.kind == .cameraRaw else { return }
+        let state = edit.settings.cameraRaw.perspectiveTools
+        guard state.kind.drawsOnCanvas else { return }
+        let image = edit.previewSource
+        let canvas = CGRect(origin: session.viewport.viewPoint(from: .zero, documentSize: document.size),
+                            size: CGSize(width: document.size.width * session.viewport.pointsPerPixel,
+                                         height: document.size.height * session.viewport.pointsPerPixel))
+        let area = dirtyRect.intersection(canvas)
+        guard !area.isNull, !area.isEmpty else { return }
+
+        let scale = session.viewport.pointsPerPixel
+        func viewPoint(for normalized: CGPoint) -> CGPoint {
+            let pixel = CGPoint(x: normalized.x * CGFloat(image.width), y: normalized.y * CGFloat(image.height))
+            return session.viewport.viewPoint(from: pixel.applying(edit.previewMapping), documentSize: document.size)
+        }
+
+        context.saveGState()
+        context.setLineWidth(1.5 / scale)
+        context.setLineCap(.round)
+
+        let corners = state.rectangleCorners
+        if state.kind == .rectangle, !corners.isEmpty {
+            let points = corners.map(viewPoint(for:))
+            if points.count == 4 {
+                // Three corners are a construction in progress: the outline is offered but nothing is applied.
+                // A completed but invalid rectangle is drawn the same way the panel words the problem.
+                let valid = CameraRawPerspectiveTools.rectangleProblem(corners: corners) == nil
+                let stroke = valid ? CGColor(srgbRed: 1, green: 0.85, blue: 0.25, alpha: 0.95)
+                                   : CGColor(srgbRed: 1, green: 0.72, blue: 0.30, alpha: 0.95)
+                context.setStrokeColor(stroke)
+                context.setLineDash(phase: 0, lengths: valid ? [] : [6 / scale, 4 / scale])
+                context.beginPath()
+                context.move(to: points[0])
+                for point in points.dropFirst() { context.addLine(to: point) }
+                context.closePath()
+                context.strokePath()
+                context.setLineDash(phase: 0, lengths: [])
+            }
+            for (index, point) in points.enumerated() {
+                // The next corner to place is a ring, so it reads as “not yet taken”.
+                let rect = CGRect(x: point.x - 4.5, y: point.y - 4.5, width: 9, height: 9)
+                if corners.count < 4, index == corners.count - 1 {
+                    context.setStrokeColor(CGColor(srgbRed: 1, green: 0.85, blue: 0.25, alpha: 0.95))
+                    context.setLineWidth(1 / scale)
+                    context.strokeEllipse(in: rect)
+                    context.setLineWidth(1.5 / scale)
+                } else {
+                    context.setFillColor(CGColor(srgbRed: 1, green: 0.85, blue: 0.25, alpha: 0.95))
+                    context.fillEllipse(in: rect)
+                    context.setStrokeColor(CGColor.white)
+                    context.setLineWidth(1 / scale)
+                    context.strokeEllipse(in: rect)
+                }
+            }
+        }
+
+        func strokeGuide(_ guide: CameraRawGeometryGuide, color: CGColor, dashed: Bool = false) {
+            let start = viewPoint(for: guide.start), end = viewPoint(for: guide.end)
+            context.setStrokeColor(color)
+            context.setLineDash(phase: 0, lengths: dashed ? [5 / scale, 4 / scale] : [])
+            context.beginPath()
+            context.move(to: start)
+            context.addLine(to: end)
+            context.strokePath()
+            context.setLineDash(phase: 0, lengths: [])
+            for point in [start, end] {
+                let rect = CGRect(x: point.x - 3.5, y: point.y - 3.5, width: 7, height: 7)
+                context.setFillColor(color)
+                context.fillEllipse(in: rect)
+                context.setStrokeColor(CGColor.white)
+                context.setLineWidth(1 / scale)
+                context.strokeEllipse(in: rect)
+            }
+        }
+
+        let verticalColor = CGColor(srgbRed: 1, green: 0, blue: 1, alpha: 0.9)
+        let horizontalColor = CGColor(srgbRed: 0, green: 1, blue: 1, alpha: 0.9)
+        let eightPointColor = CGColor(srgbRed: 0.45, green: 0.95, blue: 0.55, alpha: 0.9)
+        switch state.kind {
+        case .verticalGuides:
+            for guide in state.verticalGuides { strokeGuide(guide, color: verticalColor) }
+        case .horizontalGuides:
+            for guide in state.horizontalGuides { strokeGuide(guide, color: horizontalColor) }
+        case .combinedGuides:
+            for guide in state.verticalGuides { strokeGuide(guide, color: verticalColor) }
+            for guide in state.horizontalGuides { strokeGuide(guide, color: horizontalColor) }
+        case .eightPoint:
+            for guide in state.eightPointGuides { strokeGuide(guide, color: eightPointColor) }
+        case .automatic, .manualKeystone, .rectangle:
+            break
+        }
+
+        if let draft = edit.cameraRawPerspectiveDraft {
+            let start = viewPoint(for: draft.start), end = viewPoint(for: draft.end)
+            context.setStrokeColor(CGColor.white)
+            context.setLineWidth(1 / scale)
+            context.setLineDash(phase: 0, lengths: [4 / scale, 4 / scale])
+            context.beginPath()
+            context.move(to: start)
+            context.addLine(to: end)
+            context.strokePath()
+            context.setLineDash(phase: 0, lengths: [])
+        }
+        // Light the grabbed handle, so a drag that has not moved yet still reads as grabbed.
+        if let target = edit.cameraRawPerspectiveDragTarget,
+           let normalized = CameraRawPerspectiveTools.point(for: target, in: state) {
+            let point = viewPoint(for: normalized)
+            let ring = CGRect(x: point.x - 6, y: point.y - 6, width: 12, height: 12)
+            context.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.9))
+            context.setLineWidth(1 / scale)
+            context.strokeEllipse(in: ring)
+        }
+
         context.restoreGState()
     }
 
@@ -2011,6 +2133,13 @@ final class CanvasView: NSView {
             synchronizeDisplay()
             return
         }
+        // Advanced Perspective Tools: its own explicit canvas mode, exclusive with the two below.
+        if session.filterEdit?.drawingCameraRawPerspectiveTool == true, !spaceHeld, let document = session.document {
+            session.beginCameraRawPerspectiveToolInteraction(at: session.viewport.documentPoint(from: point, documentSize: document.size),
+                                                             zoom: session.viewport.zoom)
+            synchronizeDisplay()
+            return
+        }
         // Horizon › reference line: one dashed line, independent of the Guided Upright solver.
         if session.filterEdit?.drawingCameraRawHorizonReference == true, !spaceHeld, let document = session.document {
             session.beginCameraRawHorizonReference(at: session.viewport.documentPoint(from: point, documentSize: document.size))
@@ -2140,6 +2269,11 @@ final class CanvasView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard session.document != nil else { return }
         let point = convert(event.locationInWindow, from: nil)
+        if session.filterEdit?.drawingCameraRawPerspectiveTool == true, let document = session.document {
+            session.continueCameraRawPerspectiveToolInteraction(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            synchronizeDisplay()
+            return
+        }
         if session.filterEdit?.cameraRawHorizonReferenceDraft != nil, let document = session.document {
             session.continueCameraRawHorizonReference(to: session.viewport.documentPoint(from: point, documentSize: document.size))
             return
@@ -2412,6 +2546,10 @@ final class CanvasView: NSView {
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
             return
         }
+        if session.filterEdit?.drawingCameraRawPerspectiveTool == true {
+            session.endCameraRawPerspectiveToolInteraction()
+            synchronizeDisplay()
+        }
         if session.filterEdit?.cameraRawGuideDraft != nil {
             session.commitCameraRawGeometryGuide()
         }
@@ -2593,6 +2731,15 @@ final class CanvasView: NSView {
             guideDragging = false
         } else if event.keyCode == 53, session.filterEdit?.cameraRawDraggingGuideIndex != nil {
             session.cancelCameraRawGuideEndpointDrag()
+        } else if event.keyCode == 53, session.filterEdit?.cameraRawPerspectiveDraft != nil
+                    || session.filterEdit?.cameraRawPerspectiveDragTarget != nil
+                    || session.filterEdit?.cameraRawPerspectiveCornerDraft != nil {
+            // Escape puts a dragged handle back and drops anything unfinished; no document entry is made.
+            session.cancelCameraRawPerspectiveDraft()
+            synchronizeDisplay()
+        } else if event.keyCode == 53, session.filterEdit?.drawingCameraRawPerspectiveTool == true {
+            session.cancelCameraRawPerspectiveDraft()
+            synchronizeDisplay()
         } else if event.keyCode == 53, session.transformEdit != nil {
             transformDrag = nil
             session.cancelTransform()
@@ -2617,6 +2764,17 @@ final class CanvasView: NSView {
             let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
             session.nudgeLayer(dx: event.keyCode == 123 ? -step : event.keyCode == 124 ? step : 0,
                                dy: event.keyCode == 126 ? -step : event.keyCode == 125 ? step : 0)
+        } else if (event.keyCode == 51 || event.keyCode == 117),
+                  session.filterEdit?.drawingCameraRawPerspectiveTool == true,
+                  event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+            // Delete under the pointer removes that handle, rather than deleting the layer.
+            if let window, let document = session.document {
+                let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+                let documentPoint = session.viewport.documentPoint(from: point, documentSize: document.size)
+                if session.deleteCameraRawPerspectiveHandle(at: documentPoint, zoom: session.viewport.zoom) {
+                    synchronizeDisplay()
+                }
+            }
         } else if (event.keyCode == 51 || event.keyCode == 117),
            event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
             session.deleteKeyPressed()

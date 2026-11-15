@@ -4,8 +4,48 @@ import Testing
 @testable import Compositor
 
 /// Serialized: these show real panels and run a display pass.
+///
+/// The test host is Compositor itself, so the document window these panels dock to and measure against is the
+/// one the app restored from the developer's saved window state. That frame is whatever was last left on screen
+/// and can legitimately be a very wide window on a larger display, or one whose saved rectangle no longer fits
+/// the screen this runs on. Both make `canvasRect(in:)` and the docked frame meaningless, and under parallel load
+/// they made the panel suites fail for reasons that had nothing to do with the panels. Each window test therefore
+/// puts the document window at a known frame on the visible screen for its duration, and restores the original
+/// frame afterwards; the saved preferences themselves are never touched.
 @MainActor @Suite(.serialized)
 struct FloatingPanelTests {
+    /// A frame small enough for any Mac display and wide enough for the docked Camera Raw panel.
+    private static let workingFrame = NSRect(x: 0, y: 0, width: 1180, height: 780)
+
+    /// The app's document window: the visible window that is not one of the panels under test.
+    private static func documentWindow() -> NSWindow? {
+        NSApp.mainWindow ?? NSApp.windows.first { $0.isVisible && !($0 is NSPanel) }
+    }
+
+    /// Sets a predictable document-window frame and returns the frame to put back when the test ends.
+    private func usePredictableEditorWindow() -> NSRect? {
+        guard let window = Self.documentWindow() else { return nil }
+        let original = window.frame
+        guard let screen = window.screen ?? NSScreen.main else { return original }
+        let visible = screen.visibleFrame
+        let width = min(Self.workingFrame.width, visible.width)
+        let height = min(Self.workingFrame.height, visible.height)
+        // Centered on the visible frame, so a panel that opens on the canvas's right edge stays on screen.
+        let frame = NSRect(x: visible.midX - width / 2, y: visible.midY - height / 2,
+                           width: width, height: height)
+        if window.frame != frame { window.setFrame(frame, display: true) }
+        settle()
+        return original
+    }
+
+    /// Puts the developer's own window frame back, so running the tests does not rearrange their editor.
+    private func restoreEditorWindow(_ original: NSRect?) {
+        guard let original, let window = Self.documentWindow(), window.frame != original else { return }
+        window.setFrame(original, display: true)
+        settle()
+    }
+
+
     private func sessionWithPixels() throws -> EditorSession {
         let session = EditorSession()
         session.createDocument(width: 40, height: 20)
@@ -84,6 +124,8 @@ struct FloatingPanelTests {
     /// Camera Raw docks to the document window. That frame must not become the place
     /// Gaussian Blur and the other filters reopen.
     @Test func dockedPlacementLeavesTheSavedFilterPosition() throws {
+        let original = usePredictableEditorWindow()
+        defer { restoreEditorWindow(original) }
         let controller = FloatingPanelController(name: "testDockedFilterPosition")
         controller.show(title: "Gaussian Blur", content: Text("Blur"))
         settle()
@@ -132,7 +174,9 @@ struct FloatingPanelTests {
     /// A panel opens the first time centered on the canvas's right edge, where the layers panel begins, and on the
     /// canvas top to bottom, so the picture's middle stays in view.
     @Test func aPanelFirstOpensOnTheCanvasRightEdge() throws {
-        let window = try #require(NSApp.mainWindow ?? NSApp.windows.first { $0.isVisible && !($0 is NSPanel) })
+        let original = usePredictableEditorWindow()
+        defer { restoreEditorWindow(original) }
+        let window = try #require(Self.documentWindow())
         let canvas = try #require(FloatingPanelController.canvasRect(in: window))
         let controller = FloatingPanelController(name: "testFirstPlacement-\(UUID().uuidString)")
         controller.show(title: "Gaussian Blur", content: Text("Blur").frame(width: 200, height: 100))
@@ -163,6 +207,8 @@ struct FloatingPanelTests {
     /// this test built its own window, which the panel quite correctly ignored — and the two
     /// windows together took the test host down.
     @Test func cameraRawDocksToTheDocumentWindow() throws {
+        let original = usePredictableEditorWindow()
+        defer { restoreEditorWindow(original) }
         let controller = FloatingPanelController(name: "testCameraRawOpensRight")
         controller.show(title: "Camera Raw Filter", content: Text("Camera Raw").frame(maxWidth: .infinity, maxHeight: .infinity),
                         placement: .dockedToMainWindowRight)
