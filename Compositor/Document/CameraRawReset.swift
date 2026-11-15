@@ -97,6 +97,7 @@ nonisolated extension CameraRawSettings {
             target.horizon = source.horizon
             target.perspectiveTools = source.perspectiveTools
             target.miniature = source.miniature
+            target.crop = source.crop
             target.automaticHorizonAngle = source.automaticHorizonAngle
         case .calibration: target.calibration = source.calibration
         }

@@ -344,6 +344,13 @@ struct CameraRawGeometryControls: View {
                     // Miniature / Tilt-Shift is appended after the advanced tools, keeping the
                     // additive order this milestone continues: nothing above moves.
                     miniatureSection
+
+                    // Anamorphic De-squeeze is appended after Miniature, still inside Advanced
+                    // Geometry: nothing above moves.
+                    anamorphicSection
+
+                    // Crop After Transform is appended last, after the de-squeeze.
+                    cropAfterTransformSection
                 }
                 .padding(.top, 4)
             }
@@ -893,6 +900,248 @@ struct CameraRawGeometryControls: View {
                 .font(.system(size: 10, design: .monospaced))
         }
         .accessibilityIdentifier(identifier ?? "")
+    }
+
+    // MARK: - Anamorphic De-squeeze (appended after Miniature, collapsed by default)
+
+    /// Compact disclosure for the de-squeeze ratio: a preset menu plus a Custom numeric field.
+    /// Ratio 1 (Off) is the default, which the pipeline skips entirely — no resample, bit-exact.
+    @State private var anamorphicExpanded = false
+
+    private var anamorphicPresetChoice: CameraRawAnamorphicPreset {
+        CameraRawAnamorphicPreset.preset(for: geometry.anamorphic.ratio)
+    }
+
+    private var anamorphicRatioBinding: Binding<CameraRawAnamorphicPreset> {
+        Binding(
+            get: { anamorphicPresetChoice },
+            set: { choice in
+                update { $0.cameraRaw.geometry.anamorphic = CameraRawAnamorphicSettings(ratio: choice.ratio) }
+            }
+        )
+    }
+
+    private var anamorphicSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider().padding(.vertical, 2)
+
+            HStack(spacing: 6) {
+                Button {
+                    anamorphicExpanded.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: anamorphicExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .frame(width: 10)
+                        Text("Anamorphic De-squeeze")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Restores the proportions of a squeezed photograph with one horizontal resample.")
+                .accessibilityIdentifier("anamorphicDisclosure")
+                .accessibilityLabel("Anamorphic De-squeeze")
+                .accessibilityValue(anamorphicExpanded ? "Expanded" : "Collapsed")
+
+                Text(geometry.anamorphic.isIdentity ? "Off" : String(format: "%.2fx", geometry.anamorphic.ratio))
+                    .font(.caption2)
+                    .foregroundStyle(geometry.anamorphic.isIdentity ? Color.secondary : Color.accentColor)
+                    .help("Whether de-squeeze is changing the picture right now.")
+                    .accessibilityIdentifier("anamorphicActiveState")
+                    .accessibilityLabel("De-squeeze State")
+                    .accessibilityValue(geometry.anamorphic.isIdentity ? "Off" : "On")
+            }
+
+            if anamorphicExpanded {
+                VStack(alignment: .leading, spacing: 5) {
+                    Picker("Ratio", selection: anamorphicRatioBinding) {
+                        ForEach(CameraRawAnamorphicPreset.allCases, id: \.self) { preset in
+                            Text(preset.label).tag(preset)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help("1.0 leaves the picture alone. 1.33, 1.5, 1.6 and 2.0 match the common squeezed "
+                          + "formats. Custom takes the ratio typed below.")
+                    .accessibilityIdentifier("anamorphicRatioPicker")
+
+                    HStack(spacing: 8) {
+                        Text("Custom")
+                            .frame(minWidth: 64, alignment: .leading)
+                            .help("The de-squeeze ratio as a width multiplier, 1 to 8.")
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                        TextField("Custom",
+                                  value: Binding(
+                                      get: { geometry.anamorphic.ratio },
+                                      set: { newValue in
+                                          update { $0.cameraRaw.geometry.anamorphic.ratio = newValue }
+                                      }),
+                                  format: .number.precision(.fractionLength(2)))
+                            .frame(width: 44)
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.trailing)
+                            .disabled(anamorphicPresetChoice != .custom)
+                            .help(anamorphicPresetChoice == .custom
+                                  ? "The de-squeeze ratio as a width multiplier, 1 to 8."
+                                  : "Choose Custom to enter a ratio.")
+                            .font(.system(size: 10, design: .monospaced))
+                            .accessibilityIdentifier("anamorphicCustomRatio")
+                        Spacer(minLength: 0)
+                        Button("Reset") {
+                            update { $0.cameraRaw.geometry.anamorphic = CameraRawAnamorphicSettings() }
+                        }
+                        .font(.system(size: 11))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .help("Puts de-squeeze back to Off at 1.0x.")
+                        .accessibilityIdentifier("anamorphicReset")
+                        .accessibilityLabel("Reset De-squeeze")
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    // MARK: - Crop After Transform (appended last, after the de-squeeze)
+
+    /// Compact disclosure for the geometry-aware crop, planned on the corrected image after
+    /// geometry's own framing and Constrain Crop. Reuses `CameraRawGeometryCropRequest` and
+    /// `CameraRawGeometryCrop.plan`; it adds no second crop engine and no second Aspect slider.
+    @State private var cropAfterTransformExpanded = false
+
+    private var cropAfterTransformSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider().padding(.vertical, 2)
+
+            HStack(spacing: 6) {
+                Button {
+                    cropAfterTransformExpanded.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: cropAfterTransformExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .frame(width: 10)
+                        Text("Crop After Transform")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Crops the corrected picture after geometry, before Miniature and Lens Blur.")
+                .accessibilityIdentifier("cropAfterTransformDisclosure")
+                .accessibilityLabel("Crop After Transform")
+                .accessibilityValue(cropAfterTransformExpanded ? "Expanded" : "Collapsed")
+
+                Text(raw.crop.isNoCrop ? "Off" : "On")
+                    .font(.caption2)
+                    .foregroundStyle(raw.crop.isNoCrop ? Color.secondary : Color.accentColor)
+                    .help("Whether the crop is changing the picture right now.")
+                    .accessibilityIdentifier("cropAfterTransformActiveState")
+                    .accessibilityLabel("Crop After Transform State")
+                    .accessibilityValue(raw.crop.isNoCrop ? "Off" : "On")
+            }
+
+            if cropAfterTransformExpanded {
+                VStack(alignment: .leading, spacing: 5) {
+                    Toggle("Automatic Opaque Crop", isOn: Binding(
+                        get: { raw.crop.automaticOpaqueCrop },
+                        set: { value in update { $0.cameraRaw.crop.automaticOpaqueCrop = value } }
+                    ))
+                    .font(.system(size: 11))
+                    .help("Keeps the largest rectangle of real pixels after the transform, like Constrain Crop.")
+                    .accessibilityIdentifier("cropAfterTransformAutomatic")
+
+                    Picker("Aspect", selection: aspectModeBinding) {
+                        ForEach(CameraRawCropAspectMode.allCases, id: \.self) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help("Free keeps the rectangle as dragged. Original matches the photograph's own aspect. "
+                          + "Fixed takes the ratio typed below.")
+                    .accessibilityIdentifier("cropAfterTransformAspectPicker")
+
+                    if raw.crop.aspectMode == .fixed {
+                        HStack(spacing: 8) {
+                            Text("Ratio")
+                                .frame(minWidth: 64, alignment: .leading)
+                                .help("The fixed aspect as width over height.")
+                                .font(.system(size: 11))
+                                .lineLimit(1)
+                            TextField("Ratio",
+                                      value: Binding(
+                                          get: { raw.crop.aspectRatio },
+                                          set: { newValue in update { $0.cameraRaw.crop.aspectRatio = newValue } }),
+                                      format: .number.precision(.fractionLength(2)))
+                                .frame(width: 44)
+                                .textFieldStyle(.roundedBorder)
+                                .multilineTextAlignment(.trailing)
+                                .help("The fixed aspect as width over height.")
+                                .font(.system(size: 10, design: .monospaced))
+                                .accessibilityIdentifier("cropAfterTransformAspectRatio")
+                            Spacer(minLength: 0)
+                        }
+                    }
+
+                    HStack(spacing: 10) {
+                        Button {
+                            if session.filterEdit?.editsCameraRawCrop == true {
+                                session.endCameraRawCropEditing(cancelled: false)
+                            } else {
+                                session.beginCameraRawCropEditing()
+                            }
+                        } label: {
+                            Label("Edit on Image", systemImage: "crop.rotate")
+                        }
+                        .buttonStyle(.borderless)
+                        .tint(session.filterEdit?.editsCameraRawCrop == true ? Color.accentColor : Color.secondary)
+                        .help("Draw or drag the crop rectangle on the preview. Escape puts it back.")
+                        .accessibilityLabel("Edit Crop After Transform on Image")
+                        .accessibilityIdentifier("cropAfterTransformEdit")
+
+                        Spacer(minLength: 0)
+                        Button("Reset Crop") {
+                            update { $0.cameraRaw.crop = CameraRawGeometryCropRequest() }
+                            session.endCameraRawCropEditing(cancelled: true)
+                        }
+                        .font(.system(size: 11))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .help("Puts the crop back to no additional crop.")
+                        .accessibilityIdentifier("cropAfterTransformReset")
+                        .accessibilityLabel("Reset Crop After Transform")
+                    }
+
+                    if let cropRect = raw.crop.manualCrop {
+                        Text(String(format: "%.0f, %.0f · %.0f × %.0f px",
+                                    cropRect.minX, cropRect.minY, cropRect.width, cropRect.height))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("cropAfterTransformRect")
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private var aspectModeBinding: Binding<CameraRawCropAspectMode> {
+        Binding(
+            get: { raw.crop.aspectMode },
+            set: { mode in update { $0.cameraRaw.crop.aspectMode = mode } }
+        )
     }
 
     // MARK: - Slider helpers

@@ -47,18 +47,22 @@ nonisolated struct CameraRawGeometryBackendSettings: Equatable, Sendable, Codabl
 nonisolated enum CameraRawGeometryBackend {
     /// Documented correction order for full-resolution apply (GUI may preview subsets):
     /// 1. Lens distortion (optics)
-    /// 2. Volume
-    /// 3. Perspective / upright / tool guides (with Perspective Amount)
-    /// 4. Horizon rotation (composed into destination corners before framing)
-    /// 5. Framing (Keep Original Size / Expand to Fit) + independent Constrain Crop / crop request
-    /// 6. Miniature effect
-    /// 7. Color grade (Camera Raw light/color/…)
+    /// 2. Anamorphic de-squeeze (inside geometry, before Volume: the sensor's squeezed grid has been
+    ///    corrected, everything after works on true proportions)
+    /// 3. Volume
+    /// 4. Perspective / upright / tool guides (with Perspective Amount)
+    /// 5. Horizon rotation (composed into destination corners before framing)
+    /// 6. Framing (Keep Original Size / Expand to Fit) + independent Constrain Crop / crop request
+    ///    (Crop After Transform runs here, on the corrected image)
+    /// 7. Miniature effect
+    /// 8. Color grade (Camera Raw light/color/…)
     ///
     /// Auto Full candidate ranking is never modified here.
     /// Horizon, perspective tools, and Miniature are executed by `CameraRawSettings.applyResult` on the
     /// PixelFilter / EditorSession path (not API-only).
     static let compositionOrder = [
-        "lensDistortion", "volume", "perspective", "horizon", "framingCrop", "miniature", "colorGrade"
+        "lensDistortion", "anamorphicDeSqueeze", "volume", "perspective", "horizon", "framingCrop",
+        "cropAfterTransform", "miniature", "colorGrade"
     ]
 
     /// Geometry settings after applying the active perspective tool state.
@@ -108,7 +112,11 @@ nonisolated enum CameraRawGeometryBackend {
                                                      originalSize: CGSize(width: image.width, height: image.height)),
            crop.width < CGFloat(working.image.width) - 0.5 || crop.height < CGFloat(working.image.height) - 0.5,
            let cropped = working.image.cropping(to: crop) {
+            // A crop with no upstream expansion still changes the layer's pixel grid: place the cropped
+            // bitmap where its pixels came from, rather than dropping the placement and squashing it.
             let expansion = working.expansion?.cropping(to: crop)
+                ?? CameraRawGeometryExpansion(inputWidth: image.width, inputHeight: image.height,
+                                              coverageInInput: crop)
             working = CameraRawGeometryResult(image: cropped, expansion: expansion)
         }
         if !settings.miniature.isIdentity {

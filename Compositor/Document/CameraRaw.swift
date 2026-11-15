@@ -99,6 +99,10 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     var perspectiveTools = CameraRawPerspectiveToolState()
     /// Miniature / tilt-shift. Defaults identity; runs after geometry, before the color grade.
     var miniature = CameraRawMiniatureSettings()
+    /// Crop After Transform: an explicit geometry-aware crop planned on the corrected image after geometry
+    /// (de-squeeze, Volume, Perspective, Horizon, framing and Constrain Crop), before Miniature and Lens Blur.
+    /// Defaults to no crop, which renders exactly as before this existed.
+    var crop = CameraRawGeometryCropRequest()
     /// Optional automatic horizon angle from the last Auto Level observation (degrees). Not persisted.
     var automaticHorizonAngle: Double? = nil
 
@@ -117,7 +121,7 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     var adjustsDetail: Bool { detail.adjusts }
     var adjustsOptics: Bool { optics.adjusts }
     var adjustsGeometry: Bool { geometry.adjusts || !horizon.isIdentity || !miniature.isIdentity
-        || perspectiveTools.kind != .automatic }
+        || perspectiveTools.kind != .automatic || !crop.isNoCrop }
     var adjustsCalibration: Bool { calibration.adjusts }
     var isIdentity: Bool {
         !adjustsLight && !adjustsColor && !adjustsEffects && !adjustsCurve && !adjustsMixer && !adjustsGrading
@@ -213,6 +217,7 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
             result.horizon = CameraRawHorizonSettings()
             result.perspectiveTools = CameraRawPerspectiveToolState()
             result.miniature = CameraRawMiniatureSettings()
+            result.crop = CameraRawGeometryCropRequest()
             result.automaticHorizonAngle = nil
         }
         if !showsCalibration { result.calibration = CameraRawCalibrationSettings() }
@@ -275,7 +280,7 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
                 source = try CameraRawLensfun.apply(source, correction: correction)
             }
         }
-        // Distortion → volume → perspective → crop, then the grade. Distortion moves early only when
+        // Distortion → de-squeeze → volume → perspective → crop, then the grade. Distortion moves early only when
         // geometry runs, so an optics-only grade keeps its previous order. The late pass skips distortion
         // when this already applied it, including a lens profile's share of the same k.
         var earlyDistortion = false
@@ -295,6 +300,18 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
             let geometryResult = try geometry.applyResult(source, horizonDegrees: horizonDegrees)
             source = geometryResult.image
             geometryExpansion = geometryResult.expansion
+            // Crop After Transform plans on the corrected image, after geometry's own framing, before
+            // Miniature and Lens Blur; the plan rect folds into the same placement metadata.
+            if !settings.crop.isNoCrop,
+               let crop = try CameraRawGeometryCrop.plan(request: settings.crop, image: source,
+                                                         originalSize: CGSize(width: image.width, height: image.height)),
+               crop.width < CGFloat(source.width) - 0.5 || crop.height < CGFloat(source.height) - 0.5,
+               let cropped = source.cropping(to: crop) {
+                source = cropped
+                geometryExpansion = geometryExpansion?.cropping(to: crop)
+                    ?? CameraRawGeometryExpansion(inputWidth: image.width, inputHeight: image.height,
+                                                  coverageInInput: crop)
+            }
             if !settings.miniature.isIdentity {
                 source = try CameraRawMiniature.apply(source, settings: settings.miniature, scale: CGFloat(pixelScale))
             }
@@ -602,6 +619,150 @@ extension EditorSession {
         edit.movesCameraRawMiniatureFocus = false
         edit.cameraRawMiniatureDragOriginalCenter = nil
         brushRevision += 1
+    }
+
+    // MARK: - Crop After Transform on the image
+
+    /// Arms crop-after-transform editing, capturing the stored rect so Escape can put it back exactly.
+    /// Exclusive with the other canvas modes, which are ended here rather than left armed.
+    func beginCameraRawCropEditing() {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return }
+        edit.cameraRawCropDragOriginalScalars = edit.settings.cameraRaw.crop.manualCropScalars
+        edit.editsCameraRawCrop = true
+        edit.cameraRawCropDragTarget = nil
+        edit.movesCameraRawMiniatureFocus = false
+        edit.cameraRawMiniatureDragOriginalCenter = nil
+        edit.drawingCameraRawGeometryGuide = false
+        edit.cameraRawGuideDraft = nil
+        edit.drawingCameraRawPerspectiveTool = false
+        edit.drawingCameraRawHorizonReference = false
+        edit.cameraRawHorizonReferenceDraft = nil
+        edit.cameraRawHorizonDrawingMode = nil
+        // The first render while armed draws the full corrected frame to drag from.
+        brushRevision += 1
+    }
+
+    /// Restores the crop captured when editing was armed, without writing any document entry.
+    func cancelCameraRawCropEditing() {
+        guard let edit = filterEdit else { return }
+        defer {
+            edit.editsCameraRawCrop = false
+            edit.cameraRawCropDragTarget = nil
+            edit.cameraRawCropDragOriginalScalars = nil
+        }
+        guard let original = edit.cameraRawCropDragOriginalScalars else {
+            // Nothing was stored: clearing a rect the person never kept would write history.
+            return
+        }
+        var settings = edit.settings
+        settings.cameraRaw.crop.manualCropScalars = original
+        edit.settings = settings
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Ends the armed state. `cancelled` puts the rect captured when arming began back first;
+    /// otherwise wherever the drag left it is kept. Either way the re-render without the
+    /// neutralizer writes the genuine (possibly cropped) output again.
+    func endCameraRawCropEditing(cancelled: Bool) {
+        guard let edit = filterEdit else { return }
+        if cancelled, let original = edit.cameraRawCropDragOriginalScalars {
+            var settings = edit.settings
+            settings.cameraRaw.crop.manualCropScalars = original
+            edit.settings = settings
+        }
+        edit.editsCameraRawCrop = false
+        edit.cameraRawCropDragTarget = nil
+        edit.cameraRawCropDragOriginalScalars = nil
+        updateFilter(edit.settings, preview: edit.preview)
+    }
+
+    /// Press on the corrected preview while crop editing: a grab of a stored handle, or a fresh
+    /// rectangle drawn from the press point when there is none (or nothing was hit).
+    func beginCameraRawCropDrag(at point: CGPoint) {
+        guard let edit = filterEdit, edit.editsCameraRawCrop, !edit.committing,
+              let prepared = edit.preparedPreview, let preparedTransform = edit.preparedTransform else { return }
+        let scalars = edit.settings.cameraRaw.crop.manualCropScalars
+        let stored = CameraRawCropDragTarget.rectangle
+            .rect(scalars: scalars, width: prepared.width, height: prepared.height)
+        let hit = stored.flatMap { Self.cropHandle(at: point, in: $0,
+                                                    transform: preparedTransform, width: prepared.width, height: prepared.height) }
+        edit.cameraRawCropDragOriginalScalars = edit.settings.cameraRaw.crop.manualCropScalars
+        if let hit {
+            edit.cameraRawCropDragTarget = hit
+            return
+        }
+        // Nothing hit: start a new rectangle here, replacing whatever was stored.
+        let corrected = Self.correctedCropPoint(point, transform: preparedTransform,
+                                                width: prepared.width, height: prepared.height)
+        edit.cameraRawCropDragTarget = .rectangle
+        var settings = edit.settings
+        settings.cameraRaw.crop.manualCropScalars = [corrected.x, corrected.y, 0, 0]
+        edit.settings = settings
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Drag while crop editing: the grabbed handle or the drawing corner follows the pointer.
+    func continueCameraRawCropDrag(to point: CGPoint) {
+        guard let edit = filterEdit, edit.editsCameraRawCrop, let target = edit.cameraRawCropDragTarget,
+              !edit.committing, let prepared = edit.preparedPreview, let preparedTransform = edit.preparedTransform else { return }
+        let bounds = CGRect(x: 0, y: 0, width: prepared.width, height: prepared.height)
+        var draft: CGRect
+        if target == .rectangle {
+            let scalars = edit.settings.cameraRaw.crop.manualCropScalars
+            guard scalars.count == 4 else { return }
+            let start = CGPoint(x: scalars[0], y: scalars[1])
+            let now = Self.correctedCropPoint(point, transform: preparedTransform,
+                                              width: prepared.width, height: prepared.height)
+            draft = CGRect(x: min(start.x, now.x), y: min(start.y, now.y),
+                           width: abs(now.x - start.x), height: abs(now.y - start.y))
+        } else {
+            let scalars = edit.settings.cameraRaw.crop.manualCropScalars
+            guard let stored = CameraRawCropDragTarget.rectangle
+                .rect(scalars: scalars, width: prepared.width, height: prepared.height) else { return }
+            draft = target.resizing(stored, to: Self.correctedCropPoint(point, transform: preparedTransform,
+                                                              width: prepared.width, height: prepared.height))
+        }
+        draft = draft.intersection(bounds)
+        guard draft.width >= 1, draft.height >= 1, draft.width.isFinite, draft.height.isFinite else { return }
+        var settings = edit.settings
+        settings.cameraRaw.crop.manualCropScalars = [draft.minX, draft.minY, draft.width, draft.height]
+        edit.settings = settings
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Mouse-up: the drag already wrote its rect; disarm the gesture but keep the armed mode,
+    /// which stays until Escape, Return or the panel button ends it.
+    func endCameraRawCropDrag() {
+        guard let edit = filterEdit else { return }
+        edit.cameraRawCropDragTarget = nil
+    }
+
+    /// A view point in the placed preview → corrected-image pixels (top-left origin), clamped in.
+    private static func correctedCropPoint(_ viewPoint: CGPoint, transform: LayerTransform,
+                                           width: Int, height: Int) -> CGPoint {
+        let toPixels = BrushRaster.pixelToDocument(transform, width: width, height: height).inverted()
+        let pixel = viewPoint.applying(toPixels)
+        return CGPoint(x: min(max(pixel.x, 0), CGFloat(width)), y: min(max(pixel.y, 0), CGFloat(height)))
+    }
+
+    /// The handle of `rect` (corrected pixels, placed by `transform`) under a view point, if any.
+    private static func cropHandle(at viewPoint: CGPoint, in rect: CGRect, transform: LayerTransform,
+                                   width: Int, height: Int) -> CameraRawCropDragTarget? {
+        let toDocument = BrushRaster.pixelToDocument(transform, width: width, height: height)
+        let toPixels = toDocument.inverted()
+        let corners: [(CameraRawCropDragTarget, CGPoint)] = [
+            (.topLeft, CGPoint(x: rect.minX, y: rect.minY)), (.topEdge, CGPoint(x: rect.midX, y: rect.minY)),
+            (.topRight, CGPoint(x: rect.maxX, y: rect.minY)), (.rightEdge, CGPoint(x: rect.maxX, y: rect.midY)),
+            (.bottomRight, CGPoint(x: rect.maxX, y: rect.maxY)), (.bottomEdge, CGPoint(x: rect.midX, y: rect.maxY)),
+            (.bottomLeft, CGPoint(x: rect.minX, y: rect.maxY)), (.leftEdge, CGPoint(x: rect.minX, y: rect.midY)),
+        ]
+        let tolerance = 12 / max(sqrt(abs(toDocument.a * toDocument.d - toDocument.b * toDocument.c)), 0.001)
+        let viewPixel = viewPoint.applying(toPixels)
+        for (target, pixel) in corners where hypot(viewPixel.x - pixel.x, viewPixel.y - pixel.y) <= tolerance {
+            return target
+        }
+        let edges = rect.applying(toDocument)
+        return edges.contains(viewPoint) ? .rectangle : nil
     }
 
     /// Defringe eyedropper: centers the purple or green hue range on the clicked fringe color.

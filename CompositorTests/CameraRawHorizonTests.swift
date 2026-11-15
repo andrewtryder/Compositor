@@ -848,7 +848,8 @@ struct CameraRawHorizonTests {
 
     @Test func geometryOperationsRunInTheDocumentedOrder() {
         #expect(CameraRawGeometryBackend.compositionOrder ==
-                ["lensDistortion", "volume", "perspective", "horizon", "framingCrop", "miniature", "colorGrade"])
+                ["lensDistortion", "anamorphicDeSqueeze", "volume", "perspective", "horizon",
+                 "framingCrop", "cropAfterTransform", "miniature", "colorGrade"])
     }
 
     // MARK: - The composed pipeline

@@ -53,6 +53,57 @@ nonisolated struct CameraRawGeometryGuide: Equatable, Sendable, Codable {
     var end: CGPoint { CGPoint(x: endX, y: endY) }
 }
 
+/// Anamorphic de-squeeze: one horizontal scale factor that restores a squeezed photograph's
+/// intended proportions. 1 (Off) is the backward-compatible default and skips resampling entirely;
+/// anything else resamples the corrected picture wider once, before Volume / Perspective / crop.
+nonisolated struct CameraRawAnamorphicSettings: Equatable, Sendable, Codable {
+    /// Horizontal de-squeeze ratio (a width multiplier; height is kept). Clamped 1…8.
+    var ratio: Double = 1
+
+    static let ratioRange: ClosedRange<Double> = 1...8
+
+    var isIdentity: Bool { ratio <= 1 + 1e-9 }
+
+    var normalized: Self {
+        var result = self
+        guard ratio.isFinite else { return Self() }
+        result.ratio = ImageAdjustmentPixels.clamp(ratio, Self.ratioRange, 1)
+        return result
+    }
+}
+
+/// De-squeeze presets for the panel's menu. `custom` shows the numeric field; the others write
+/// their well-known ratio and stay selectable, so a slider written by Custom reads back as its preset.
+nonisolated enum CameraRawAnamorphicPreset: String, CaseIterable, Sendable {
+    case off = "Off / 1.0x"
+    case one33 = "1.33x"
+    case one50 = "1.5x"
+    case one60 = "1.6x"
+    case two00 = "2.0x"
+    case custom = "Custom"
+
+    var ratio: Double {
+        switch self {
+        case .off: return 1
+        case .one33: return 1.33
+        case .one50: return 1.5
+        case .one60: return 1.6
+        case .two00: return 2
+        case .custom: return 1
+        }
+    }
+
+    var label: String { rawValue }
+
+    /// The preset a ratio reads back as; only values away from every named preset are Custom.
+    static func preset(for ratio: Double) -> CameraRawAnamorphicPreset {
+        for candidate in allCases where candidate != .custom {
+            if abs(candidate.ratio - ratio) < 0.005 { return candidate }
+        }
+        return .custom
+    }
+}
+
 nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
     var upright: CameraRawUprightMode = .off
     var projection: CameraRawProjection = .perspective
@@ -77,6 +128,8 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
     /// EXIF / Auto Volume. Zero means unknown.
     var focalLengthMm: Double = 0
     var sensorWidthMm: Double = 0
+    /// Anamorphic de-squeeze. Ratio 1 is Off: the exact input, no resample.
+    var anamorphic = CameraRawAnamorphicSettings()
 
     static let toneRange: ClosedRange<Double> = -100...100
     static let rotateRange: ClosedRange<Double> = -45...45
@@ -115,10 +168,16 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
         volumeMode = try read(.volumeMode, base.volumeMode)
         focalLengthMm = try read(.focalLengthMm, base.focalLengthMm)
         sensorWidthMm = try read(.sensorWidthMm, base.sensorWidthMm)
+        anamorphic = try read(.anamorphic, base.anamorphic)
     }
 
     var adjusts: Bool {
-        usesSolverGuides || usesManualPerspective || usesVolume || usesPolish
+        usesSolverGuides || usesManualPerspective || usesVolume || usesPolish || usesDeSqueeze
+    }
+
+    /// Whether de-squeeze is on (a ratio whose rounded output is wider than the input, so a resample happens).
+    var usesDeSqueeze: Bool {
+        anamorphic.isIdentity ? false : anamorphic.normalized.ratio > 1 + 1e-9
     }
 
     /// Guided / Auto only count once a line is long enough to read. Empty Auto must not warp the picture.
@@ -158,6 +217,7 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
         result.volumeRadial = ImageAdjustmentPixels.clamp(volumeRadial, Self.volumeRange, 0)
         result.focalLengthMm = max(0, focalLengthMm.isFinite ? focalLengthMm : 0)
         result.sensorWidthMm = max(0, sensorWidthMm.isFinite ? sensorWidthMm : 0)
+        result.anamorphic = anamorphic.normalized
         result.guides = guides.filter { guide in
             hypot(guide.endX - guide.startX, guide.endY - guide.startY) > 0.01
         }
@@ -227,6 +287,10 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
 
     /// Same as `apply`, plus an expansion describing how to place a resized result on the document.
     /// `horizonDegrees` is composed into the destination corners before framing so Expand bounds stay complete.
+    ///
+    /// Order: de-squeeze (new) runs before Volume and Perspective. Lens correction and manual distortion
+    /// work on the sensor's squeezed grid and have already run; Volume, Perspective, Horizon, Miniature and
+    /// Lens Blur should all work on true proportions; crop coordinates then live in the final space.
     func applyResult(_ image: CGImage, horizonDegrees: Double? = nil) throws -> CameraRawGeometryResult {
         let settings = normalized
         let needsPerspective = settings.usesSolverGuides || settings.usesManualPerspective || settings.usesPolish
@@ -235,20 +299,53 @@ nonisolated struct CameraRawGeometrySettings: Equatable, Sendable, Codable {
         let width = image.width, height = image.height
         guard width > 0, height > 0 else { return CameraRawGeometryResult(image: image, expansion: nil) }
         var working = image
+        var expansion: CameraRawGeometryExpansion?
+        if settings.usesDeSqueeze {
+            let deSqueezed = try settings.applyDeSqueeze(working)
+            working = deSqueezed.image
+            expansion = deSqueezed.expansion
+        }
         if settings.usesVolume {
             working = try settings.applyVolume(working)
         }
-        var expansion: CameraRawGeometryExpansion?
         if needsPerspective {
             let perspective = try settings.applyPerspectiveResult(working, horizonDegrees: horizonDegrees)
             working = perspective.image
-            expansion = perspective.expansion
+            // The perspective stage works on the de-squeezed grid and covers a rect of it; folded onto the
+            // de-squeeze coverage it stays one placement in the original input space.
+            expansion = expansion?.composing(perspective.expansion) ?? perspective.expansion
         }
         guard settings.constrainCrop else {
             return CameraRawGeometryResult(image: working, expansion: expansion)
         }
         let cropped = try settings.applyConstrainCropResult(working, framing: settings.framingMode, expansion: expansion)
         return cropped
+    }
+
+    /// One horizontal Lanczos resample to `round(w·ratio) × h`, center-anchored. Ratio 1 — or any ratio whose
+    /// rounded output would be the input itself — returns the input unchanged, so identity stays bit-exact and
+    /// never touches a resampler. Output size is checked against the document limits before allocating.
+    private func applyDeSqueeze(_ image: CGImage) throws -> CameraRawGeometryResult {
+        let ratio = anamorphic.normalized.ratio
+        let width = image.width, height = image.height
+        let outputWidth = Int((CGFloat(width) * CGFloat(ratio)).rounded())
+        guard outputWidth != width, outputWidth >= 1, outputWidth <= DocumentLimits.maxSide,
+              outputWidth * height <= DocumentLimits.maxSurfacePixels else {
+            // Identity, or a ratio the limits refuse: identity is exact, refused throws rather than guessing.
+            guard outputWidth == width else { throw ProjectError.tooLarge }
+            return CameraRawGeometryResult(image: image, expansion: nil)
+        }
+        let coverage = CGRect(x: -CGFloat(outputWidth - width) / 2, y: 0,
+                              width: CGFloat(outputWidth), height: CGFloat(height))
+        let planned = CameraRawGeometryExpansion(inputWidth: width, inputHeight: height, coverageInInput: coverage)
+        let warped = CIImage(cgImage: image).applyingFilter("CILanczosScaleTransform", parameters: [
+            "inputScale": 1.0, "inputAspectRatio": ratio,
+        ])
+        let resized = try PixelAdjust.render(warped, width: outputWidth, height: height, isMask: false)
+        guard resized.width == outputWidth, resized.height == height else {
+            throw ExportError.render
+        }
+        return CameraRawGeometryResult(image: resized, expansion: planned.isIdentityFootprint ? nil : planned)
     }
 
     private func applyVolume(_ image: CGImage) throws -> CGImage {

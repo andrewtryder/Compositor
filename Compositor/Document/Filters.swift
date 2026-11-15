@@ -255,6 +255,9 @@ nonisolated struct FilterJob: @unchecked Sendable {
     var lensPolicySource: CameraRawLensCorrectionPolicy.Source = .renderedImage
     /// Whether the decoder's own correction is in these pixels right now.
     var appleCorrectionActive = false
+    /// Crop After Transform editing on the canvas: the job renders uncropped so the rectangle can be
+    /// drawn over the whole corrected picture. Preview only; committing leaves this nil.
+    var editsCameraRawCrop = false
 }
 
 nonisolated enum PixelFilter {
@@ -630,6 +633,12 @@ final class FilterEdit {
     var movesCameraRawMiniatureFocus = false
     /// The Miniature focus center captured when a canvas drag began, so Escape can put it back exactly.
     var cameraRawMiniatureDragOriginalCenter: CGPoint?
+    /// Crop After Transform's rectangle is being drawn or dragged on the preview from the Geometry section.
+    var editsCameraRawCrop = false
+    /// The handle grabbed on the canvas, or a new rectangle being drawn from the press point.
+    var cameraRawCropDragTarget: CameraRawCropDragTarget?
+    /// The crop scalars captured when a canvas drag began, so Escape can put them back exactly.
+    var cameraRawCropDragOriginalScalars: [Double]?
     /// Camera, lens, focal length and aperture of the layer being edited, for Optics › Lens Profile. Empty when the
     /// layer came from a file with no tags.
     var lensMetadata = LensMetadata()
@@ -855,9 +864,16 @@ var cameraRawDragOriginalGuide: CameraRawGeometryGuide?
                                                         showsDetail: showsCameraRawDetail, showsOptics: showsCameraRawOptics,
                                                         showsGeometry: showsCameraRawGeometry, showsCalibration: showsCameraRawCalibration)
             // Never silently expand a 16-bit/HDR layer through an 8-bit surface.
-            if !CameraRawGeometrySettings.supportsExpandToFit(on: original),
-               value.cameraRaw.geometry.framingMode == .expandToFit {
-                value.cameraRaw.geometry.framingMode = .keepOriginalSize
+            if !CameraRawGeometrySettings.supportsExpandToFit(on: original) {
+                if value.cameraRaw.geometry.framingMode == .expandToFit {
+                    value.cameraRaw.geometry.framingMode = .keepOriginalSize
+                }
+                if !value.cameraRaw.geometry.anamorphic.isIdentity {
+                    value.cameraRaw.geometry.anamorphic = CameraRawAnamorphicSettings()
+                }
+                if !value.cameraRaw.crop.isNoCrop {
+                    value.cameraRaw.crop = CameraRawGeometryCropRequest()
+                }
             }
         }
         return value
@@ -879,6 +895,8 @@ var cameraRawDragOriginalGuide: CameraRawGeometryGuide?
             job.lensfunDatabase = lensfunDatabase
             job.lensPolicySource = lensCorrectionSource
             job.appleCorrectionActive = appleLensCorrectionActive
+            // Crop editing draws over the whole corrected picture, so its job must render uncropped.
+            job.editsCameraRawCrop = editsCameraRawCrop
         }
         return job
     }
@@ -1044,10 +1062,19 @@ extension EditorSession {
         edit.settings = settings.normalized
         edit.preview = preview
         if edit.kind == .cameraRaw,
-           !CameraRawGeometrySettings.supportsExpandToFit(on: edit.original),
-           edit.settings.cameraRaw.geometry.framingMode == .expandToFit {
-            edit.settings.cameraRaw.geometry.framingMode = .keepOriginalSize
-            edit.previewError = CameraRawGeometrySettings.expandUnsupportedOnDeepLayersMessage
+           !CameraRawGeometrySettings.supportsExpandToFit(on: edit.original) {
+            if edit.settings.cameraRaw.geometry.framingMode == .expandToFit {
+                edit.settings.cameraRaw.geometry.framingMode = .keepOriginalSize
+                edit.previewError = CameraRawGeometrySettings.expandUnsupportedOnDeepLayersMessage
+            }
+            if !edit.settings.cameraRaw.geometry.anamorphic.isIdentity {
+                edit.settings.cameraRaw.geometry.anamorphic = CameraRawAnamorphicSettings()
+                edit.previewError = CameraRawGeometrySettings.anamorphicUnsupportedOnDeepLayersMessage
+            }
+            if !edit.settings.cameraRaw.crop.isNoCrop {
+                edit.settings.cameraRaw.crop = CameraRawGeometryCropRequest()
+                edit.previewError = CameraRawGeometrySettings.cropAfterTransformUnsupportedOnDeepLayersMessage
+            }
         }
         // A bigger blur needs more room around the layer than it was given.
         if FilterEdit.blurMargin(edit.kind, edit.settings) > edit.grownMargin {

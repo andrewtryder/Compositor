@@ -52,6 +52,15 @@ nonisolated struct CameraRawGeometryExpansion: Equatable, Sendable {
         return CameraRawGeometryExpansion(inputWidth: inputWidth, inputHeight: inputHeight, coverageInInput: kept)
     }
 
+    /// Folds a later geometry stage's placement onto this one. `later` is measured on this stage's *output*
+    /// grid (its `inputWidth`/`inputHeight` must match this coverage, which is what inconsistent metadata means);
+    /// because both coverages map 1:1 onto their own grids, composing them is a pure offset in input space.
+    func composing(_ later: CameraRawGeometryExpansion?) -> CameraRawGeometryExpansion? {
+        guard let later else { return self }
+        guard later.inputWidth == outputWidth, later.inputHeight == outputHeight else { return nil }
+        return cropping(to: later.coverageInInput)
+    }
+
     /// True when bitmap size, coverage, and transform describe the same document rectangle (within a pixel).
     func footprintMatches(image: CGImage, base: LayerTransform, placed: LayerTransform, tolerance: CGFloat = 1.0) -> Bool {
         guard image.width == outputWidth, image.height == outputHeight else { return false }
@@ -95,6 +104,29 @@ extension CameraRawGeometrySettings {
 
     static let expandUnsupportedOnDeepLayersMessage =
         "Expand to Fit is unavailable on 16-bit and HDR layers. Keep Original Size preserves full precision."
+
+    static let anamorphicUnsupportedOnDeepLayersMessage =
+        "Anamorphic De-squeeze is unavailable on 16-bit and HDR layers. It resamples to a new size, which the "
+            + "16-bit pipeline refuses rather than downconvert; the source keeps its full precision."
+
+    static let cropAfterTransformUnsupportedOnDeepLayersMessage =
+        "Crop After Transform is unavailable on 16-bit and HDR layers. It changes the layer's pixel size, which "
+            + "the 16-bit pipeline refuses rather than downconvert; the source keeps its full precision."
+
+    /// The refusal the first variable-size geometry feature in these settings earns on a 16-bit/HDR layer, if any.
+    /// One message at a time: the coercions in `FilterEdit.renderSettings` take the features away in this order.
+    static func deepLayerRefusalMessage(_ settings: CameraRawSettings) -> String? {
+        if settings.geometry.framingMode == .expandToFit { return expandUnsupportedOnDeepLayersMessage }
+        if settings.geometry.usesDeSqueeze { return anamorphicUnsupportedOnDeepLayersMessage }
+        if !settings.crop.isNoCrop { return cropAfterTransformUnsupportedOnDeepLayersMessage }
+        return nil
+    }
+
+    /// Whether any variable-size geometry feature is switched on: the features a selection-bound render
+    /// cannot carry (the blend needs a matching footprint) and the ones a 16-bit/HDR layer refuses.
+    static func hasVariableSizeFeatures(_ settings: CameraRawSettings) -> Bool {
+        settings.geometry.framingMode == .expandToFit || settings.geometry.usesDeSqueeze || !settings.crop.isNoCrop
+    }
 
     /// Planned Expand to Fit coverage for the current corners, or nil when Keep Original Size / unchanged / unsafe.
     func plannedExpansion(width: Int, height: Int, horizonDegrees: Double? = nil) -> CameraRawGeometryExpansion? {

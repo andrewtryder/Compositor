@@ -44,6 +44,7 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
     var horizon: CameraRawHorizonSettings = CameraRawHorizonSettings()
     var perspectiveTools: CameraRawPerspectiveToolState = CameraRawPerspectiveToolState()
     var miniature: CameraRawMiniatureSettings = CameraRawMiniatureSettings()
+    var crop: CameraRawGeometryCropRequest = CameraRawGeometryCropRequest()
 
     nonisolated struct Curve: Codable, Equatable, Sendable {
         var shadows: Double = 0
@@ -306,6 +307,7 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         horizon = s.horizon
         perspectiveTools = s.perspectiveTools
         miniature = s.miniature
+        crop = s.crop
     }
 
     init(from decoder: Decoder) throws {
@@ -353,6 +355,7 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         horizon = try read(.horizon, base.horizon)
         perspectiveTools = try read(.perspectiveTools, base.perspectiveTools)
         miniature = try read(.miniature, base.miniature)
+        crop = try read(.crop, base.crop)
     }
 
     func makeSettings() throws -> CameraRawSettings {
@@ -495,6 +498,7 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         settings.horizon = horizon
         settings.perspectiveTools = perspectiveTools
         settings.miniature = miniature
+        settings.crop = crop
         settings = settings.normalized
         guard settings.isValid else { throw DecodeError.malformed("out of range") }
         return settings

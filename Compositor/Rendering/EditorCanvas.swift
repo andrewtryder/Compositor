@@ -122,6 +122,7 @@ final class CanvasView: NSView {
             || session.filterEdit?.drawingCameraRawGeometryGuide == true
             || session.filterEdit?.drawingCameraRawHorizonReference == true
             || session.filterEdit?.drawingCameraRawPerspectiveTool == true
+            || session.filterEdit?.editsCameraRawCrop == true
     }
     /// View point where a targeted-adjustment drag began.
     private var hueTargetStart: CGPoint?
@@ -138,6 +139,8 @@ final class CanvasView: NSView {
     private var lensBlurDrag = false
     /// Camera Raw Miniature's focus being dragged on the canvas.
     private var miniatureDrag = false
+    /// Camera Raw Crop After Transform's rectangle being drawn or dragged on the canvas.
+    private var cameraRawCropDrag = false
     /// ReShape control-point drag in progress.
     private var meshDragging = false
     private var antsTimer: Timer?
@@ -2186,6 +2189,13 @@ final class CanvasView: NSView {
             session.beginCameraRawHorizonReference(at: session.viewport.documentPoint(from: point, documentSize: document.size))
             return
         }
+        // Crop After Transform: grab a handle or draw a new rectangle over the corrected picture.
+        if session.filterEdit?.editsCameraRawCrop == true, !spaceHeld, let document = session.document {
+            session.beginCameraRawCropDrag(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            cameraRawCropDrag = true
+            synchronizeDisplay()
+            return
+        }
         if session.filterEdit?.drawingCameraRawGeometryGuide == true, !spaceHeld, let document = session.document {
             let documentPoint = session.viewport.documentPoint(from: point, documentSize: document.size)
             // Endpoint dragging takes priority over starting a new guide.
@@ -2363,6 +2373,11 @@ final class CanvasView: NSView {
         }
         if miniatureDrag, let document = session.document {
             session.moveCameraRawMiniatureFocus(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
+        if cameraRawCropDrag, let document = session.document {
+            session.continueCameraRawCropDrag(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            synchronizeDisplay()
             return
         }
         if let handle = progressiveDrag, let settings = session.filterEdit?.settings, let document = session.document {
@@ -2614,6 +2629,12 @@ final class CanvasView: NSView {
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
             return
         }
+        if cameraRawCropDrag {
+            cameraRawCropDrag = false
+            session.endCameraRawCropDrag()
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
         if progressiveDrag != nil {
             progressiveDrag = nil
             // The panel keeps the keyboard, for Return and Escape.
@@ -2850,6 +2871,11 @@ final class CanvasView: NSView {
             synchronizeDisplay()
         } else if event.keyCode == 53, session.filterEdit?.drawingCameraRawPerspectiveTool == true {
             session.cancelCameraRawPerspectiveDraft()
+            synchronizeDisplay()
+        } else if event.keyCode == 53, session.filterEdit?.editsCameraRawCrop == true {
+            // Escape puts the crop scalars back where the drag found them and disarms the mode;
+            // no history entry is made for a canceled gesture.
+            session.cancelCameraRawCropEditing()
             synchronizeDisplay()
         } else if event.keyCode == 53, session.transformEdit != nil {
             transformDrag = nil

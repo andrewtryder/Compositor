@@ -1,6 +1,38 @@
 import CoreGraphics
 import Foundation
 
+/// The crop-editing handle grabbed on the canvas, or `rectangle` for a drag that draws a new one.
+/// Corner / edge handles keep their opposite anchor fixed; a `rectangle` drag starts from where it began.
+nonisolated enum CameraRawCropDragTarget: Equatable, Sendable {
+    case topLeft, topEdge, topRight, rightEdge, bottomRight, bottomEdge, bottomLeft, leftEdge
+    case rectangle
+
+    /// The stored scalars as a rectangle, or nil when they don't spell one.
+    func rect(scalars: [Double], width: Int, height: Int) -> CGRect? {
+        guard scalars.count == 4 else { return nil }
+        let crop = CGRect(x: scalars[0], y: scalars[1], width: scalars[2], height: scalars[3])
+        return CropGeometry.valid(crop) ? crop : nil
+    }
+
+    /// The rectangle with this handle moved to `point`, the opposite anchor held still.
+    /// An aspect that would not fit is not clamped here: `plan` constrains the committed rect.
+    func resizing(_ crop: CGRect, to point: CGPoint) -> CGRect {
+        var rect = crop
+        switch self {
+        case .topLeft: rect.origin = point
+        case .topEdge: rect.origin.y = point.y; rect.size.height = crop.maxY - point.y
+        case .topRight: rect.origin.y = point.y; rect.size = CGSize(width: point.x - crop.minX, height: crop.maxY - point.y)
+        case .rightEdge: rect.size.width = point.x - crop.minX
+        case .bottomRight: rect.size = CGSize(width: point.x - crop.minX, height: point.y - crop.minY)
+        case .bottomEdge: rect.size.height = point.y - crop.minY
+        case .bottomLeft: rect.origin.x = point.x; rect.size = CGSize(width: crop.maxX - point.x, height: point.y - crop.minY)
+        case .leftEdge: rect.origin.x = point.x; rect.size.width = crop.maxX - point.x
+        case .rectangle: break
+        }
+        return rect
+    }
+}
+
 /// Aspect policy for geometry-aware crop. Reuses `CropGeometry` math where possible.
 nonisolated enum CameraRawCropAspectMode: String, CaseIterable, Sendable, Codable {
     case free = "Free"
@@ -19,6 +51,11 @@ nonisolated struct CameraRawGeometryCropRequest: Equatable, Sendable, Codable {
     var aspectRatio: Double = 1
     /// When true, the crop rectangle is intersected with opaque pixels / transformed bounds.
     var constrainToImage = true
+
+    /// "No additional crop" — the default, and the state every older document decodes to. Not the same as
+    /// "empty": the default request's `constrainToImage = true` makes `plan` fall back to an opaque scan,
+    /// which is what the backend path wants, so the filter path must gate on this explicit state instead.
+    var isNoCrop: Bool { !automaticOpaqueCrop && manualCrop == nil }
 
     var manualCrop: CGRect? {
         get {
