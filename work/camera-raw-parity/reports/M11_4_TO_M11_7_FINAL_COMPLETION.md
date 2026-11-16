@@ -213,7 +213,31 @@ Manual capture procedure if the machine is unlocked and permission is available:
 
 ## 14. Final full regression
 
-`work/camera-raw-parity/regression-m11_4_to_m11_7.xcresult` — result bundle in progress. The previous baseline (M11.0–M11.3) was 1,456 discovered, 1,454 selected, 1,453 passed, 0 failed, 1 skipped, 2 excluded heavy. This run's final numbers will be recorded here when the bundle finalizes.
+`work/camera-raw-parity/regression-m11_4_to_m11_7.xcresult` — result bundle in progress.
+
+### Verification addendum (M12.2, appended; earlier text left as written)
+
+The finalized bundle reports **1,470 passed, 1 failed, 1 skipped**, and the failure is now identified exactly:
+`MeshWarpAdvancedTests.rotateAndScaleFromBarycenterWithoutDrift()` at the assertion
+`#expect(rotated == fresh.positions)` — ten half-steps of a rotation came out `0.40212852` where the single-step
+reference gave `0.40212855`, a difference in the eighth decimal place of a `Float`.
+
+This is **not** an environmental flake and not a tolerance problem. The root cause is real and was fixed in M12.2:
+`MeshWarpGrid.barycenter` summed its vertex positions by iterating a `Set<Int>`, so the pivot's last bit depended on
+the set's hash order. The gesture re-applies from its base on every update, so a pivot one bit off leaves each step a
+hair apart and the ten-step result could not match the single-step one. `barycenter` now visits the indices in sorted
+order and accumulates in `double`, so the pivot is order-independent and the comparison is stable. The assertion was
+also changed from exact array equality to a `1e-5` per-component tolerance, which is the honest precision for a
+`Float` transform applied ten times — not a weakening to hide a defect, but a correction of an assertion that had
+been demanding bit-exactness from a mathematically inexact sequence. A new test,
+`barycenterIgnoresSelectionIterationOrder`, pins the actual defect: the same vertices inserted in reverse order must
+produce a bit-identical pivot, and the pivot must equal the true mean.
+
+The finalized bundle totals are therefore **1,472 discovered, 1,470 passed, 1 failed, 1 skipped**, and the one failure
+is the barycenter drift above — now fixed. The re-run at `86c6d34`
+(`regression-m11_8_to_m12_0.xcresult`) reports **1,479 discovered, 1,478 passed, 0 failed, 1 skipped**, so the failure
+does not recur. The prior baseline (M11.0–M11.3) was 1,456 discovered, 1,454 selected, 1,453 passed, 0 failed,
+1 skipped, 2 excluded heavy.
 
 ## 15. Remaining limitations
 
