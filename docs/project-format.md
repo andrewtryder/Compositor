@@ -1,8 +1,8 @@
-# Compositor project format, versions 1–24
+# Compositor project format, versions 1–25
 
 A `.comp` file is a macOS document package containing `manifest.json` and an `images/` directory of `<layer UUID>.png` assets.
 
-The manifest identifies `com.compositor.project`, version `24` for new saves that include a full Camera Raw correction node, version `23` for geometry/reshape correction stacks without full Camera Raw, version `22` for reshape-only packages (versions `1`–`23` remain readable, plus legacy `27`), and the sRGB working space. It stores document UUID, pixel dimensions, active layer UUID, and layers in bottom-to-top order. Each layer stores its UUID, name, visibility, transform (origin, size, clockwise rotation, flips, sampling), and optional image filename. Blank layers have no image asset.
+The manifest identifies `com.compositor.project`, version `25` for new saves that retain native RAW sources, version `24` for a full Camera Raw correction node without one, version `23` for geometry/reshape correction stacks without full Camera Raw, version `22` for reshape-only packages (versions `1`–`25` remain readable, plus legacy `27`), and the sRGB working space. It stores document UUID, pixel dimensions, active layer UUID, and layers in bottom-to-top order. Each layer stores its UUID, name, visibility, transform (origin, size, clockwise rotation, flips, sampling), and optional image filename. Blank layers have no image asset.
 
 Embedded PNGs preserve source pixels and transparency; transforms remain separate. Projects survive moving or deleting imported source photos. Saving uses a coordinated atomic package replacement. Unsupported versions, invalid metadata, missing assets, unsafe paths, and oversized data are rejected before replacing the live document.
 
