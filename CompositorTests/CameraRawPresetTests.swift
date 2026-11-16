@@ -6,6 +6,10 @@ import Testing
 struct CameraRawPresetTests {
     // MARK: - Fixtures
 
+    private func clearPresets() {
+        try? FileManager.default.removeItem(at: CameraRawPresets.folder)
+    }
+
     private func settingsWithExposure(_ exposure: Double) -> CameraRawSettings {
         var s = CameraRawSettings()
         s.exposure = exposure
@@ -21,6 +25,7 @@ struct CameraRawPresetTests {
     // MARK: - Save and apply
 
     @Test func aPresetSavesTheCurrentSettingsAndAppliesThem() throws {
+        clearPresets()
         let manager = CameraRawPresets()
         _ = manager.all // force load
 
@@ -37,6 +42,7 @@ struct CameraRawPresetTests {
     }
 
     @Test func anAdditivePresetLeavesUnlistedGroupsAlone() throws {
+        clearPresets()
         let manager = CameraRawPresets()
         var settings = settingsWithTemperature(40)
         try manager.save(name: "Warm", affects: [.color], settings: settings)
@@ -50,6 +56,7 @@ struct CameraRawPresetTests {
     // MARK: - Rename and delete
 
     @Test func renamingAPresetKeepsItsSettings() throws {
+        clearPresets()
         let manager = CameraRawPresets()
         try manager.save(name: "Old", affects: [.light], settings: settingsWithExposure(1))
         let preset = try #require(manager.all.first)
@@ -59,6 +66,7 @@ struct CameraRawPresetTests {
     }
 
     @Test func deletingAPresetRemovesIt() throws {
+        clearPresets()
         let manager = CameraRawPresets()
         try manager.save(name: "Gone", affects: [.light], settings: settingsWithExposure(1))
         let preset = try #require(manager.all.first)
@@ -69,6 +77,7 @@ struct CameraRawPresetTests {
     // MARK: - Duplicate
 
     @Test func duplicatingAPresetKeepsItsGroupsAndSettings() throws {
+        clearPresets()
         let manager = CameraRawPresets()
         try manager.save(name: "Base", affects: [.light, .color], settings: settingsWithExposure(1))
         let preset = try #require(manager.all.first)
@@ -82,9 +91,11 @@ struct CameraRawPresetTests {
     // MARK: - Import and export
 
     @Test func importAndExportRoundTrip() throws {
+        clearPresets()
         let manager = CameraRawPresets()
         try manager.save(name: "Exportable", affects: [.light], settings: settingsWithExposure(3))
         let preset = try #require(manager.all.first)
+        try manager.delete(preset.id)
 
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("test.compositorpreset")
         try? FileManager.default.removeItem(at: url)
@@ -98,6 +109,7 @@ struct CameraRawPresetTests {
     }
 
     @Test func importingACorruptedFileThrows() throws {
+        clearPresets()
         let manager = CameraRawPresets()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("bad.compositorpreset")
         try "not json".write(to: url, atomically: true, encoding: .utf8)
@@ -106,6 +118,7 @@ struct CameraRawPresetTests {
     }
 
     @Test func importingAWrongVersionThrows() throws {
+        clearPresets()
         let manager = CameraRawPresets()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("future.compositorpreset")
         let file = CameraRawPresetFile(version: 999, name: "Future", affects: [],
@@ -119,6 +132,7 @@ struct CameraRawPresetTests {
     // MARK: - Validation
 
     @Test func savingWithoutANameThrows() throws {
+        clearPresets()
         let manager = CameraRawPresets()
         #expect(throws: CameraRawPresetError.self) {
             try manager.save(name: "", affects: [.light], settings: settingsWithExposure(1))
@@ -126,6 +140,7 @@ struct CameraRawPresetTests {
     }
 
     @Test func savingADuplicateNameThrows() throws {
+        clearPresets()
         let manager = CameraRawPresets()
         try manager.save(name: "Dup", affects: [.light], settings: settingsWithExposure(1))
         #expect(throws: CameraRawPresetError.self) {
@@ -134,6 +149,7 @@ struct CameraRawPresetTests {
     }
 
     @Test func anEmptyPresetChangesNothing() throws {
+        clearPresets()
         let manager = CameraRawPresets()
         try manager.save(name: "Empty", affects: [], settings: settingsWithExposure(5))
         let preset = try #require(manager.all.first)

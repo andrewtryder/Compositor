@@ -69,6 +69,15 @@ struct CameraRawPresetFile: Codable, Equatable, Sendable {
         settings = CameraRawSettingsPersistentState(preset.settings)
         created = preset.created
     }
+
+    init(version: Int = CameraRawPresetFormatVersion, name: String = "", affects: [String] = [],
+         settings: CameraRawSettingsPersistentState, created: Date = Date()) {
+        self.version = version
+        self.name = name
+        self.affects = affects
+        self.settings = settings
+        self.created = created
+    }
 }
 
 /// Manages the person's presets: saving, applying, renaming, deleting, duplicating, import/export.
