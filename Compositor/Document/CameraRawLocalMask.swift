@@ -107,6 +107,13 @@ nonisolated struct CameraRawLocalAdjustments: Codable, Equatable, Sendable {
     var texture: Double = 0
     var clarity: Double = 0
     var dehaze: Double = 0
+    /// 0…100. Spreads glow from the bright parts. Blended through the mask's coverage, so the glow it adds is confined
+    /// to the mask even though its highlights are read from the whole frame; see `CameraRawLocalMaskRenderer`.
+    var glow: Double = 0
+    var glowStyle: CameraRawGlowStyle = .diffusion
+    var glowRange: Double = 0
+    var glowSpread: Double = 0
+    var glowWarmth: Double = 0
 
     init() {}
 
@@ -130,25 +137,33 @@ nonisolated struct CameraRawLocalAdjustments: Codable, Equatable, Sendable {
         texture = try read(.texture, base.texture)
         clarity = try read(.clarity, base.clarity)
         dehaze = try read(.dehaze, base.dehaze)
+        glow = try read(.glow, base.glow)
+        glowStyle = (try values.decodeIfPresent(String.self, forKey: .glowStyle)).flatMap(CameraRawGlowStyle.init(rawValue:)) ?? base.glowStyle
+        glowRange = try read(.glowRange, base.glowRange)
+        glowSpread = try read(.glowSpread, base.glowSpread)
+        glowWarmth = try read(.glowWarmth, base.glowWarmth)
     }
 
     var isIdentity: Bool {
         exposure == 0 && contrast == 0 && highlights == 0 && shadows == 0 && whites == 0 && blacks == 0
             && temperature == 0 && tint == 0 && vibrance == 0 && saturation == 0
-            && texture == 0 && clarity == 0 && dehaze == 0
+            && texture == 0 && clarity == 0 && dehaze == 0 && glow == 0
     }
 
     var isValid: Bool {
         [exposure, contrast, highlights, shadows, whites, blacks, temperature, tint, vibrance, saturation,
-         texture, clarity, dehaze].allSatisfy { $0.isFinite && CameraRawSettings.toneRange.contains($0) }
+         texture, clarity, dehaze, glowRange, glowSpread, glowWarmth].allSatisfy { $0.isFinite && CameraRawSettings.toneRange.contains($0) }
             && CameraRawSettings.exposureRange.contains(exposure)
+            && glow.isFinite && CameraRawSettings.unitRange.contains(glow)
     }
 
     var normalized: Self {
         var result = self
         result.exposure = ImageAdjustmentPixels.clamp(exposure, CameraRawSettings.exposureRange, 0)
+        result.glow = ImageAdjustmentPixels.clamp(glow, CameraRawSettings.unitRange, 0)
         for key in [\Self.contrast, \Self.highlights, \Self.shadows, \Self.whites, \Self.blacks, \Self.temperature,
-                    \Self.tint, \Self.vibrance, \Self.saturation, \Self.texture, \Self.clarity, \Self.dehaze] {
+                    \Self.tint, \Self.vibrance, \Self.saturation, \Self.texture, \Self.clarity, \Self.dehaze,
+                    \Self.glowRange, \Self.glowSpread, \Self.glowWarmth] {
             result[keyPath: key] = ImageAdjustmentPixels.clamp(result[keyPath: key], CameraRawSettings.toneRange, 0)
         }
         return result
@@ -173,6 +188,11 @@ nonisolated struct CameraRawLocalAdjustments: Codable, Equatable, Sendable {
         settings.texture = values.texture
         settings.clarity = values.clarity
         settings.dehaze = values.dehaze
+        settings.glow = values.glow
+        settings.glowStyle = values.glowStyle
+        settings.glowRange = values.glowRange
+        settings.glowSpread = values.glowSpread
+        settings.glowWarmth = values.glowWarmth
         return settings
     }
 }

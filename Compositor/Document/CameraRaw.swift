@@ -7,18 +7,27 @@ nonisolated enum CameraRawWhiteBalance: String, CaseIterable, Sendable {
     case auto = "Auto"
 }
 
-/// Glow's three looks. Warmth tints Diffusion and Bloom from cool to warm; Halation's fringe stays red.
-nonisolated enum CameraRawGlowStyle: String, CaseIterable, Sendable {
+/// Glow's looks. Warmth tints every style from cool to warm; Halation's fringe stays red. Motion smears each
+/// highlight one way and Streak smears it both ways, along the Direction slider.
+nonisolated enum CameraRawGlowStyle: String, CaseIterable, Codable, Sendable {
     case diffusion = "Diffusion"
     case bloom = "Bloom"
     case halation = "Halation"
+    case motion = "Motion"
+    case streak = "Streak"
+
     var kernelValue: Int32 {
         switch self {
         case .diffusion: return 0
         case .bloom: return 1
         case .halation: return 2
+        case .motion: return 3
+        case .streak: return 4
         }
     }
+
+    /// Whether Direction and Softness do anything. The older three are isotropic and ignore them.
+    var isDirectional: Bool { self == .motion || self == .streak }
 }
 
 /// Post-crop vignette. Highlight Priority is the style whose Highlights slider protects bright pixels.
@@ -48,6 +57,8 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     static let exposureRange: ClosedRange<Double> = -5...5
     static let toneRange: ClosedRange<Double> = -100...100
     static let unitRange: ClosedRange<Double> = 0...100
+    /// Motion and Streak's heading: degrees counterclockwise from +x.
+    static let glowDirectionRange: ClosedRange<Double> = -180...180
 
     var whiteBalance: CameraRawWhiteBalance = .custom
     /// Relative cool-to-warm, −100…100. Positive is warmer.
@@ -74,6 +85,11 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     var glowRange: Double = 0
     var glowSpread: Double = 0
     var glowWarmth: Double = 0
+    /// −180…180. The trail's heading for Motion and Streak, degrees counterclockwise from +x. Idle for the
+    /// isotropic styles, so a project that has only ever used them renders exactly as it did.
+    var glowDirection: Double = 0
+    /// 0…100. Fades Motion's and Streak's far end linearly; 0 is a flat bar. Idle for the other styles.
+    var glowSoftness: Double = 0
     /// −100…100. Negative darkens the edges, positive lightens them. The center is left alone.
     var vignetteAmount: Double = 0
     var vignetteStyle: CameraRawVignetteStyle = .highlightPriority
@@ -147,9 +163,11 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
             texture, clarity, dehaze, glowRange, glowSpread, glowWarmth, vignetteAmount, vignetteRoundness].allSatisfy {
                 $0.isFinite && Self.toneRange.contains($0)
             }
-        && [glow, vignetteMidpoint, vignetteFeather, vignetteHighlights, grainAmount, grainSize, grainRoughness].allSatisfy {
+        && [glow, vignetteMidpoint, vignetteFeather, vignetteHighlights, grainAmount, grainSize, grainRoughness,
+            glowSoftness].allSatisfy {
             $0.isFinite && Self.unitRange.contains($0)
         }
+        && glowDirection.isFinite && Self.glowDirectionRange.contains(glowDirection)
         && localMasks.count <= CameraRawLocalMask.maximumCount
         && localMasks.allSatisfy(\.isValid)
         && Set(localMasks.map(\.id)).count == localMasks.count
@@ -173,6 +191,8 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         result.glowRange = ImageAdjustmentPixels.clamp(glowRange, Self.toneRange, 0)
         result.glowSpread = ImageAdjustmentPixels.clamp(glowSpread, Self.toneRange, 0)
         result.glowWarmth = ImageAdjustmentPixels.clamp(glowWarmth, Self.toneRange, 0)
+        result.glowDirection = ImageAdjustmentPixels.clamp(glowDirection, Self.glowDirectionRange, 0)
+        result.glowSoftness = ImageAdjustmentPixels.clamp(glowSoftness, Self.unitRange, 0)
         result.vignetteAmount = ImageAdjustmentPixels.clamp(vignetteAmount, Self.toneRange, 0)
         result.vignetteMidpoint = ImageAdjustmentPixels.clamp(vignetteMidpoint, Self.unitRange, 50)
         result.vignetteRoundness = ImageAdjustmentPixels.clamp(vignetteRoundness, Self.toneRange, 0)
@@ -401,6 +421,7 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
                                               settings.texture, settings.clarity, settings.dehaze,
                                               settings.glow, settings.glowStyle.kernelValue, settings.glowRange,
                                               settings.glowSpread, settings.glowWarmth,
+                                              settings.glowDirection, settings.glowSoftness,
                                               settings.vignetteAmount, settings.vignetteMidpoint, settings.vignetteRoundness,
                                               settings.vignetteFeather, settings.vignetteHighlights, settings.vignetteStyle.kernelValue,
                                               pixelScale)

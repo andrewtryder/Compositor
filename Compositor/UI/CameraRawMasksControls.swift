@@ -323,6 +323,7 @@ enum CameraRawLocalAdjustmentField: String, CaseIterable, Identifiable {
     case texture = "Texture"
     case clarity = "Clarity"
     case dehaze = "Dehaze"
+    case glow = "Glow"
 
     var id: String { rawValue }
 
@@ -341,11 +342,16 @@ enum CameraRawLocalAdjustmentField: String, CaseIterable, Identifiable {
         case .texture: return \.texture
         case .clarity: return \.clarity
         case .dehaze: return \.dehaze
+        case .glow: return \.glow
         }
     }
 
     var range: ClosedRange<Double> {
-        self == .exposure ? CameraRawSettings.exposureRange : CameraRawSettings.toneRange
+        switch self {
+        case .exposure: return CameraRawSettings.exposureRange
+        case .glow: return CameraRawSettings.unitRange
+        default: return CameraRawSettings.toneRange
+        }
     }
     var decimals: Int { self == .exposure ? 2 : 0 }
 
@@ -373,6 +379,7 @@ enum CameraRawLocalAdjustmentField: String, CaseIterable, Identifiable {
         case .texture: return "Adds or softens small detail in the region."
         case .clarity: return "Adds or softens contrast along broader shapes in the region."
         case .dehaze: return "Clears haze in the region when raised, and adds haze when lowered."
+        case .glow: return "Spreads glow from the region's bright parts. Diffusion's style only here; the glow stays inside the mask."
         }
     }
 

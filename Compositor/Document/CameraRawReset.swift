@@ -78,6 +78,8 @@ nonisolated extension CameraRawSettings {
             target.glowRange = source.glowRange
             target.glowSpread = source.glowSpread
             target.glowWarmth = source.glowWarmth
+            target.glowDirection = source.glowDirection
+            target.glowSoftness = source.glowSoftness
             target.vignetteAmount = source.vignetteAmount
             target.vignetteStyle = source.vignetteStyle
             target.vignetteMidpoint = source.vignetteMidpoint

@@ -282,7 +282,7 @@ struct CameraRawControls: View {
             Picker("Style", selection: Binding(get: { raw.glowStyle }, set: { style in update { $0.cameraRaw.glowStyle = style } })) {
                 ForEach(CameraRawGlowStyle.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
-            .help("Diffusion is soft and wide, Bloom is tighter, and Halation is a red fringe.")
+            .help("Diffusion is soft and wide, Bloom is tighter, Halation is a red fringe, and Motion and Streak pull the highlights along a direction.")
             VStack(alignment: .leading, spacing: 8) {
                 slider("Range", \.glowRange, range: CameraRawSettings.toneRange, decimals: 0, clipping: nil,
                        help: "Chooses how bright an area must be to glow. Has no effect until Glow is raised.")
@@ -290,6 +290,14 @@ struct CameraRawControls: View {
                        help: "Sets how far the glow reaches. Has no effect until Glow is raised.")
                 slider("Warmth", \.glowWarmth, range: CameraRawSettings.toneRange, decimals: 0, clipping: nil,
                        help: "Shifts the glow from cool to warm. Halation stays red. Has no effect until Glow is raised.")
+                if raw.glowStyle.isDirectional {
+                    slider("Direction", \.glowDirection, range: CameraRawSettings.glowDirectionRange, decimals: 0,
+                           clipping: nil,
+                           help: "Aims the trail. 0 reaches right, 90 up, 180 left. Motion uses it only with Glow raised.")
+                    slider("Softness", \.glowSoftness, range: CameraRawSettings.unitRange, decimals: 0, clipping: nil,
+                           reset: 0,
+                           help: "Fades the far end of the trail. Zero keeps it an even bar. Motion and Streak only.")
+                }
             }
             .padding(.leading, 16)
             Text("Vignette").font(.subheadline)

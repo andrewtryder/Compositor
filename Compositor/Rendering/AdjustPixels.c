@@ -517,6 +517,71 @@ static int box_blur_plane(const float *src, float *dst, size_t width, size_t hei
     return 1;
 }
 
+// One plane value at a fractional position, bilinear with edge clamping, for the directional glow's sampling.
+static float sample_plane(const float *plane, size_t width, size_t height, double x, double y) {
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x > (double)(width - 1)) x = (double)(width - 1);
+    if (y > (double)(height - 1)) y = (double)(height - 1);
+    size_t x0 = (size_t)x, y0 = (size_t)y;
+    size_t x1 = x0 + 1 < width ? x0 + 1 : x0;
+    size_t y1 = y0 + 1 < height ? y0 + 1 : y0;
+    double fx = x - (double)x0, fy = y - (double)y0;
+    double top = plane[y0 * width + x0] * (1 - fx) + plane[y0 * width + x1] * fx;
+    double bottom = plane[y1 * width + x0] * (1 - fx) + plane[y1 * width + x1] * fx;
+    return (float)(top * (1 - fy) + bottom * fy);
+}
+
+// The directional glow: the highlight plane smeared along one axis, so a bright source trails the way light streaks
+// across a lens. Motion runs one way from each highlight; Streak runs both ways. `directionDegrees` is measured
+// counterclockwise from the picture's +x axis (0 is right, 90 is up), the same convention as Motion Blur's angle.
+// `softness` 0 is a flat bar, 100 fades linearly to nothing at the reach. Taps are capped so a long reach costs a
+// bounded amount, and bilinear spacing keeps the trail continuous rather than stepped. Returns 0 if a tap buffer
+// could not be allocated; `dst` may not alias `src`.
+static int directional_glow_plane(const float *src, float *dst, size_t width, size_t height,
+                                  int reach, double directionDegrees, double softness, int bidirectional) {
+    if (reach < 1) {
+        memcpy(dst, src, width * height * sizeof(float));
+        return 1;
+    }
+    double radians = directionDegrees * M_PI / 180.0;
+    double ux = cos(radians), uy = -sin(radians);
+    double taper = fmin(1.0, fmax(0.0, softness / 100.0));
+    int taps = bidirectional ? 2 * reach + 1 : reach + 1;
+    if (taps > 33) taps = 33;
+    if (taps < 2) taps = 2;
+    double first = bidirectional ? -(double)reach : 0;
+    double last = (double)reach;
+    double step = (last - first) / (double)(taps - 1);
+    if (step <= 0) step = 1;
+    // Weights are the taper profile at each tap's distance from the pixel; normalized once so the glow carries the
+    // highlights' own brightness rather than growing with the tap count. Allocated rather than a stack array because
+    // the band block below has to capture it.
+    double *weights = malloc((size_t)taps * sizeof(double));
+    if (!weights) return 0;
+    double total = 0;
+    for (int i = 0; i < taps; ++i) {
+        double distance = fabs(first + step * i) / (double)(reach > 0 ? reach : 1);
+        double weight = 1.0 - taper * fmin(1.0, distance);
+        weights[i] = weight > 0 ? weight : 0;
+        total += weights[i];
+    }
+    if (total <= 0) total = 1;
+    in_bands(height, ^(size_t bandFirst, size_t bandLast) { for (size_t y = bandFirst; y < bandLast; ++y) {
+        for (size_t x = 0; x < width; ++x) {
+            double sum = 0;
+            for (int i = 0; i < taps; ++i) {
+                double offset = first + step * i;
+                sum += weights[i] * sample_plane(src, width, height,
+                                                 (double)x - ux * offset, (double)y - uy * offset);
+            }
+            dst[y * width + x] = (float)(sum / total);
+        }
+    } });
+    free(weights);
+    return 1;
+}
+
 // An edge-aware blur (He's guided filter, the plane guiding itself): smooth within regions, stopping at edges, so
 // the detail taken against it has no halos. `epsilon` is the variance an edge needs to be kept.
 static int guided_filter_plane(const float *src, float *dst, size_t width, size_t height, int radius, float epsilon) {
@@ -892,6 +957,7 @@ void adjust_camera_raw_clip_overlay(uint8_t *rgba, size_t width, size_t height, 
 void adjust_camera_raw_effects(uint8_t *rgba, size_t width, size_t height, size_t stride,
                                double texture, double clarity, double dehaze,
                                double glow, int glowStyle, double glowRange, double glowSpread, double glowWarmth,
+                               double glowDirection, double glowSoftness,
                                double vignetteAmount, double vignetteMidpoint, double vignetteRoundness,
                                double vignetteFeather, double vignetteHighlights, int vignetteStyle,
                                double scale) {
@@ -948,7 +1014,14 @@ void adjust_camera_raw_effects(uint8_t *rgba, size_t width, size_t height, size_
                     if (t > 1) t = 1;
                     source[i] = t;
                 }
-                failed = !box_blur_plane(source, glowPlane, width, height, glowRadius);
+                if (glowStyle == 3 || glowStyle == 4) {
+                    // Motion smears one way from each highlight, Streak both ways. The reach is the same radius the
+                    // other styles use, so Spread means the same thing whichever style is chosen.
+                    failed = !directional_glow_plane(source, glowPlane, width, height, glowRadius,
+                                                     glowDirection, glowSoftness, glowStyle == 4);
+                } else {
+                    failed = !box_blur_plane(source, glowPlane, width, height, glowRadius);
+                }
             }
             free(source);
         }

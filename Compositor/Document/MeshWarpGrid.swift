@@ -290,12 +290,21 @@ nonisolated struct MeshWarpGrid: Equatable, Sendable {
     }
 
     /// Barycenter of the given vertex positions (current or base).
+    ///
+    /// The indices are visited in a fixed order, so the float sum cannot depend on the caller's set iteration order.
+    /// Two gestures over the same vertices then take the same pivot to the last bit — which matters because a rotating
+    /// gesture re-applies from its base each update, and a pivot one bit off would leave every step a hair apart.
+    /// The sum itself accumulates in double, so a large selection does not lose the low bits to repeated rounding.
     static func barycenter(indices: Set<Int>, in positions: [SIMD2<Float>]) -> SIMD2<Float>? {
-        let list = indices.filter { positions.indices.contains($0) }
+        let list = indices.filter { positions.indices.contains($0) }.sorted()
         guard !list.isEmpty else { return nil }
-        var sum = SIMD2<Float>(0, 0)
-        for index in list { sum += positions[index] }
-        return sum / Float(list.count)
+        var sumX = 0.0, sumY = 0.0
+        for index in list {
+            sumX += Double(positions[index].x)
+            sumY += Double(positions[index].y)
+        }
+        let count = Double(list.count)
+        return SIMD2(Float(sumX / count), Float(sumY / count))
     }
 
     private mutating func install(_ trial: [SIMD2<Float>]) -> Bool {

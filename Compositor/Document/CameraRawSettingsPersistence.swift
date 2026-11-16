@@ -25,6 +25,10 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
     var glowRange: Double = 0
     var glowSpread: Double = 0
     var glowWarmth: Double = 0
+    /// Direction and Softness drive Motion and Streak only. Absent in older projects, which decode to 0 and
+    /// render their isotropic glow exactly as before.
+    var glowDirection: Double = 0
+    var glowSoftness: Double = 0
     var vignetteAmount: Double = 0
     var vignetteStyle: String = CameraRawVignetteStyle.highlightPriority.rawValue
     var vignetteMidpoint: Double = 50
@@ -267,6 +271,8 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         glowRange = s.glowRange
         glowSpread = s.glowSpread
         glowWarmth = s.glowWarmth
+        glowDirection = s.glowDirection
+        glowSoftness = s.glowSoftness
         vignetteAmount = s.vignetteAmount
         vignetteStyle = s.vignetteStyle.rawValue
         vignetteMidpoint = s.vignetteMidpoint
@@ -369,6 +375,8 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         glowRange = try read(.glowRange, base.glowRange)
         glowSpread = try read(.glowSpread, base.glowSpread)
         glowWarmth = try read(.glowWarmth, base.glowWarmth)
+        glowDirection = try read(.glowDirection, base.glowDirection)
+        glowSoftness = try read(.glowSoftness, base.glowSoftness)
         vignetteAmount = try read(.vignetteAmount, base.vignetteAmount)
         vignetteStyle = try read(.vignetteStyle, base.vignetteStyle)
         vignetteMidpoint = try read(.vignetteMidpoint, base.vignetteMidpoint)
@@ -397,6 +405,7 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         let scalars: [Double] = [
             temperature, tint, exposure, contrast, highlights, shadows, whites, blacks,
             vibrance, saturation, texture, clarity, dehaze, glow, glowRange, glowSpread, glowWarmth,
+            glowDirection, glowSoftness,
             vignetteAmount, vignetteMidpoint, vignetteRoundness, vignetteFeather, vignetteHighlights,
             grainAmount, grainSize, grainRoughness,
             curve.shadows, curve.darks, curve.lights, curve.highlights,
@@ -442,6 +451,8 @@ nonisolated struct CameraRawSettingsPersistentState: Codable, Equatable, Sendabl
         settings.glowRange = glowRange
         settings.glowSpread = glowSpread
         settings.glowWarmth = glowWarmth
+        settings.glowDirection = glowDirection
+        settings.glowSoftness = glowSoftness
         settings.vignetteAmount = vignetteAmount
         settings.vignetteStyle = CameraRawVignetteStyle(rawValue: vignetteStyle) ?? .highlightPriority
         settings.vignetteMidpoint = vignetteMidpoint

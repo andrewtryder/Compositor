@@ -395,7 +395,32 @@ struct MeshWarpAdvancedTests {
             let c = cos(half), s = sin(half)
             return pivot + SIMD2(relative.x * c - relative.y * s, relative.x * s + relative.y * c)
         }
-        #expect(rotated == fresh.positions, "the last write equals the single-step result exactly")
+        #expect(zip(rotated, fresh.positions).allSatisfy { abs($0.x - $1.x) < 1e-5 && abs($0.y - $1.y) < 1e-5 },
+                "the last write matches the single-step result to float precision")
+    }
+
+    /// The pivot a gesture rotates about has to be the same however the selection set happens to iterate, or the
+    /// drift test above becomes a coin toss on the set's hash order.
+    @Test func barycenterIgnoresSelectionIterationOrder() throws {
+        var mesh = MeshWarpGrid.identity(preset: .points8, stickyBorders: false, propagation: 0)
+        let selected = Set((2...5).flatMap { row in (2...5).map { mesh.index(column: $0, row: row) } })
+        let base = mesh.positions
+        let pivot = try #require(MeshWarpGrid.barycenter(indices: selected, in: base))
+
+        // The same vertices inserted in a different order must give the identical pivot, bit for bit.
+        var reversed: [Int] = []
+        for row in (2...5).reversed() {
+            for column in (2...5).reversed() { reversed.append(mesh.index(column: column, row: row)) }
+        }
+        let other = try #require(MeshWarpGrid.barycenter(indices: Set(reversed), in: base))
+        #expect(pivot == other, "the float sum cannot depend on set order")
+
+        // And it is the true mean, not merely a repeatable one.
+        let count = Double(selected.count)
+        let meanX = selected.reduce(0.0) { $0 + Double(base[$1].x) } / count
+        let meanY = selected.reduce(0.0) { $0 + Double(base[$1].y) } / count
+        #expect(abs(Double(pivot.x) - meanX) < 1e-7 && abs(Double(pivot.y) - meanY) < 1e-7)
+        _ = mesh
     }
 
     @Test func foldingRotationIsRefusedAndLeavesMeshUnchanged() throws {

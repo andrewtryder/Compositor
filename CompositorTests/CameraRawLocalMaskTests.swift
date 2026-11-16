@@ -213,6 +213,32 @@ struct CameraRawLocalMaskTests {
         #expect(try pixel(result, x: 1, y: 1) == pixel(source, x: 1, y: 1), "the corners are outside")
     }
 
+    // MARK: - Local Glow
+
+    /// Local Glow reads highlights from the frame but is blended through the mask, so it must not brighten the
+    /// picture outside the region even though the highlights it spreads from are all over it.
+    @Test func aLocalGlowStaysInsideItsMask() throws {
+        let source = try fixture()
+        var mask = CameraRawLocalMask(name: "Spot", kind: .radialGradient)
+        mask.centerX = 0.5
+        mask.centerY = 0.5
+        mask.radiusX = 0.25
+        mask.radiusY = 0.25
+        mask.adjustments.glow = 100
+        mask.adjustments.glowRange = 0
+        var settings = CameraRawSettings()
+        settings.localMasks = [mask]
+        let result = try settings.applyResult(source).image
+        #expect(try pixel(result, x: 32, y: 32) != pixel(source, x: 32, y: 32), "the mask's own region glows")
+        #expect(try pixel(result, x: 1, y: 1) == pixel(source, x: 1, y: 1), "and the glow does not leak to the corner")
+
+        // Zero is an exact identity, as every other local adjustment is.
+        mask.adjustments.glow = 0
+        settings.localMasks = [mask]
+        let untouched = try settings.applyResult(source).image
+        #expect(try pixel(untouched, x: 32, y: 32) == pixel(source, x: 32, y: 32))
+    }
+
     // MARK: - Color Range
 
     @Test func aColorRangeMaskFollowsTheSampledColor() throws {

@@ -494,6 +494,94 @@ struct CameraRawTests {
         #expect(halationRed > diffusionRed, "halation is redder than diffusion at the same warmth: \(halation[fringe]) vs \(diffusion[fringe])")
     }
 
+    /// A white dot on black, so a directional glow's trail is the only thing in the neighborhood.
+    private func whiteDot(size: Int = 41, at x: Int? = nil, y: Int? = nil) throws -> CGImage {
+        let context = try BrushRaster.context(width: size, height: size, mask: false)
+        context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: x ?? size / 2, y: y ?? size / 2, width: 3, height: 3))
+        return try #require(context.makeImage())
+    }
+
+    /// The row through the dot, left to right, so a trail's direction and reach can be read off numerically.
+    private func brightnessRow(_ image: CGImage, row: Int) throws -> [Int] {
+        let all = try pixels(image)
+        return (0..<image.width).map { all[row * image.width + $0][0] }
+    }
+
+    @Test func motionGlowTrailsOneWayAndStreakTrailsBoth() throws {
+        let dot = try whiteDot()
+        let size = 41, row = size / 2 + 1
+        var settings = CameraRawSettings()
+        settings.glow = 100
+        settings.glowRange = 100
+        settings.glowStyle = .motion
+        settings.glowSpread = 60
+        settings.glowDirection = 0
+        // The dot itself: 3 wide at the middle, so its right edge sits at 21 and its left at 19.
+        let motion = try brightnessRow(settings.apply(dot), row: row)
+        let left = (0...(size / 2 - 4)).map { motion[$0] }
+        let right = ((size / 2 + 4)..<size).map { motion[$0] }
+        #expect(left.allSatisfy { $0 == 0 }, "motion at 0° leaves the left side black: \(left)")
+        #expect(right.contains { $0 > 0 }, "motion at 0° carries the highlight to the right: \(right)")
+
+        settings.glowDirection = 180
+        let reversed = try brightnessRow(settings.apply(dot), row: row)
+        let reversedLeft = (0...(size / 2 - 4)).map { reversed[$0] }
+        let reversedRight = ((size / 2 + 4)..<size).map { reversed[$0] }
+        #expect(reversedRight.allSatisfy { $0 == 0 }, "motion at 180° leaves the right side black: \(reversedRight)")
+        #expect(reversedLeft.contains { $0 > 0 }, "motion at 180° carries the highlight to the left: \(reversedLeft)")
+
+        settings.glowStyle = .streak
+        settings.glowDirection = 0
+        let streak = try brightnessRow(settings.apply(dot), row: row)
+        let streakLeft = (0...(size / 2 - 4)).map { streak[$0] }
+        let streakRight = ((size / 2 + 4)..<size).map { streak[$0] }
+        #expect(streakLeft.contains { $0 > 0 }, "streak reaches left: \(streakLeft)")
+        #expect(streakRight.contains { $0 > 0 }, "streak reaches right: \(streakRight)")
+    }
+
+    @Test func motionGlowAimsItsTrailOffTheHorizontal() throws {
+        let dot = try whiteDot()
+        let size = 41
+        var settings = CameraRawSettings()
+        settings.glow = 100
+        settings.glowRange = 100
+        settings.glowSpread = 60
+        settings.glowStyle = .motion
+        // 90° is straight up the picture, which is toward row 0 since y grows downward.
+        settings.glowDirection = 90
+        let column = 21
+        let above = try pixels(settings.apply(dot))
+            .enumerated().filter { $0.offset % size == column }.map { $0.element[0] }
+        #expect((0..<15).contains { above[$0] > 0 }, "the trail points up: \(above.prefix(20))")
+        #expect((30..<size).allSatisfy { above[$0] == 0 }, "and not down: \(above.suffix(11))")
+    }
+
+    @Test func directionalGlowIsIdleAtZeroAndIgnoresTheIsotropicStyles() throws {
+        let dot = try whiteDot()
+        let untouched = try pixels(dot)
+        var settings = CameraRawSettings()
+        // Direction and Softness alone, with Glow still at zero, must not touch a pixel.
+        settings.glowDirection = 137
+        settings.glowSoftness = 100
+        settings.glowStyle = .motion
+        #expect(try pixels(settings.apply(dot)) == untouched, "direction and softness do nothing until Glow is raised")
+
+        // The same settings on an isotropic style must match the isotropic render exactly.
+        settings.glow = 100
+        settings.glowRange = 100
+        settings.glowStyle = .diffusion
+        settings.glowDirection = 0
+        settings.glowSoftness = 0
+        let plain = try pixels(settings.apply(dot))
+        settings.glowDirection = 145
+        settings.glowSoftness = 90
+        let withDirectionalOnly = try pixels(settings.apply(dot))
+        #expect(plain == withDirectionalOnly, "Diffusion ignores Direction and Softness")
+    }
+
     @Test func vignetteDarkensCornersAndHighlightsOnlyWhileDarkening() throws {
         let grayField = try gray(width: 9, height: 9)
         var settings = CameraRawSettings()
@@ -1286,6 +1374,51 @@ struct CameraRawTests {
         session.updateCameraRawReadout(at: CGPoint(x: 2997.5, y: 8.5))
         let expected = try pixels(shown)[8 * 3000 + 2997]
         #expect(edit.cameraRawReadout?.red == expected[0])
+    }
+
+    @Test func directionalGlowSettingsRoundTripAndOlderProjectsLoadWithoutThem() throws {
+        var settings = CameraRawSettings()
+        settings.glow = 70
+        settings.glowStyle = .streak
+        settings.glowRange = 20
+        settings.glowSpread = 35
+        settings.glowWarmth = -15
+        settings.glowDirection = -62
+        settings.glowSoftness = 45
+        let data = try JSONEncoder().encode(CameraRawSettingsPersistentState(settings))
+        let decoded = try JSONDecoder().decode(CameraRawSettingsPersistentState.self, from: data)
+        let restored = try decoded.makeSettings()
+        #expect(restored.glowStyle == .streak)
+        #expect(restored.glowDirection == -62)
+        #expect(restored.glowSoftness == 45)
+
+        // A project written before Motion and Streak has neither key, and must decode to an unchanged glow.
+        let older = Data("""
+        {"schemaVersion":1,"glow":40,"glowStyle":"Halation","glowRange":10,"glowSpread":5,"glowWarmth":7}
+        """.utf8)
+        let old = try JSONDecoder().decode(CameraRawSettingsPersistentState.self, from: older)
+        let restoredOld = try old.makeSettings()
+        #expect(restoredOld.glowStyle == .halation)
+        #expect(restoredOld.glow == 40)
+        #expect(restoredOld.glowDirection == 0 && restoredOld.glowSoftness == 0,
+                "missing Direction and Softness are the identity for the isotropic styles")
+
+        var corrupt = CameraRawSettings()
+        corrupt.glowDirection = .nan
+        #expect(!corrupt.isValid, "a non-finite direction is refused, not rendered")
+        #expect(corrupt.normalized.glowDirection == 0)
+    }
+
+    @Test func everyGlowStyleKeepsZeroAmountAnExactIdentity() throws {
+        let dot = try whiteDot()
+        let untouched = try pixels(dot)
+        for style in CameraRawGlowStyle.allCases {
+            var settings = CameraRawSettings()
+            settings.glowStyle = style
+            settings.glowDirection = 43
+            settings.glowSoftness = 80
+            #expect(try pixels(settings.apply(dot)) == untouched, "\(style.rawValue) at zero amount is the identity")
+        }
     }
 
     @Test func nativeCameraRawPreviewsCoalesceSliderChangesAndRespectPreviewOffAndCancel() async throws {
