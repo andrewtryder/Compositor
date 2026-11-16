@@ -34,3 +34,18 @@ BUILD_PLAN.md
 Tests/TestFixtures/
 /regression-build.log
 /regression-test.log
+
+# Local development evidence: research reports, rendered comparisons, UI screenshots,
+# xcresult bundles, benchmarks and scratch scripts. Kept on the machine, never sent
+# upstream. Automated tests read only `originals/` (already ignored inside it) and skip
+# when it is absent, so a fresh checkout needs none of this.
+/work/
+
+# Xcode result bundles and test-run artifacts outside work/
+*.xcresult
+/TestResults/
+/coverage/
+
+# Transient logs from local builds and test runs
+*.log
+

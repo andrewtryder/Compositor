@@ -87,7 +87,7 @@ struct CameraRawLensfunRawEvidenceTests {
     /// Apple Native (decoder lens correction on), Lensfun (decoder correction off, calibrated pass on),
     /// and Off (decoder correction off, no pass). Each pair rendered from the same CR2 bytes.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["COMPOSITOR_RAW_FIXTURE_PATH"] != nil
-                    || FileManager.default.fileExists(atPath: "/Users/atr/code/Compositor/work/geometry-validation/originals/sigma-40art-sample.CR2"),
+                    || GeometryValidationFixtures.rootContaining("originals/sigma-40art-sample.CR2") != nil,
                    "the untracked RAW fixture is not in this checkout"))
     func writesRawAppleLensfunAndOffBesideSource() throws {
         let root = try #require(root)
