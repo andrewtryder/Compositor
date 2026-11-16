@@ -135,6 +135,12 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
             && !adjustsLocalMasks
             && !optics.lensProfile.adjustsPixels
     }
+
+    /// Copies only `group` from `source` into `self`, so a preset can apply the groups it carries
+    /// without touching anything else.
+    mutating func applyGroup(_ group: CameraRawGroup, from source: CameraRawSettings) {
+        CameraRawSettings.copy(group, from: source, to: &self)
+    }
     var isValid: Bool {
         Self.exposureRange.contains(exposure) && exposure.isFinite
             && [contrast, highlights, shadows, whites, blacks, temperature, tint, vibrance, saturation,

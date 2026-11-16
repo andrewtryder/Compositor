@@ -21,6 +21,8 @@ struct CameraRawControls: View {
                     }
                     Divider()
                     CameraRawMasksControls(session: session)
+                    Divider()
+                    CameraRawPresetsControls(session: session)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.trailing, 20)

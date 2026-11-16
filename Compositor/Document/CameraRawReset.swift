@@ -54,7 +54,7 @@ nonisolated extension CameraRawSettings {
         return keeping(group) == CameraRawSettings()
     }
 
-    private static func copy(_ group: CameraRawGroup, from source: Self, to target: inout Self) {
+    static func copy(_ group: CameraRawGroup, from source: Self, to target: inout Self) {
         switch group {
         case .light:
             target.exposure = source.exposure
@@ -163,5 +163,58 @@ extension EditorSession {
             edit.cameraRawMiniatureDragOriginalCenter = nil
         }
         updateFilter(settings, preview: edit.preview)
+    }
+
+    // MARK: - Camera Raw presets
+
+    /// Saves the current Camera Raw settings as a named preset, affecting only the given groups.
+    @discardableResult
+    func saveCameraRawPreset(name: String, affects: Set<CameraRawGroup>) -> CameraRawPreset? {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return nil }
+        do {
+            return try cameraRawPresets.save(name: name, affects: affects, settings: edit.settings.cameraRaw)
+        } catch {
+            brushError = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Applies `preset` to the open Camera Raw settings, replacing only the groups it carries.
+    func applyCameraRawPreset(_ preset: CameraRawPreset) {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return }
+        var settings = edit.settings
+        cameraRawPresets.apply(preset, to: &settings.cameraRaw)
+        edit.settings = settings
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Renames an existing preset.
+    func renameCameraRawPreset(_ id: UUID, to name: String) {
+        do { try cameraRawPresets.rename(id, to: name) }
+        catch { brushError = error.localizedDescription }
+    }
+
+    /// Deletes a preset.
+    func deleteCameraRawPreset(_ id: UUID) {
+        do { try cameraRawPresets.delete(id) }
+        catch { brushError = error.localizedDescription }
+    }
+
+    /// Returns a copy of `preset` under a new name.
+    func duplicateCameraRawPreset(_ id: UUID, named name: String) -> CameraRawPreset? {
+        do { return try cameraRawPresets.duplicate(id, named: name) }
+        catch { brushError = error.localizedDescription; return nil }
+    }
+
+    /// Exports a preset to `url` as a `.compositorpreset` file.
+    func exportCameraRawPreset(_ preset: CameraRawPreset, to url: URL) {
+        do { try cameraRawPresets.export(preset, to: url) }
+        catch { brushError = error.localizedDescription }
+    }
+
+    /// Imports a preset from `url`. Returns the new preset or nil on failure.
+    func importCameraRawPreset(from url: URL) -> CameraRawPreset? {
+        do { return try cameraRawPresets.importPreset(from: url) }
+        catch { brushError = error.localizedDescription; return nil }
     }
 }

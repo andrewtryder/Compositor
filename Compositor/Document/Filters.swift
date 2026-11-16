@@ -646,6 +646,8 @@ final class FilterEdit {
     var picksCameraRawLensBlurDepth = false
     /// Local masks: which one the panel edits, and whether its coverage is painted on the preview.
     var selectedLocalMaskID: UUID?
+    /// The preset the panel's Presets section is showing controls for, if any.
+    var selectedCameraRawPresetID: UUID?
     var showsLocalMaskOverlay = false
     /// The selected mask's own overlay is shown while the mask is being drawn or sampled, so the region being set is
     /// visible without the panel's toggle.

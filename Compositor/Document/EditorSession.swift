@@ -434,10 +434,12 @@ final class EditorSession {
     var levels: LevelsEdit? { didSet { resumeFileRequests() } }
     var hueSaturation: HueSaturationEdit?
     /// The open filter (Filter menu), and the settings the next one starts from.
-    var filterEdit: FilterEdit?
-    var filterSettings = FilterSettings()
-    /// What Filter › Last Filter runs again.
-    var lastFilter: FilterKind?
+var filterEdit: FilterEdit?
+var filterSettings = FilterSettings()
+/// What Filter › Last Filter runs again.
+var lastFilter: FilterKind?
+/// The person's Camera Raw presets, saved next to Application Support.
+let cameraRawPresets = CameraRawPresets()
     @ObservationIgnored var hueSaturationTask: Task<Void, Never>?
     /// The newest preview request while one is already rendering.
     @ObservationIgnored var hueSaturationPending: HueSaturationJob?
