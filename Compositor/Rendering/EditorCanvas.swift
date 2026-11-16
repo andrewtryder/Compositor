@@ -146,6 +146,7 @@ final class CanvasView: NSView {
     private var cameraRawCropDrag = false
     /// Camera Raw Local Mask's gradient being dragged on the canvas.
     private var localMaskDrag = false
+    private var localMaskBrushDrag = false
     /// ReShape control-point drag in progress.
     private var meshDragging = false
     private var antsTimer: Timer?
@@ -2228,6 +2229,14 @@ final class CanvasView: NSView {
             synchronizeDisplay()
             return
         }
+        // Brush Mask painting: armed from the Masks panel, paints or erases the selected brush-painted mask's
+        // coverage. Mutually exclusive with every other canvas mode.
+        if session.filterEdit?.drawsLocalMaskBrush == true, !spaceHeld, let document = session.document {
+            session.beginCameraRawLocalMaskBrushStroke(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            localMaskBrushDrag = true
+            synchronizeDisplay()
+            return
+        }
         if session.filterEdit?.drawingCameraRawGeometryGuide == true, !spaceHeld, let document = session.document {
             let documentPoint = session.viewport.documentPoint(from: point, documentSize: document.size)
             // Endpoint dragging takes priority over starting a new guide.
@@ -2414,6 +2423,11 @@ final class CanvasView: NSView {
         }
         if localMaskDrag, let document = session.document {
             session.continueCameraRawLocalMaskGradientDrag(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            synchronizeDisplay()
+            return
+        }
+        if localMaskBrushDrag, let document = session.document {
+            session.continueCameraRawLocalMaskBrushStroke(to: session.viewport.documentPoint(from: point, documentSize: document.size))
             synchronizeDisplay()
             return
         }
@@ -2678,6 +2692,12 @@ final class CanvasView: NSView {
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
             return
         }
+        if localMaskBrushDrag {
+            localMaskBrushDrag = false
+            session.endCameraRawLocalMaskBrushStroke()
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
         if progressiveDrag != nil {
             progressiveDrag = nil
             // The panel keeps the keyboard, for Return and Escape.
@@ -2924,6 +2944,11 @@ final class CanvasView: NSView {
             // Escape puts a local mask's gradient back where the drag found it and disarms the mode.
             session.cancelCameraRawLocalMaskGradient()
             localMaskDrag = false
+            synchronizeDisplay()
+        } else if event.keyCode == 53, session.filterEdit?.drawsLocalMaskBrush == true {
+            // Escape discards an unfinished brush stroke and disarms brush painting.
+            session.cancelCameraRawLocalMaskBrush()
+            localMaskBrushDrag = false
             synchronizeDisplay()
         } else if event.keyCode == 53, session.transformEdit != nil {
             transformDrag = nil

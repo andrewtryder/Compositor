@@ -649,7 +649,7 @@ final class FilterEdit {
     var showsLocalMaskOverlay = false
     /// The selected mask's own overlay is shown while the mask is being drawn or sampled, so the region being set is
     /// visible without the panel's toggle.
-    var previewsSelectedLocalMask: Bool { showsLocalMaskOverlay || samplesLocalMask || drawsLocalMask }
+    var previewsSelectedLocalMask: Bool { showsLocalMaskOverlay || samplesLocalMask || drawsLocalMask || drawsLocalMaskBrush }
     /// The eyedropper is armed to set the selected mask's Color Range sample, which replaces the raster kinds.
     var samplesLocalMask = false
     /// The next click adds an Object Selection mask from the foreground under it.
@@ -662,6 +662,18 @@ final class FilterEdit {
     var localMaskGradientHandle: CameraRawLocalMaskGradientHandle?
     /// Where the gradient was when the drag began, so Escape can put it back exactly.
     var localMaskGradientOriginal: (start: CGPoint, end: CGPoint)?
+    /// Brush painting is armed for the selected mask's coverage. Paint adds coverage; erase removes it.
+    var drawsLocalMaskBrush = false
+    /// The brush mode the panel set while `drawsLocalMaskBrush` is true: `.paint` adds coverage, `.erase` removes it.
+    var localMaskBrushMode: BrushToolMode = .paint
+    /// The in-progress brush stroke painting the selected mask's coverage, or nil when no stroke is live.
+    var localMaskBrushStroke: CameraRawLocalMaskBrush?
+    /// The mask coverage captured when the brush stroke began, so the stroke paints onto it and Escape can restore it.
+    var localMaskBrushStrokeBase: CGImage?
+    /// The mask as it was when the brush stroke began, so Escape can restore it exactly.
+    var localMaskBrushStrokeOriginalMask: CameraRawLocalMask?
+    /// Where the current brush stroke began on the preview, in normalized coordinates.
+    var localMaskBrushStrokeStart: CGPoint?
     /// Miniature's focus region is being dragged on the preview from the Geometry section.
     var movesCameraRawMiniatureFocus = false
     /// The Miniature focus center captured when a canvas drag began, so Escape can put it back exactly.

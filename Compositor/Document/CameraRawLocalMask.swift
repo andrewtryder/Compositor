@@ -10,11 +10,14 @@ nonisolated enum CameraRawLocalMaskKind: String, Codable, CaseIterable, Sendable
     case layerMask = "Layer Mask"
     case linearGradient = "Linear Gradient"
     case radialGradient = "Radial Gradient"
+    case brushPainted = "Brush"
 
     /// Kinds whose coverage is a stored grayscale bitmap.
-    var isRaster: Bool { self == .selection || self == .objectSelection || self == .layerMask }
+    var isRaster: Bool { self == .selection || self == .objectSelection || self == .layerMask || self == .brushPainted }
     /// Kinds placed by dragging on the preview.
     var isGradient: Bool { self == .linearGradient || self == .radialGradient }
+    /// Kinds that support brush editing on the canvas.
+    var isBrushPainted: Bool { self == .brushPainted }
 }
 
 /// A mask's coverage as an 8-bit gray PNG (row 0 is the top, white reveals). Stored with the settings so a reopened
@@ -254,7 +257,10 @@ nonisolated struct CameraRawLocalMask: Codable, Equatable, Sendable, Identifiabl
               (0...1).contains(centerX), (0...1).contains(centerY),
               (0...1).contains(radiusX), (0...1).contains(radiusY),
               (0...1).contains(red), (0...1).contains(green), (0...1).contains(blue) else { return false }
-        if kind.isRaster { return raster?.isValid == true }
+        if kind.isRaster {
+            if kind == .brushPainted { return raster == nil || raster?.isValid == true }
+            return raster?.isValid == true
+        }
         return true
     }
 
@@ -335,7 +341,7 @@ nonisolated enum CameraRawLocalMaskRenderer {
         guard width > 0, height > 0 else { return nil }
         var base: CGImage?
         switch mask.kind {
-        case .selection, .objectSelection, .layerMask:
+        case .selection, .objectSelection, .layerMask, .brushPainted:
             base = try capturedCoverage(mask, settings: settings, inputWidth: inputWidth, inputHeight: inputHeight,
                                         width: width, height: height)
         case .linearGradient:

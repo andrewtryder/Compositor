@@ -576,4 +576,85 @@ struct CameraRawLocalMaskTests {
                 "reset Light does not delete or neutralize a mask")
         #expect(session.filterEdit?.settings.cameraRaw.localMasks.first?.adjustments.exposure == 1)
     }
+
+    // MARK: - Brush-painted masks
+
+    @Test @MainActor func brushMaskCanBeAddedToTheList() throws {
+        let session = try cameraRawSession()
+        let added = try #require(session.addCameraRawLocalMask(kind: .brushPainted))
+        let mask = try #require(session.filterEdit?.settings.cameraRaw.localMasks.first { $0.id == added })
+        #expect(mask.kind == .brushPainted)
+        #expect(mask.raster == nil, "a new brush mask starts with no coverage")
+        #expect(session.filterEdit?.selectedLocalMaskID == added)
+    }
+
+    @Test @MainActor func brushPaintingArmedAndStrokeStarted() throws {
+        let session = try cameraRawSession()
+        let added = try #require(session.addCameraRawLocalMask(kind: .brushPainted))
+        session.selectCameraRawLocalMask(added)
+
+        session.beginCameraRawLocalMaskBrush(mode: .paint)
+        #expect(session.filterEdit?.drawsLocalMaskBrush == true)
+        #expect(session.filterEdit?.localMaskBrushMode == .paint)
+
+        session.beginCameraRawLocalMaskBrushStroke(at: CGPoint(x: 40, y: 30))
+        #expect(session.filterEdit?.localMaskBrushStroke != nil)
+
+        session.endCameraRawLocalMaskBrushStroke()
+        #expect(session.filterEdit?.drawsLocalMaskBrush == false)
+        #expect(session.filterEdit?.localMaskBrushStroke == nil)
+        // The mask now carries a raster.
+        let mask = try #require(session.filterEdit?.settings.cameraRaw.localMasks.first { $0.id == added })
+        #expect(mask.raster != nil, "a finished stroke leaves a stored raster")
+    }
+
+    @Test @MainActor func brushEraseModeStartsAndCompletes() throws {
+        let session = try cameraRawSession()
+        let added = try #require(session.addCameraRawLocalMask(kind: .brushPainted))
+        session.selectCameraRawLocalMask(added)
+
+        session.beginCameraRawLocalMaskBrush(mode: .erase)
+        #expect(session.filterEdit?.localMaskBrushMode == .erase)
+
+        session.beginCameraRawLocalMaskBrushStroke(at: CGPoint(x: 40, y: 30))
+        session.endCameraRawLocalMaskBrushStroke()
+        #expect(session.filterEdit?.localMaskBrushStroke == nil)
+        let mask = try #require(session.filterEdit?.settings.cameraRaw.localMasks.first { $0.id == added })
+        #expect(mask.raster != nil)
+    }
+
+    @Test @MainActor func cancelBrushStrokeRestoresTheMask() throws {
+        let session = try cameraRawSession()
+        let added = try #require(session.addCameraRawLocalMask(kind: .brushPainted))
+        session.selectCameraRawLocalMask(added)
+
+        session.beginCameraRawLocalMaskBrush(mode: .paint)
+        session.beginCameraRawLocalMaskBrushStroke(at: CGPoint(x: 40, y: 30))
+        // The mask had no raster before; cancel restores it to that.
+        session.cancelCameraRawLocalMaskBrush()
+        #expect(session.filterEdit?.drawsLocalMaskBrush == false)
+        #expect(session.filterEdit?.localMaskBrushStroke == nil)
+        let mask = try #require(session.filterEdit?.settings.cameraRaw.localMasks.first { $0.id == added })
+        #expect(mask.raster == nil, "a canceled stroke leaves the mask as it was")
+    }
+
+    @Test @MainActor func brushCannotArmOnAGradientMask() throws {
+        let session = try cameraRawSession()
+        let added = try #require(session.addCameraRawLocalMask(kind: .linearGradient))
+        session.selectCameraRawLocalMask(added)
+
+        session.beginCameraRawLocalMaskBrush(mode: .paint)
+        #expect(session.filterEdit?.drawsLocalMaskBrush == false,
+                "brush painting is not armed on a gradient mask")
+    }
+
+    @Test @MainActor func emptyBrushMaskAppliesNoAdjustment() throws {
+        let source = try fixture()
+        var mask = CameraRawLocalMask(name: "Empty", kind: .brushPainted)
+        mask.adjustments.exposure = 2
+        var settings = CameraRawSettings()
+        settings.localMasks = [mask]
+        let result = try settings.applyResult(source).image
+        #expect(try pixels(result) == pixels(source), "an empty brush mask is pixel-identical")
+    }
 }

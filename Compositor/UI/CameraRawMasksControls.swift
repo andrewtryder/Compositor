@@ -24,6 +24,8 @@ struct CameraRawMasksControls: View {
                     Button("From Layer Mask") { session.addCameraRawLocalMaskFromLayerMask() }
                         .disabled(session.filterEdit.map { !hasLayerMask(layerID: $0.layerID) } ?? true)
                     Divider()
+                    Button("Brush") { session.addCameraRawLocalMask(kind: .brushPainted) }
+                    Divider()
                     Button("Linear Gradient") { session.addCameraRawLocalMask(kind: .linearGradient) }
                     Button("Radial Gradient") { session.addCameraRawLocalMask(kind: .radialGradient) }
                     Divider()
@@ -175,6 +177,65 @@ struct CameraRawMasksControls: View {
                       ? "Drag on the preview to set where the mask starts and ends."
                       : "Drag on the preview to move the mask's center and set its reach.")
                 .accessibilityLabel("Draw Mask Gradient")
+            }
+            if mask.kind == .brushPainted {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        Button {
+                            session.beginCameraRawLocalMaskBrush(mode: .paint)
+                        } label: {
+                            Label("Paint", systemImage: "paintbrush.fill")
+                        }
+                        .buttonStyle(.borderless)
+                        .tint(session.filterEdit?.localMaskBrushMode == .paint &&
+                              session.filterEdit?.drawsLocalMaskBrush == true ? Color.accentColor : Color.secondary)
+                        .help("Paint to add to the mask.")
+                        .accessibilityLabel("Paint Mask")
+
+                        Button {
+                            session.beginCameraRawLocalMaskBrush(mode: .erase)
+                        } label: {
+                            Label("Erase", systemImage: "eraser.fill")
+                        }
+                        .buttonStyle(.borderless)
+                        .tint(session.filterEdit?.localMaskBrushMode == .erase &&
+                              session.filterEdit?.drawsLocalMaskBrush == true ? Color.accentColor : Color.secondary)
+                        .help("Erase to remove from the mask.")
+                        .accessibilityLabel("Erase Mask")
+
+                        Button {
+                            session.finishCameraRawLocalMaskBrush()
+                        } label: {
+                            Label("Done", systemImage: "checkmark")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(session.filterEdit?.drawsLocalMaskBrush != true)
+                        .help("Finish painting and commit the mask.")
+                        .accessibilityLabel("Done Painting")
+
+                        Spacer(minLength: 0)
+                    }
+                    slider("Size", value: Double(session.brushSettings.diameter), range: 1...2000, decimals: 0,
+                       help: "Brush diameter in pixels.") { value in
+                        session.brushSettings.diameter = CGFloat(value)
+                        session.brushRevision += 1
+                    }
+                    slider("Hardness", value: Double(session.brushSettings.hardness), range: 0...1, decimals: 2,
+                           help: "Brush edge hardness. 1 is hard, 0 is soft.") { value in
+                        session.brushSettings.hardness = CGFloat(value)
+                        session.brushRevision += 1
+                    }
+                    slider("Opacity", value: Double(session.brushSettings.opacity), range: 0.01...1, decimals: 2,
+                           help: "Brush opacity cap.") { value in
+                        session.brushSettings.opacity = CGFloat(value)
+                        session.brushRevision += 1
+                    }
+                    slider("Flow", value: Double(session.brushSettings.opacity), range: 0.01...1, decimals: 2,
+                           help: "Brush flow (same as opacity for now).") { value in
+                        session.brushSettings.opacity = CGFloat(value)
+                        session.brushRevision += 1
+                    }
+                }
             }
             if mask.kind == .colorRange {
                 HStack(spacing: 10) {

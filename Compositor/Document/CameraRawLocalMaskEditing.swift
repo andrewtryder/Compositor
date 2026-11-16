@@ -299,7 +299,7 @@ extension EditorSession {
     /// (they are captured from something else in the document and stay as captured).
     var canEditCameraRawLocalMaskOnCanvas: Bool {
         guard let mask = selectedCameraRawLocalMask else { return false }
-        return mask.kind.isGradient || mask.kind == .colorRange
+        return mask.kind.isGradient || mask.kind == .colorRange || mask.kind == .brushPainted
     }
 
     // MARK: - Gradient drawing on the canvas
@@ -467,11 +467,104 @@ extension EditorSession {
         guard let edit = filterEdit else { return }
         edit.samplesLocalMask = false
         edit.drawsLocalMask = false
+        edit.drawsLocalMaskBrush = false
         edit.picksLocalMaskObject = false
         edit.picksLocalMaskColor = false
         edit.localMaskGradientHandle = nil
         edit.localMaskGradientOriginal = nil
         edit.showsLocalMaskOverlay = false
+        brushRevision += 1
+    }
+
+    // MARK: - Brush painting on a local mask
+
+    /// Arms brush painting for the selected mask: the next drag on the preview paints or erases
+    /// the mask's coverage. Fails quietly when no brush-editable mask is selected.
+    func beginCameraRawLocalMaskBrush(mode: BrushToolMode) {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing,
+              let mask = selectedCameraRawLocalMask, mask.kind.isBrushPainted else { return }
+        // End every other canvas mode so brush painting owns the canvas.
+        edit.drawsLocalMask = false
+        edit.samplesLocalMask = false
+        edit.picksLocalMaskObject = false
+        edit.picksLocalMaskColor = false
+        edit.localMaskGradientHandle = nil
+        edit.localMaskGradientOriginal = nil
+        edit.drawsLocalMaskBrush = true
+        edit.localMaskBrushMode = mode
+        edit.localMaskBrushStroke = nil
+        edit.localMaskBrushStrokeBase = nil
+        edit.localMaskBrushStrokeOriginalMask = mask
+        brushRevision += 1
+    }
+
+    /// Press on the preview while brush painting is armed: starts a stroke on the mask's coverage.
+    func beginCameraRawLocalMaskBrushStroke(at point: CGPoint) {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing,
+              edit.drawsLocalMaskBrush,
+              var mask = selectedCameraRawLocalMask, mask.kind.isBrushPainted,
+              let normalized = cameraRawNormalizedPoint(at: point) else { return }
+        let image = edit.preparedPreview ?? edit.previewSource
+        guard let base = try? maskCoverageImage(mask, in: image) else { return }
+        do {
+            let stroke = try CameraRawLocalMaskBrush(base: base, width: image.width, height: image.height,
+                                                     settings: brushSettings,
+                                                     erasing: edit.localMaskBrushMode == .erase)
+            edit.localMaskBrushStroke = stroke
+            edit.localMaskBrushStrokeBase = base
+            stroke.dab(at: normalizedPointToPixel(normalized, in: image))
+            edit.localMaskBrushStrokeStart = normalized
+            updateFilter(edit.settings, preview: edit.preview)
+            brushRevision += 1
+        } catch { brushError = error.localizedDescription }
+    }
+
+    /// Drag: the brush follows the pointer, laying down dabs along the path.
+    func continueCameraRawLocalMaskBrushStroke(to point: CGPoint) {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing,
+              edit.drawsLocalMaskBrush, var stroke = edit.localMaskBrushStroke,
+              let normalized = cameraRawNormalizedPoint(at: point) else { return }
+        stroke.dab(at: normalizedPointToPixel(normalized, in: edit.preparedPreview ?? edit.previewSource))
+        edit.localMaskBrushStroke = stroke
+        edit.localMaskBrushStrokeStart = normalized
+        updateFilter(edit.settings, preview: edit.preview)
+        brushRevision += 1
+    }
+
+    /// Release: the stroke stays painted on the mask's coverage.
+    func endCameraRawLocalMaskBrushStroke() {
+        guard let edit = filterEdit, let stroke = edit.localMaskBrushStroke else { return }
+        do {
+            let raster = try stroke.makeRaster()
+            if var mask = selectedCameraRawLocalMask {
+                mask.raster = raster
+                updateCameraRawLocalMask(mask)
+            }
+        } catch { brushError = error.localizedDescription }
+        finishCameraRawLocalMaskBrush()
+    }
+
+    /// Escape during a brush stroke: discards the stroke and restores the mask as it was.
+    func cancelCameraRawLocalMaskBrush() {
+        guard let edit = filterEdit else { return }
+        defer {
+            edit.localMaskBrushStroke = nil
+            edit.localMaskBrushStrokeBase = nil
+            edit.localMaskBrushStrokeOriginalMask = nil
+            edit.drawsLocalMaskBrush = false
+            brushRevision += 1
+        }
+        guard let original = edit.localMaskBrushStrokeOriginalMask else { return }
+        updateCameraRawLocalMask(original)
+    }
+
+    /// Ends brush painting without committing an in-progress stroke, as the panel's Done does.
+    func finishCameraRawLocalMaskBrush() {
+        guard let edit = filterEdit else { return }
+        edit.localMaskBrushStroke = nil
+        edit.localMaskBrushStrokeBase = nil
+        edit.localMaskBrushStrokeOriginalMask = nil
+        edit.drawsLocalMaskBrush = false
         brushRevision += 1
     }
 
@@ -504,5 +597,26 @@ private extension EditorSession {
         edit.selectedLocalMaskID = mask.id
         updateFilter(settings, preview: edit.preview)
         return mask.id
+    }
+
+    /// The mask's current coverage rendered at the preview image's grid, in the corrected frame.
+    /// An empty brush-painted mask (no raster yet) yields a black coverage image.
+    private func maskCoverageImage(_ mask: CameraRawLocalMask, in image: CGImage) throws -> CGImage? {
+        guard mask.kind.isBrushPainted, let edit = filterEdit else { return nil }
+        if mask.raster == nil {
+            guard let context = try? BrushRaster.context(width: image.width, height: image.height, mask: true) else { return nil }
+            context.setFillColor(gray: 0, alpha: 1)
+            context.fill(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            return context.makeImage()
+        }
+        return try CameraRawLocalMaskRenderer.coverage(of: mask, settings: edit.settings.cameraRaw,
+                                                       image: image, inputWidth: image.width,
+                                                       inputHeight: image.height, width: image.width,
+                                                       height: image.height)
+    }
+
+    /// A normalized point in the preview mapped to a pixel in the image grid.
+    private func normalizedPointToPixel(_ normalized: CGPoint, in image: CGImage) -> CGPoint {
+        CGPoint(x: normalized.x * Double(image.width), y: normalized.y * Double(image.height))
     }
 }
