@@ -155,7 +155,9 @@ struct CameraRawLensfunEvidenceTests {
     /// One calibrated photograph, four states: Apple Native (unchanged rendering), Lensfun (the calibrated
     /// pass), Off, and the same with the database absent. Each corrected picture is written beside its
     /// source, and a CSV records what the resolution said and how much the pixels moved.
-    @Test func writesCalibratedCorrectionsBesideSource() throws {
+    @Test(.enabled(if: GeometryValidationFixtures.missingPhotographsReason == nil,
+                   "the untracked geometry photographs are not in this checkout"))
+    func writesCalibratedCorrectionsBesideSource() throws {
         try #require(GeometryValidationFixtures.hasLocalPhotographs,
                      "the untracked geometry photographs are not in this checkout")
         let database = try calibratedDatabase()
@@ -209,7 +211,9 @@ struct CameraRawLensfunEvidenceTests {
 
     /// A refused pass, on the record: the same photograph with Apple's decode correction reported active.
     /// The picture must come out identical and the resolution must say why.
-    @Test func appleCorrectionActiveLeavesPixelsUnchanged() throws {
+    @Test(.enabled(if: GeometryValidationFixtures.missingPhotographsReason == nil,
+                   "the untracked geometry photographs are not in this checkout"))
+    func appleCorrectionActiveLeavesPixelsUnchanged() throws {
         try #require(GeometryValidationFixtures.hasLocalPhotographs,
                      "the untracked geometry photographs are not in this checkout")
         let database = try calibratedDatabase()

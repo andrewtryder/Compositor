@@ -27,6 +27,20 @@ nonisolated enum GeometryValidationFixtures {
         rootContaining("originals/window-wall.jpg") != nil
     }
 
+    /// Why a suite that renders the untracked photographs is skipped, or nil when they are here.
+    ///
+    /// Photographs stay out of Git: they are someone's originals, several MPMegapixels each. A checkout without
+    /// them still builds and still runs everything else, so the tests that need them say they are skipped rather
+    /// than failing — a missing local fixture is not a broken app.
+    static var missingPhotographsReason: String? {
+        hasLocalPhotographs ? nil : "the untracked geometry photographs are not in this checkout"
+    }
+
+    static var missingRawFixtureReason: String? {
+        rootContaining("originals/sigma-40art-sample.CR2") == nil
+            ? "the untracked RAW fixture is not in this checkout" : nil
+    }
+
     private static func roots() -> [URL] {
         var found: [URL] = []
         func add(_ url: URL?) {

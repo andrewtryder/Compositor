@@ -81,7 +81,9 @@ struct CameraRawMiniatureEvidenceTests {
 
     /// Before, Linear at the panel defaults, Linear with a tilted band and moved center, and
     /// Circular — the four states the report's photographic section walks through.
-    @Test func writesMiniatureContactSheetsForLinearAndCircular() throws {
+    @Test(.enabled(if: GeometryValidationFixtures.missingPhotographsReason == nil,
+                   "the untracked geometry photographs are not in this checkout"))
+    func writesMiniatureContactSheetsForLinearAndCircular() throws {
         try #require(GeometryValidationFixtures.hasLocalPhotographs,
                      "the untracked geometry photographs are not in this checkout")
         let output = try outputDirectory()
@@ -134,7 +136,9 @@ struct CameraRawMiniatureEvidenceTests {
     /// The measured claims the report makes, on a photograph rather than a synthetic impulse:
     /// zero strength is the exact input, and blur lands outside the band while the band keeps
     /// its local contrast.
-    @Test func zeroStrengthIsBitIdenticalAndBlurStaysOutsideTheBand() throws {
+    @Test(.enabled(if: GeometryValidationFixtures.missingPhotographsReason == nil,
+                   "the untracked geometry photographs are not in this checkout"))
+    func zeroStrengthIsBitIdenticalAndBlurStaysOutsideTheBand() throws {
         try #require(GeometryValidationFixtures.hasLocalPhotographs)
         let source = try sampled(try photograph("stone-house.jpg"), longest: 400)
         let sourcePixels = try MeshWarpRaster.rgba8Bytes(from: source)

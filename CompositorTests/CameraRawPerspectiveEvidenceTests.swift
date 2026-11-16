@@ -92,7 +92,9 @@ struct CameraRawPerspectiveEvidenceTests {
     /// One photograph, six corrections: source, two vertical guides, two horizontals, combined, a rectangle drawn on
     /// the building's face, and the eight-point segments. Each is written both on its own and as a source/corrected
     /// pair, so the report can show the change and the difference.
-    @Test func writesCorrectedBesideSourceForEveryTool() throws {
+    @Test(.enabled(if: GeometryValidationFixtures.missingPhotographsReason == nil,
+                   "the untracked geometry photographs are not in this checkout"))
+    func writesCorrectedBesideSourceForEveryTool() throws {
         try #require(GeometryValidationFixtures.hasLocalPhotographs,
                      "the untracked geometry photographs are not in this checkout")
         let output = try outputDirectory()
@@ -171,7 +173,9 @@ struct CameraRawPerspectiveEvidenceTests {
     }
 
     /// Perspective Amount is the existing blend, so the same guides at 0, 50 and 100 show as identity, half and full.
-    @Test func writesPerspectiveAmountBlend() throws {
+    @Test(.enabled(if: GeometryValidationFixtures.missingPhotographsReason == nil,
+                   "the untracked geometry photographs are not in this checkout"))
+    func writesPerspectiveAmountBlend() throws {
         try #require(GeometryValidationFixtures.hasLocalPhotographs)
         let output = try outputDirectory()
         let source = try sampled(try photograph("window-wall.jpg"), longest: 420)

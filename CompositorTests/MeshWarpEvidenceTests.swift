@@ -97,7 +97,9 @@ struct MeshWarpEvidenceTests {
 
     /// One photograph, the whole exposed feature set: source, multi-select with Move, Rotate, Scale,
     /// a locally subdivided and merged mesh, Local Perspective, Local Horizon and Local Volume.
-    @Test func writesAdvancedReshapeBesideSourceForEveryFeature() throws {
+    @Test(.enabled(if: GeometryValidationFixtures.missingPhotographsReason == nil,
+                   "the untracked geometry photographs are not in this checkout"))
+    func writesAdvancedReshapeBesideSourceForEveryFeature() throws {
         try #require(GeometryValidationFixtures.hasLocalPhotographs,
                      "the untracked geometry photographs are not in this checkout")
         let output = try outputDirectory()

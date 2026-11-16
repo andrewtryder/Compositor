@@ -90,7 +90,9 @@ struct CameraRawHorizonEvidenceTests {
     /// The reference line is drawn 3° down to the right in the panel's own lower-left normalized coordinates, so
     /// Horizontal Reference has to recover the same 3° the Angle control was given. The two pictures matching is
     /// the point: the reference path and the angle path are one rotation, not two.
-    @Test func writesContactsSheetsForAngleReferenceAndAmount() throws {
+    @Test(.enabled(if: GeometryValidationFixtures.missingPhotographsReason == nil,
+                   "the untracked geometry photographs are not in this checkout"))
+    func writesContactsSheetsForAngleReferenceAndAmount() throws {
         try #require(GeometryValidationFixtures.hasLocalPhotographs,
                      "the untracked geometry photographs are not in this checkout")
         let output = try outputDirectory()
@@ -134,7 +136,9 @@ struct CameraRawHorizonEvidenceTests {
     }
 
     /// The equivalences the report states, measured on a photograph rather than a synthetic gradient.
-    @Test func offIsIdentityAndReferenceRecoversTheAnglesOwnRotation() throws {
+    @Test(.enabled(if: GeometryValidationFixtures.missingPhotographsReason == nil,
+                   "the untracked geometry photographs are not in this checkout"))
+    func offIsIdentityAndReferenceRecoversTheAnglesOwnRotation() throws {
         try #require(GeometryValidationFixtures.hasLocalPhotographs)
         let source = try sampled(try photograph("window-wall.jpg"), longest: 400)
         let sourcePixels = try MeshWarpRaster.rgba8Bytes(from: source)

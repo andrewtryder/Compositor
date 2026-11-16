@@ -80,7 +80,9 @@ struct CameraRawAnamorphicEvidenceTests {
 
     /// De-squeeze: squeezed 2× horizontally in the sampler, then Off, 1.5× and 2.0× beside each
     /// other — the restored proportions the panel's preset menu promises.
-    @Test func writesDeSqueezeContactSheet() throws {
+    @Test(.enabled(if: GeometryValidationFixtures.missingPhotographsReason == nil,
+                   "the untracked geometry photographs are not in this checkout"))
+    func writesDeSqueezeContactSheet() throws {
         try #require(GeometryValidationFixtures.hasLocalPhotographs,
                      "the untracked geometry photographs are not in this checkout")
         let output = try outputDirectory()
@@ -118,7 +120,9 @@ struct CameraRawAnamorphicEvidenceTests {
 
     /// Crop After Transform: de-squeeze 2×, then a manual crop over the subject — the sheet shows
     /// the un-cropped corrected frame beside the cropped commit.
-    @Test func writesCropContactSheet() throws {
+    @Test(.enabled(if: GeometryValidationFixtures.missingPhotographsReason == nil,
+                   "the untracked geometry photographs are not in this checkout"))
+    func writesCropContactSheet() throws {
         try #require(GeometryValidationFixtures.hasLocalPhotographs,
                      "the untracked geometry photographs are not in this checkout")
         let output = try outputDirectory()
@@ -150,7 +154,9 @@ struct CameraRawAnamorphicEvidenceTests {
 
     /// The measured claims the report makes: 1.0 is the exact input (bit-identical), 2.0 widens
     /// to exactly double, and the crop commit is the kept rectangle placed where its pixels came from.
-    @Test func identityIsBitExactAndCropKeepsItsRect() throws {
+    @Test(.enabled(if: GeometryValidationFixtures.missingPhotographsReason == nil,
+                   "the untracked geometry photographs are not in this checkout"))
+    func identityIsBitExactAndCropKeepsItsRect() throws {
         try #require(GeometryValidationFixtures.hasLocalPhotographs)
         let source = try sampled(try photograph("stone-house.jpg"), longest: 300)
         let sourcePixels = try MeshWarpRaster.rgba8Bytes(from: source)
