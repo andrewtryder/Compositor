@@ -87,3 +87,5 @@ Version 25 adds persistent native RAW source retention inside the project packag
 - Project format v25; versions 1–24 remain loadable
 - v25 projects are rejected by older app builds; v22/v23/v24 projects open normally in v25 if they do not carry RAW sources
 
+Camera Raw `glowDirection` and `glowSoftness` are additive optional keys inside the v24+ `cameraRawFull` payload (`CameraRawSettingsPersistentState`). They drive the Motion and Streak Glow styles only. Absent keys decode to `0`, so a photograph that used Diffusion, Bloom or Halation renders exactly as before. An unknown `glowStyle` string also decodes to `diffusion` rather than failing the load. Because these are optional keys with defaults, the version stays 25 and older builds that read the payload keep working; the same additive rule applies to the local-adjustment `glow`, `glowStyle`, `glowRange`, `glowSpread` and `glowWarmth` fields on Camera Raw masks.
+
