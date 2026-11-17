@@ -57,6 +57,10 @@ nonisolated struct CameraRawOpticsSettings: Equatable, Sendable {
     /// Brightens the corners to counter lens falloff. Midpoint is 0…100.
     var vignetteAmount: Double = 0
     var vignetteMidpoint: Double = 50
+    /// Focus-area blur. Part of Optics, but drawn by its own spatial pass rather than the per-pixel optics kernel.
+    var lensBlur = CameraRawLensBlurSettings()
+    /// Camera-specific profile discovery and selection. Additive: it changes no pixels in M10.3.
+    var lensProfile = CameraRawLensProfileSettings()
 
     static let toneRange: ClosedRange<Double> = -100...100
     static let unitRange: ClosedRange<Double> = 0...100
@@ -64,7 +68,7 @@ nonisolated struct CameraRawOpticsSettings: Equatable, Sendable {
 
     var adjusts: Bool {
         removeChromaticAberration || enableLensProfile || distortion != 0 || purpleAmount != 0 || greenAmount != 0
-            || vignetteAmount != 0
+            || vignetteAmount != 0 || !lensBlur.isIdentity || lensProfile.adjustsPixels
     }
 
     var normalized: Self {
@@ -82,6 +86,8 @@ nonisolated struct CameraRawOpticsSettings: Equatable, Sendable {
         result.greenHueHigh = ImageAdjustmentPixels.clamp(greenHueHigh, Self.hueRange, 120)
         if result.purpleHueLow > result.purpleHueHigh { swap(&result.purpleHueLow, &result.purpleHueHigh) }
         if result.greenHueLow > result.greenHueHigh { swap(&result.greenHueLow, &result.greenHueHigh) }
+        result.lensBlur = lensBlur.normalized
+        result.lensProfile = lensProfile.normalized
         return result
     }
 
@@ -97,7 +103,7 @@ nonisolated struct CameraRawOpticsSettings: Equatable, Sendable {
 
 nonisolated extension CameraRawSettings {
     func applyDetailOptics(pixels: UnsafeMutablePointer<UInt8>, width: Int, height: Int, stride: Int, scale: Double,
-                           profileStrength: Double, sharpenMask: Bool) {
+                           profileStrength: Double, sharpenMask: Bool, skipDistortion: Bool = false) {
         let detail = detail.normalized
         let optics = optics.normalized
         if sharpenMask {
@@ -106,15 +112,21 @@ nonisolated extension CameraRawSettings {
             return
         }
         if optics.adjusts {
-            adjust_camera_raw_optics(pixels, width, height, stride,
-                                     optics.removeChromaticAberration ? 1 : 0,
-                                     optics.enableLensProfile ? 1 : 0,
-                                     optics.profileDistortion, optics.profileVignetting,
-                                     optics.distortionK(profileStrength: profileStrength),
-                                     optics.purpleAmount, optics.purpleHueLow, optics.purpleHueHigh,
-                                     optics.greenAmount, optics.greenHueLow, optics.greenHueHigh,
-                                     optics.vignetteAmount, optics.vignetteMidpoint, scale,
-                                     CameraRawTables.exposureTables, Int32(CameraRawTables.size))
+            // Distortion may already have run before volume / perspective; pass 0 so it is not applied twice.
+            let distortionK = skipDistortion ? 0 : optics.distortionK(profileStrength: profileStrength)
+            let stillOptics = optics.removeChromaticAberration || optics.enableLensProfile || distortionK != 0
+                || optics.purpleAmount != 0 || optics.greenAmount != 0 || optics.vignetteAmount != 0
+            if stillOptics {
+                adjust_camera_raw_optics(pixels, width, height, stride,
+                                         optics.removeChromaticAberration ? 1 : 0,
+                                         optics.enableLensProfile ? 1 : 0,
+                                         optics.profileDistortion, optics.profileVignetting,
+                                         distortionK,
+                                         optics.purpleAmount, optics.purpleHueLow, optics.purpleHueHigh,
+                                         optics.greenAmount, optics.greenHueLow, optics.greenHueHigh,
+                                         optics.vignetteAmount, optics.vignetteMidpoint, scale,
+                                         CameraRawTables.exposureTables, Int32(CameraRawTables.size))
+            }
         }
         if detail.adjusts {
             _ = MetalNonlocalMeans.installed

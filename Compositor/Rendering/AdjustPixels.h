@@ -67,9 +67,12 @@ void camera_raw_repair_lookup(uint8_t *result, const uint8_t *source, const uint
 // Camera Raw Effects after Light and Color. Texture is a fine local contrast, Clarity a broader one.
 // Dehaze raises contrast and saturation when positive and lifts the shadows when negative. Glow, its
 // range, spread and warmth do nothing until `glow` is above zero: styles are 0 diffusion, 1 bloom,
-// 2 halation. Vignette styles are 0 highlight priority, 1 color priority, 2 paint overlay; Highlights
-// protects bright pixels only while the amount darkens. `scale` is preview pixels per layer pixel, so
-// the radii match a full-size render. Grain is applied separately. Alpha is kept.
+// 2 halation, 3 motion (one way along `glowDirection`) and 4 streak (both ways). Direction is degrees
+// counterclockwise from +x, 0 right and 90 up, matching Motion Blur's angle; softness 0…100 fades the
+// trail's far end, and both only affect Motion and Streak. Vignette styles are 0 highlight priority,
+// 1 color priority, 2 paint overlay; Highlights protects bright pixels only while the amount darkens.
+// `scale` is preview pixels per layer pixel, so the radii match a full-size render. Grain is applied
+// separately. Alpha is kept.
 // Blue over clipped shadows and red over clipped highlights, on top of the grade. Preview only.
 // Camera Raw's Shadows, adapting to the picture region by region as Photoshop's does. `coefficients` are three planes
 // (lift, gain above, gain below) of `kCount` rows by `xCount` columns; see AdjustPixels.c.
@@ -90,6 +93,7 @@ void adjust_camera_raw_curve_color(uint8_t *rgba, size_t width, size_t height, s
 void adjust_camera_raw_effects(uint8_t *rgba, size_t width, size_t height, size_t stride,
                                double texture, double clarity, double dehaze,
                                double glow, int glowStyle, double glowRange, double glowSpread, double glowWarmth,
+                               double glowDirection, double glowSoftness,
                                double vignetteAmount, double vignetteMidpoint, double vignetteRoundness,
                                double vignetteFeather, double vignetteHighlights, int vignetteStyle,
                                double scale);

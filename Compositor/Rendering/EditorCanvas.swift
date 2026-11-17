@@ -15,6 +15,9 @@ struct EditorCanvas: NSViewRepresentable {
         _ = session.extrasHideGuides
         _ = session.guideDrag
         _ = session.document?.guides
+        _ = session.filterEdit?.settings.cameraRaw.geometry.guides
+        _ = session.filterEdit?.drawingCameraRawGeometryGuide
+        _ = session.filterEdit?.cameraRawGuideDraft
         view.synchronizeDisplay()
         view.window?.isDocumentEdited = session.isModified
     }
@@ -114,7 +117,15 @@ final class CanvasView: NSView {
             || session.colorRange != nil
             || session.filterEdit?.samplesWhiteBalance == true || session.filterEdit?.samplesPointColor == true
             || session.filterEdit?.samplesDefringe == true
+            || session.filterEdit?.movesCameraRawLensBlurFocus == true
+            || session.filterEdit?.picksCameraRawLensBlurDepth == true
+            || session.filterEdit?.movesCameraRawMiniatureFocus == true
             || session.filterEdit?.drawingCameraRawGeometryGuide == true
+            || session.filterEdit?.drawingCameraRawHorizonReference == true
+            || session.filterEdit?.drawingCameraRawPerspectiveTool == true
+            || session.filterEdit?.editsCameraRawCrop == true
+            || session.filterEdit?.drawsLocalMask == true || session.filterEdit?.samplesLocalMask == true
+            || session.filterEdit?.picksLocalMaskObject == true || session.filterEdit?.picksLocalMaskColor == true
     }
     /// View point where a targeted-adjustment drag began.
     private var hueTargetStart: CGPoint?
@@ -127,6 +138,17 @@ final class CanvasView: NSView {
     private var rgbSplitDrag = false
     /// Volumetric Light's light being dragged on the canvas.
     private var volumetricDrag = false
+    /// Camera Raw Lens Blur's focus region being dragged on the canvas.
+    private var lensBlurDrag = false
+    /// Camera Raw Miniature's focus being dragged on the canvas.
+    private var miniatureDrag = false
+    /// Camera Raw Crop After Transform's rectangle being drawn or dragged on the canvas.
+    private var cameraRawCropDrag = false
+    /// Camera Raw Local Mask's gradient being dragged on the canvas.
+    private var localMaskDrag = false
+    private var localMaskBrushDrag = false
+    /// ReShape control-point drag in progress.
+    private var meshDragging = false
     private var antsTimer: Timer?
     private var modifierMonitor: Any?
     private var sampleClickMonitor: Any?
@@ -454,6 +476,27 @@ final class CanvasView: NSView {
     /// Color Range's eyedroppers while Shift (add) or Option (take away) is held, or its + or − one is chosen.
     private static let eyedropperAddCursor = makeEyedropperCursor(badge: "plus")
     private static let eyedropperRemoveCursor = makeEyedropperCursor(badge: "minus")
+    /// A target over a dot, for Miniature's armed focus move: the same scope language as the panel's button.
+    private static let miniatureFocusCursor: NSCursor = {
+        let image = NSImage(size: NSSize(width: 24, height: 24), flipped: false) { _ in
+            let center = CGPoint(x: 12, y: 12)
+            let target = NSBezierPath(ovalIn: CGRect(x: center.x - 6, y: center.y - 6, width: 12, height: 12))
+            NSColor.white.setStroke(); target.lineWidth = 3.2; target.stroke()
+            NSColor.black.setStroke(); target.lineWidth = 1.2; target.stroke()
+            let dot = NSBezierPath(ovalIn: CGRect(x: center.x - 1.5, y: center.y - 1.5, width: 3, height: 3))
+            NSColor.white.setFill(); dot.fill()
+            NSColor.black.setStroke(); dot.lineWidth = 1; dot.stroke()
+            for (dx, dy) in [(CGFloat(0), CGFloat(-9.5)), (0, 9.5), (-9.5, 0), (9.5, 0)] {
+                let tick = NSBezierPath()
+                tick.move(to: CGPoint(x: center.x + dx * 0.7, y: center.y + dy * 0.7))
+                tick.line(to: CGPoint(x: center.x + dx, y: center.y + dy))
+                NSColor.white.setStroke(); tick.lineWidth = 3.2; tick.stroke()
+                NSColor.black.setStroke(); tick.lineWidth = 1.2; tick.stroke()
+            }
+            return true
+        }
+        return NSCursor(image: image, hotSpot: NSPoint(x: 12, y: 12))
+    }()
     private static func makeEyedropperCursor(badge: String?) -> NSCursor {
         let symbol = NSImage(systemSymbolName: "eyedropper", accessibilityDescription: "Sample color")!
         let white = symbol.withSymbolConfiguration(.init(paletteColors: [.white]))!
@@ -640,7 +683,9 @@ final class CanvasView: NSView {
             // cursor here when picking starts or ends. An empty canvas leaves the form's cursor alone.
             if session.document != nil, let window,
                bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
-                if spaceHeld { NSCursor.openHand.set() } else if picking { pickCursor.set() } else { restoreToolCursor() }
+                if spaceHeld { NSCursor.openHand.set() }
+                else if session.filterEdit?.movesCameraRawMiniatureFocus == true { Self.miniatureFocusCursor.set() }
+                else if picking { pickCursor.set() } else { restoreToolCursor() }
             }
             // Color Range's panel appears, and takes the focus, a moment after it opens.
             if session.colorRange != nil { keepColorRangeCursor(); keepColorRangeCursor(after: 0.15) }
@@ -1054,6 +1099,24 @@ final class CanvasView: NSView {
                     opacity: opacity, blendMode: blendMode(of: layer), mask: mask, in: context)
                 return
             }
+            // ReShape mesh preview: warped pixels in the layer's existing placement.
+            // The GPU canvas prefers a resident CIImage; Core Graphics needs a CGImage, so read back once
+            // only when this path actually draws (GPU canvas unavailable / forced CPU canvas).
+            if let edit = session.meshWarpEdit, edit.layerID == layer.id {
+                let image: CGImage
+                if let preview = edit.previewImage {
+                    image = preview
+                } else if edit.previewCIImage != nil,
+                          let readback = edit.commitImageForCanvas() {
+                    image = readback
+                } else {
+                    image = edit.displayedImage
+                }
+                LayerRenderer.draw(image, transform: edit.transform, center: center(edit.transform.center),
+                    scale: scale, opacity: opacity, blendMode: blendMode(of: layer),
+                    mask: displayedMask?.enabledImage, in: context)
+                return
+            }
             // A pending distortion shows the layer warped into its new shape — with its effects warped along with
             // it, so they stay on while the corners move.
             // Asked only while corners are being dragged: the request it makes stands for the layer's effects in the
@@ -1442,7 +1505,269 @@ final class CanvasView: NSView {
             let visible = rect.intersection(bounds).intersection(dirtyRect)
             if !visible.isNull, !visible.isEmpty { drawPixelGrid(in: visible, document: document, context: context) }
         }
+        drawCameraRawGeometryGuides(context: context, document: document, dirtyRect: dirtyRect)
+        drawCameraRawHorizonReference(context: context, document: document, dirtyRect: dirtyRect)
+        drawCameraRawPerspectiveTools(context: context, document: document, dirtyRect: dirtyRect)
         drawTextBoxDraft()
+    }
+
+    /// Draws Horizon › Horizontal / Vertical Reference as one dashed line, so it reads as a measurement rather
+    /// than a Guided Upright guide. It goes through the same image→document→view chain, so it lands on the picture
+    /// wherever the layer sits.
+    private func drawCameraRawHorizonReference(context: CGContext, document: CanvasDocument, dirtyRect: NSRect) {
+        guard let edit = session.filterEdit, edit.kind == .cameraRaw else { return }
+        let horizon = edit.settings.cameraRaw.horizon
+        guard horizon.mode == .horizontalReference || horizon.mode == .verticalReference else { return }
+        let image = edit.previewSource
+        let canvas = CGRect(origin: session.viewport.viewPoint(from: .zero, documentSize: document.size),
+                            size: CGSize(width: document.size.width * session.viewport.pointsPerPixel,
+                                         height: document.size.height * session.viewport.pointsPerPixel))
+        let area = dirtyRect.intersection(canvas)
+        guard !area.isNull, !area.isEmpty else { return }
+
+        func viewPoint(for normalized: CGPoint) -> CGPoint {
+            let pixel = CGPoint(x: normalized.x * CGFloat(image.width), y: normalized.y * CGFloat(image.height))
+            return session.viewport.viewPoint(from: pixel.applying(edit.previewMapping), documentSize: document.size)
+        }
+
+        let scale = session.viewport.pointsPerPixel
+        let horizontal = horizon.mode == .horizontalReference
+        let color = horizontal ? CGColor(srgbRed: 0.98, green: 0.78, blue: 0.20, alpha: 0.95)
+                               : CGColor(srgbRed: 0.36, green: 0.80, blue: 0.98, alpha: 0.95)
+        context.saveGState()
+        context.setLineWidth(1.5 / scale)
+        context.setLineCap(.round)
+        context.setStrokeColor(color)
+        context.setLineDash(phase: 0, lengths: [7 / scale, 5 / scale])
+
+        let start = viewPoint(for: CGPoint(x: horizon.referenceStartX, y: horizon.referenceStartY))
+        let end = viewPoint(for: CGPoint(x: horizon.referenceEndX, y: horizon.referenceEndY))
+        context.beginPath()
+        context.move(to: start)
+        context.addLine(to: end)
+        context.strokePath()
+        context.setLineDash(phase: 0, lengths: [])
+        for point in [start, end] {
+            let dot = CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)
+            context.setFillColor(color)
+            context.fillEllipse(in: dot)
+        }
+
+        if let draft = edit.cameraRawHorizonReferenceDraft {
+            let draftStart = viewPoint(for: draft.start)
+            let draftEnd = viewPoint(for: draft.end)
+            context.setStrokeColor(CGColor.white)
+            context.setLineWidth(1 / scale)
+            context.setLineDash(phase: 0, lengths: [4 / scale, 4 / scale])
+            context.beginPath()
+            context.move(to: draftStart)
+            context.addLine(to: draftEnd)
+            context.strokePath()
+            context.setLineDash(phase: 0, lengths: [])
+        }
+        context.restoreGState()
+    }
+
+    /// Draws the active Advanced Perspective tool's handles: guide ends, eight-point segments, and rectangle corners.
+    /// Uses the same image→document→view chain as `drawCameraRawGeometryGuides`, so a handle is drawn exactly where
+    /// `cameraRawHitPerspectiveHandle` will find it.
+    private func drawCameraRawPerspectiveTools(context: CGContext, document: CanvasDocument, dirtyRect: NSRect) {
+        guard let edit = session.filterEdit, edit.kind == .cameraRaw else { return }
+        let state = edit.settings.cameraRaw.perspectiveTools
+        guard state.kind.drawsOnCanvas else { return }
+        let image = edit.previewSource
+        let canvas = CGRect(origin: session.viewport.viewPoint(from: .zero, documentSize: document.size),
+                            size: CGSize(width: document.size.width * session.viewport.pointsPerPixel,
+                                         height: document.size.height * session.viewport.pointsPerPixel))
+        let area = dirtyRect.intersection(canvas)
+        guard !area.isNull, !area.isEmpty else { return }
+
+        let scale = session.viewport.pointsPerPixel
+        func viewPoint(for normalized: CGPoint) -> CGPoint {
+            let pixel = CGPoint(x: normalized.x * CGFloat(image.width), y: normalized.y * CGFloat(image.height))
+            return session.viewport.viewPoint(from: pixel.applying(edit.previewMapping), documentSize: document.size)
+        }
+
+        context.saveGState()
+        context.setLineWidth(1.5 / scale)
+        context.setLineCap(.round)
+
+        let corners = state.rectangleCorners
+        if state.kind == .rectangle, !corners.isEmpty {
+            let points = corners.map(viewPoint(for:))
+            if points.count == 4 {
+                // Three corners are a construction in progress: the outline is offered but nothing is applied.
+                // A completed but invalid rectangle is drawn the same way the panel words the problem.
+                let valid = CameraRawPerspectiveTools.rectangleProblem(corners: corners) == nil
+                let stroke = valid ? CGColor(srgbRed: 1, green: 0.85, blue: 0.25, alpha: 0.95)
+                                   : CGColor(srgbRed: 1, green: 0.72, blue: 0.30, alpha: 0.95)
+                context.setStrokeColor(stroke)
+                context.setLineDash(phase: 0, lengths: valid ? [] : [6 / scale, 4 / scale])
+                context.beginPath()
+                context.move(to: points[0])
+                for point in points.dropFirst() { context.addLine(to: point) }
+                context.closePath()
+                context.strokePath()
+                context.setLineDash(phase: 0, lengths: [])
+            }
+            for (index, point) in points.enumerated() {
+                // The next corner to place is a ring, so it reads as “not yet taken”.
+                let rect = CGRect(x: point.x - 4.5, y: point.y - 4.5, width: 9, height: 9)
+                if corners.count < 4, index == corners.count - 1 {
+                    context.setStrokeColor(CGColor(srgbRed: 1, green: 0.85, blue: 0.25, alpha: 0.95))
+                    context.setLineWidth(1 / scale)
+                    context.strokeEllipse(in: rect)
+                    context.setLineWidth(1.5 / scale)
+                } else {
+                    context.setFillColor(CGColor(srgbRed: 1, green: 0.85, blue: 0.25, alpha: 0.95))
+                    context.fillEllipse(in: rect)
+                    context.setStrokeColor(CGColor.white)
+                    context.setLineWidth(1 / scale)
+                    context.strokeEllipse(in: rect)
+                }
+            }
+        }
+
+        func strokeGuide(_ guide: CameraRawGeometryGuide, color: CGColor, dashed: Bool = false) {
+            let start = viewPoint(for: guide.start), end = viewPoint(for: guide.end)
+            context.setStrokeColor(color)
+            context.setLineDash(phase: 0, lengths: dashed ? [5 / scale, 4 / scale] : [])
+            context.beginPath()
+            context.move(to: start)
+            context.addLine(to: end)
+            context.strokePath()
+            context.setLineDash(phase: 0, lengths: [])
+            for point in [start, end] {
+                let rect = CGRect(x: point.x - 3.5, y: point.y - 3.5, width: 7, height: 7)
+                context.setFillColor(color)
+                context.fillEllipse(in: rect)
+                context.setStrokeColor(CGColor.white)
+                context.setLineWidth(1 / scale)
+                context.strokeEllipse(in: rect)
+            }
+        }
+
+        let verticalColor = CGColor(srgbRed: 1, green: 0, blue: 1, alpha: 0.9)
+        let horizontalColor = CGColor(srgbRed: 0, green: 1, blue: 1, alpha: 0.9)
+        let eightPointColor = CGColor(srgbRed: 0.45, green: 0.95, blue: 0.55, alpha: 0.9)
+        switch state.kind {
+        case .verticalGuides:
+            for guide in state.verticalGuides { strokeGuide(guide, color: verticalColor) }
+        case .horizontalGuides:
+            for guide in state.horizontalGuides { strokeGuide(guide, color: horizontalColor) }
+        case .combinedGuides:
+            for guide in state.verticalGuides { strokeGuide(guide, color: verticalColor) }
+            for guide in state.horizontalGuides { strokeGuide(guide, color: horizontalColor) }
+        case .eightPoint:
+            for guide in state.eightPointGuides { strokeGuide(guide, color: eightPointColor) }
+        case .automatic, .manualKeystone, .rectangle:
+            break
+        }
+
+        if let draft = edit.cameraRawPerspectiveDraft {
+            let start = viewPoint(for: draft.start), end = viewPoint(for: draft.end)
+            context.setStrokeColor(CGColor.white)
+            context.setLineWidth(1 / scale)
+            context.setLineDash(phase: 0, lengths: [4 / scale, 4 / scale])
+            context.beginPath()
+            context.move(to: start)
+            context.addLine(to: end)
+            context.strokePath()
+            context.setLineDash(phase: 0, lengths: [])
+        }
+        // Light the grabbed handle, so a drag that has not moved yet still reads as grabbed.
+        if let target = edit.cameraRawPerspectiveDragTarget,
+           let normalized = CameraRawPerspectiveTools.point(for: target, in: state) {
+            let point = viewPoint(for: normalized)
+            let ring = CGRect(x: point.x - 6, y: point.y - 6, width: 12, height: 12)
+            context.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.9))
+            context.setLineWidth(1 / scale)
+            context.strokeEllipse(in: ring)
+        }
+
+        context.restoreGState()
+    }
+
+    /// Draws Camera Raw Geometry (Guided Upright) guide lines over the canvas image.
+    /// Each guide is a segment in normalized image coordinates (0…1, lower-left origin).
+    /// Vertical guides draw in magenta, horizontal guides in cyan, with draggable endpoint dots.
+    ///
+    /// Guide coordinates are converted through the same image→document→view chain used by
+    /// `beginCameraRawGeometryGuide(at:)`, so the overlay aligns with the actual source image
+    /// regardless of layer offset, scale, transform, document size, zoom, or pan.
+    private func drawCameraRawGeometryGuides(context: CGContext, document: CanvasDocument, dirtyRect: NSRect) {
+        let viewport = session.viewport
+        let edit = session.filterEdit
+        let geometry = edit?.settings.cameraRaw.geometry
+        guard let geometry, let edit else { return }
+        let image = edit.previewSource
+
+        let guides = geometry.guides
+        guard !guides.isEmpty else { return }
+
+        let canvas = CGRect(origin: viewport.viewPoint(from: .zero, documentSize: document.size),
+                            size: CGSize(width: document.size.width * viewport.pointsPerPixel,
+                                         height: document.size.height * viewport.pointsPerPixel))
+        let area = dirtyRect.intersection(canvas)
+        guard !area.isNull, !area.isEmpty else { return }
+
+        let scale = viewport.pointsPerPixel
+        let isDrawing = edit.drawingCameraRawGeometryGuide
+        let draft = edit.cameraRawGuideDraft
+
+        /// Converts a normalized image-coordinate point (0…1, lower-left origin) to a view point,
+        /// using the same `previewMapping` chain that guide creation uses.
+        func viewPoint(for normalized: CGPoint) -> CGPoint? {
+            let pixel = CGPoint(x: normalized.x * CGFloat(image.width), y: normalized.y * CGFloat(image.height))
+            let documentPoint = pixel.applying(edit.previewMapping)
+            return viewport.viewPoint(from: documentPoint, documentSize: document.size)
+        }
+
+        context.saveGState()
+        context.setLineWidth(1.5 / scale)
+        context.setLineCap(.round)
+
+        for guide in guides {
+            guard let start = viewPoint(for: guide.start),
+                  let end = viewPoint(for: guide.end) else { continue }
+            let dx = (guide.endX - guide.startX) * CGFloat(image.width)
+            let dy = (guide.endY - guide.startY) * CGFloat(image.height)
+            let isVertical = abs(dy) > abs(dx)
+
+            context.setStrokeColor(isVertical ? CGColor(srgbRed: 1, green: 0, blue: 1, alpha: 0.85)
+                                              : CGColor(srgbRed: 0, green: 1, blue: 1, alpha: 0.85))
+            context.beginPath()
+            context.move(to: start)
+            context.addLine(to: end)
+            context.strokePath()
+
+            // Endpoint dots
+            for point in [start, end] {
+                let dot = CGRect(x: point.x - 3.5, y: point.y - 3.5, width: 7, height: 7)
+                context.setFillColor(isVertical ? CGColor(srgbRed: 1, green: 0, blue: 1, alpha: 0.9)
+                                                : CGColor(srgbRed: 0, green: 1, blue: 1, alpha: 0.9))
+                context.fillEllipse(in: dot)
+                context.setStrokeColor(CGColor.white)
+                context.setLineWidth(1 / scale)
+                context.strokeEllipse(in: dot)
+            }
+        }
+
+        // Draft guide while drawing
+        if isDrawing, let draft {
+            guard let start = viewPoint(for: draft.start),
+                  let end = viewPoint(for: draft.end) else { return }
+            context.setStrokeColor(CGColor.white)
+            context.setLineWidth(1 / scale)
+            context.setLineDash(phase: 0, lengths: [4, 4])
+            context.beginPath()
+            context.move(to: start)
+            context.addLine(to: end)
+            context.strokePath()
+            context.setLineDash(phase: 0, lengths: [])
+        }
+
+        context.restoreGState()
     }
 
     /// One-screen-pixel lines on document pixel boundaries, over the image only.
@@ -1478,6 +1803,7 @@ final class CanvasView: NSView {
         guard session.document != nil, dragCursor == nil, let window,
               bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) else { return }
         if spaceHeld { NSCursor.openHand.set() }
+        else if session.filterEdit?.movesCameraRawMiniatureFocus == true { Self.miniatureFocusCursor.set() }
         else if picking { pickCursor.set() }
         else { restoreToolCursor() }
     }
@@ -1511,6 +1837,11 @@ final class CanvasView: NSView {
         if picking, !spaceHeld {
             addCursorRect(bounds, cursor: pickCursor)
             keepColorRangeCursor()
+            return
+        }
+        // Miniature's armed focus move gets its own cursor, the way the picking modes do.
+        if session.filterEdit?.movesCameraRawMiniatureFocus == true, !spaceHeld {
+            addCursorRect(bounds, cursor: Self.miniatureFocusCursor)
             return
         }
         if session.hueTargeting { addCursorRect(bounds, cursor: .resizeLeftRight); return }
@@ -1658,6 +1989,7 @@ final class CanvasView: NSView {
             return
         }
         if picking { pickCursor.set(); return }
+        if session.filterEdit?.movesCameraRawMiniatureFocus == true { Self.miniatureFocusCursor.set(); return }
         if session.tool.isSelectionTool {
             // Keys may have changed while the app was in the background.
             session.updateHeldSelectionKeys(shift: event.modifierFlags.contains(.shift), option: event.modifierFlags.contains(.option))
@@ -1694,6 +2026,7 @@ final class CanvasView: NSView {
     override func cursorUpdate(with event: NSEvent) {
         guard session.document != nil else { return }
         if spaceHeld, dragCursor == nil { NSCursor.openHand.set() }
+        else if session.filterEdit?.movesCameraRawMiniatureFocus == true { Self.miniatureFocusCursor.set() }
         else if picking { pickCursor.set() }
         else if session.tool.isSelectionTool, !spaceHeld { lassoCursor.set() }
         // Cursor-update events carry no modifier flags (AppKit sends one after every key change), so read
@@ -1837,8 +2170,82 @@ final class CanvasView: NSView {
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
             return
         }
+        if session.filterEdit?.picksCameraRawLensBlurDepth == true, !spaceHeld, let document = session.document {
+            session.sampleCameraRawLensBlurDepth(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if session.filterEdit?.movesCameraRawLensBlurFocus == true, !spaceHeld, let document = session.document {
+            session.moveCameraRawLensBlurFocus(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            lensBlurDrag = true
+            synchronizeDisplay()
+            return
+        }
+        // Miniature's focus move: armed from Geometry, the same pattern as Lens Blur's.
+        if session.filterEdit?.movesCameraRawMiniatureFocus == true, !spaceHeld, let document = session.document {
+            session.moveCameraRawMiniatureFocus(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            miniatureDrag = true
+            synchronizeDisplay()
+            return
+        }
+        // Advanced Perspective Tools: its own explicit canvas mode, exclusive with the two below.
+        if session.filterEdit?.drawingCameraRawPerspectiveTool == true, !spaceHeld, let document = session.document {
+            session.beginCameraRawPerspectiveToolInteraction(at: session.viewport.documentPoint(from: point, documentSize: document.size),
+                                                             zoom: session.viewport.zoom)
+            synchronizeDisplay()
+            return
+        }
+        // Horizon › reference line: one dashed line, independent of the Guided Upright solver.
+        if session.filterEdit?.drawingCameraRawHorizonReference == true, !spaceHeld, let document = session.document {
+            session.beginCameraRawHorizonReference(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
+        // Crop After Transform: grab a handle or draw a new rectangle over the corrected picture.
+        if session.filterEdit?.editsCameraRawCrop == true, !spaceHeld, let document = session.document {
+            session.beginCameraRawCropDrag(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            cameraRawCropDrag = true
+            synchronizeDisplay()
+            return
+        }
+        // Local masks: the Color Range sample takes the click, then a gradient's pair is dragged.
+        if session.filterEdit?.picksLocalMaskObject == true, !spaceHeld, let document = session.document {
+            session.addCameraRawLocalMaskFromPickedObject(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if session.filterEdit?.picksLocalMaskColor == true, !spaceHeld, let document = session.document {
+            session.addCameraRawLocalMaskFromPickedColor(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if session.filterEdit?.samplesLocalMask == true, !spaceHeld, let document = session.document {
+            session.sampleCameraRawLocalMaskColor(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if session.filterEdit?.drawsLocalMask == true, !spaceHeld, let document = session.document {
+            session.beginCameraRawLocalMaskGradientDrag(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            localMaskDrag = true
+            synchronizeDisplay()
+            return
+        }
+        // Brush Mask painting: armed from the Masks panel, paints or erases the selected brush-painted mask's
+        // coverage. Mutually exclusive with every other canvas mode.
+        if session.filterEdit?.drawsLocalMaskBrush == true, !spaceHeld, let document = session.document {
+            session.beginCameraRawLocalMaskBrushStroke(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            localMaskBrushDrag = true
+            synchronizeDisplay()
+            return
+        }
         if session.filterEdit?.drawingCameraRawGeometryGuide == true, !spaceHeld, let document = session.document {
-            session.beginCameraRawGeometryGuide(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            let documentPoint = session.viewport.documentPoint(from: point, documentSize: document.size)
+            // Endpoint dragging takes priority over starting a new guide.
+            if session.filterEdit?.cameraRawGuideDraft == nil,
+               session.cameraRawHitGuideEndpoint(at: documentPoint, zoom: session.viewport.zoom) != nil {
+                session.beginCameraRawGuideEndpointDrag(at: documentPoint, zoom: session.viewport.zoom)
+                return
+            }
+            session.beginCameraRawGeometryGuide(at: documentPoint)
             return
         }
         if (session.filterEdit?.targetsCameraRawCurve == true || session.filterEdit?.targetsCameraRawMixer == true),
@@ -1936,6 +2343,26 @@ final class CanvasView: NSView {
                                                  flags: event.modifierFlags))
         } else if session.tool == .crop {
             beginCropDrag(at: point)
+        } else if session.tool == .reshape, let document = session.document {
+            let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
+            // An armed draft owns the drag first: the Four Point rectangle or the Horizon reference.
+            if session.meshWarpEdit?.isDrawingQuadDestination == true {
+                session.meshWarpBeginQuadDrag(at: pixel)
+                meshDragging = true
+            } else if session.meshWarpEdit?.isDrawingHorizonReference == true {
+                session.meshWarpBeginHorizonDrag(at: pixel)
+                meshDragging = true
+            } else if session.meshWarpBeginDrag(at: pixel, viewRadius: 10,
+                                                viewportScale: session.viewport.pointsPerPixel,
+                                                shift: event.modifierFlags.contains(.shift)) {
+                meshDragging = true
+            } else {
+                // A press on empty mesh ground starts a marquee; Shift adds to the selection.
+                session.meshWarpBeginMarquee(at: pixel,
+                                             additive: event.modifierFlags.contains(.shift))
+                meshDragging = true
+            }
+            synchronizeDisplay()
         } else if session.tool == .move {
             // Double-click live text to edit it, without switching to the Type tool first.
             if event.clickCount >= 2, beginLiveTextEdit(at: point) { return }
@@ -1949,9 +2376,22 @@ final class CanvasView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard session.document != nil else { return }
         let point = convert(event.locationInWindow, from: nil)
-        if session.filterEdit?.drawingCameraRawGeometryGuide == true, session.filterEdit?.cameraRawGuideDraft != nil,
-           let document = session.document {
-            session.continueCameraRawGeometryGuide(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+        if session.filterEdit?.drawingCameraRawPerspectiveTool == true, let document = session.document {
+            session.continueCameraRawPerspectiveToolInteraction(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            synchronizeDisplay()
+            return
+        }
+        if session.filterEdit?.cameraRawHorizonReferenceDraft != nil, let document = session.document {
+            session.continueCameraRawHorizonReference(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
+        if session.filterEdit?.drawingCameraRawGeometryGuide == true, let document = session.document {
+            // Endpoint drag takes priority over creating a new guide.
+            if session.filterEdit?.cameraRawDraggingGuideIndex != nil {
+                session.continueCameraRawGuideEndpointDrag(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            } else if session.filterEdit?.cameraRawGuideDraft != nil {
+                session.continueCameraRawGeometryGuide(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            }
             return
         }
         if session.filterEdit?.cameraRawDrag != nil, let document = session.document {
@@ -1965,6 +2405,29 @@ final class CanvasView: NSView {
         }
         if volumetricDrag, let document = session.document {
             session.moveVolumetricLight(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            synchronizeDisplay()
+            return
+        }
+        if lensBlurDrag, let document = session.document {
+            session.moveCameraRawLensBlurFocus(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
+        if miniatureDrag, let document = session.document {
+            session.moveCameraRawMiniatureFocus(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
+        if cameraRawCropDrag, let document = session.document {
+            session.continueCameraRawCropDrag(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            synchronizeDisplay()
+            return
+        }
+        if localMaskDrag, let document = session.document {
+            session.continueCameraRawLocalMaskGradientDrag(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            synchronizeDisplay()
+            return
+        }
+        if localMaskBrushDrag, let document = session.document {
+            session.continueCameraRawLocalMaskBrushStroke(to: session.viewport.documentPoint(from: point, documentSize: document.size))
             synchronizeDisplay()
             return
         }
@@ -2047,6 +2510,20 @@ final class CanvasView: NSView {
                 pixel = Self.snapped(pixel, around: handle == .start ? edit.end : edit.start)
             }
             session.moveGradient(start: handle == .start ? pixel : nil, end: handle == .end ? pixel : nil)
+            synchronizeDisplay()
+            return
+        }
+        if meshDragging, session.tool == .reshape, let document = session.document {
+            let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
+            if session.meshWarpEdit?.quadDraft != nil {
+                session.meshWarpContinueQuadDrag(to: pixel)
+            } else if session.meshWarpEdit?.horizonReferenceDraft != nil {
+                session.meshWarpContinueHorizonDrag(to: pixel)
+            } else if session.meshWarpEdit?.marqueeDraft != nil {
+                session.meshWarpContinueMarquee(to: pixel)
+            } else {
+                session.meshWarpDrag(to: pixel)
+            }
             synchronizeDisplay()
             return
         }
@@ -2192,14 +2669,54 @@ final class CanvasView: NSView {
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
             return
         }
+        if lensBlurDrag {
+            lensBlurDrag = false
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if miniatureDrag {
+            miniatureDrag = false
+            session.endCameraRawMiniatureFocusInteraction()
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if cameraRawCropDrag {
+            cameraRawCropDrag = false
+            session.endCameraRawCropDrag()
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if localMaskDrag {
+            localMaskDrag = false
+            session.endCameraRawLocalMaskGradientDrag()
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if localMaskBrushDrag {
+            localMaskBrushDrag = false
+            session.endCameraRawLocalMaskBrushStroke()
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
         if progressiveDrag != nil {
             progressiveDrag = nil
             // The panel keeps the keyboard, for Return and Escape.
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
             return
         }
+        if session.filterEdit?.drawingCameraRawPerspectiveTool == true {
+            session.endCameraRawPerspectiveToolInteraction()
+            synchronizeDisplay()
+        }
         if session.filterEdit?.cameraRawGuideDraft != nil {
             session.commitCameraRawGeometryGuide()
+        }
+        if session.filterEdit?.cameraRawHorizonReferenceDraft != nil {
+            session.commitCameraRawHorizonReference()
+        }
+        if session.filterEdit?.cameraRawDraggingGuideIndex != nil {
+            session.filterEdit?.cameraRawDraggingGuideIndex = nil
+            session.filterEdit?.cameraRawDraggingEndpoint = false
         }
         session.filterEdit?.cameraRawDrag = nil
         if textBoxAnchor != nil { finishTextGesture(); return }
@@ -2226,6 +2743,19 @@ final class CanvasView: NSView {
             sampleRing.isHidden = true
             if session.colorPicker != nil { ColorPickerPanelController.refocus() }
             return
+        }
+        if meshDragging {
+            meshDragging = false
+            if session.meshWarpEdit?.marqueeDraft != nil {
+                session.meshWarpEndMarquee()
+            } else if session.meshWarpEdit?.quadDraft != nil {
+                session.meshWarpEndQuadDrag()
+            } else if session.meshWarpEdit?.horizonReferenceDraft != nil {
+                session.meshWarpEndHorizonDrag()
+            } else {
+                session.meshWarpEndDrag()
+            }
+            synchronizeDisplay()
         }
         if session.brushStroke != nil || session.warpStroke != nil, !session.isProjectBusy {
             if let document = session.document {
@@ -2335,6 +2865,20 @@ final class CanvasView: NSView {
             }
             if event.keyCode != 49 { super.keyDown(with: event); return }
         }
+        // While ReShape is open, ⌘Z and ⇧⌘Z step the tool-local mesh history rather than the document's,
+        // as Photoshop's Warp does; ⌘⌥Z and ⌘⇧⌥Z still reach the document.
+        if session.meshWarpEdit != nil, event.keyCode == 6,
+           event.modifierFlags.contains(.command), event.modifierFlags.intersection([.control]) == [] {
+            if event.modifierFlags.contains(.option) {
+                if event.modifierFlags.contains(.shift) { session.redo() } else { session.undo() }
+            } else if event.modifierFlags.contains(.shift) {
+                session.meshWarpToolRedo()
+            } else {
+                session.meshWarpToolUndo()
+            }
+            synchronizeDisplay()
+            return
+        }
         if session.brushStroke != nil || session.warpStroke != nil {
             if event.keyCode == 53 && !session.isProjectBusy { session.cancelBrush(); synchronizeDisplay() }
             return
@@ -2360,9 +2904,60 @@ final class CanvasView: NSView {
         } else if session.tool == .crop, [36, 76].contains(event.keyCode) {
             cropDrag = nil
             Task { await session.commitCrop() }
+        } else if session.meshWarpEdit != nil, event.keyCode == 53 {
+            // An in-progress gesture is undone first; Escape again cancels the whole session.
+            if meshDragging || session.meshWarpEdit?.gestureBasePositions != nil
+                    || session.meshWarpEdit?.marqueeDraft != nil
+                    || session.meshWarpEdit?.quadDraft != nil
+                    || session.meshWarpEdit?.horizonReferenceDraft != nil {
+                meshDragging = false
+                session.meshWarpCancelGesture()
+                session.meshWarpCancelQuadDestination()
+                session.meshWarpCancelHorizonReference()
+            } else {
+                session.cancelMeshWarp()
+                session.selectTool(.move)
+            }
+            synchronizeDisplay()
+        } else if session.meshWarpEdit != nil, [36, 76].contains(event.keyCode) {
+            meshDragging = false
+            session.applyMeshWarp()
+            session.selectTool(.move)
+            synchronizeDisplay()
         } else if event.keyCode == 53, session.guideDrag != nil {
             session.cancelGuideDrag()
             guideDragging = false
+        } else if event.keyCode == 53, session.filterEdit?.cameraRawDraggingGuideIndex != nil {
+            session.cancelCameraRawGuideEndpointDrag()
+        } else if event.keyCode == 53, session.filterEdit?.cameraRawPerspectiveDraft != nil
+                    || session.filterEdit?.cameraRawPerspectiveDragTarget != nil
+                    || session.filterEdit?.cameraRawPerspectiveCornerDraft != nil {
+            // Escape puts a dragged handle back and drops anything unfinished; no document entry is made.
+            session.cancelCameraRawPerspectiveDraft()
+            synchronizeDisplay()
+        } else if event.keyCode == 53, session.filterEdit?.movesCameraRawMiniatureFocus == true {
+            // Escape puts the focus back where the drag found it and disarms the mode;
+            // no history entry is made for a canceled gesture.
+            session.cancelCameraRawMiniatureFocusInteraction()
+            synchronizeDisplay()
+        } else if event.keyCode == 53, session.filterEdit?.drawingCameraRawPerspectiveTool == true {
+            session.cancelCameraRawPerspectiveDraft()
+            synchronizeDisplay()
+        } else if event.keyCode == 53, session.filterEdit?.editsCameraRawCrop == true {
+            // Escape puts the crop scalars back where the drag found them and disarms the mode;
+            // no history entry is made for a canceled gesture.
+            session.cancelCameraRawCropEditing()
+            synchronizeDisplay()
+        } else if event.keyCode == 53, session.filterEdit?.drawsLocalMask == true {
+            // Escape puts a local mask's gradient back where the drag found it and disarms the mode.
+            session.cancelCameraRawLocalMaskGradient()
+            localMaskDrag = false
+            synchronizeDisplay()
+        } else if event.keyCode == 53, session.filterEdit?.drawsLocalMaskBrush == true {
+            // Escape discards an unfinished brush stroke and disarms brush painting.
+            session.cancelCameraRawLocalMaskBrush()
+            localMaskBrushDrag = false
+            synchronizeDisplay()
         } else if event.keyCode == 53, session.transformEdit != nil {
             transformDrag = nil
             session.cancelTransform()
@@ -2387,6 +2982,17 @@ final class CanvasView: NSView {
             let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
             session.nudgeLayer(dx: event.keyCode == 123 ? -step : event.keyCode == 124 ? step : 0,
                                dy: event.keyCode == 126 ? -step : event.keyCode == 125 ? step : 0)
+        } else if (event.keyCode == 51 || event.keyCode == 117),
+                  session.filterEdit?.drawingCameraRawPerspectiveTool == true,
+                  event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+            // Delete under the pointer removes that handle, rather than deleting the layer.
+            if let window, let document = session.document {
+                let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+                let documentPoint = session.viewport.documentPoint(from: point, documentSize: document.size)
+                if session.deleteCameraRawPerspectiveHandle(at: documentPoint, zoom: session.viewport.zoom) {
+                    synchronizeDisplay()
+                }
+            }
         } else if (event.keyCode == 51 || event.keyCode == 117),
            event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
             session.deleteKeyPressed()
@@ -3195,6 +3801,20 @@ extension CanvasView {
                 guard var placed = shown else { unsupported = true; return nil }
                 if let mask = layer.mask?.clipImage(placement: layer.maskTransform, over: canvas, width: warp.width, height: warp.height, limit: 2048) {
                     guard let placedMask = placement.place(mask, transform: canvas, mask: true) else { unsupported = true; return nil }
+                    placed = GPUBlend.masked(placed, by: placedMask)
+                }
+                return GPUBlend.faded(placed, opacity)
+            }
+            if let edit = session.meshWarpEdit, edit.layerID == layer.id {
+                let shown: CIImage?
+                if let live = edit.previewCIImage {
+                    shown = placement.place(live: live, width: edit.width, height: edit.height, transform: edit.transform)
+                } else {
+                    shown = placement.place(transient: edit.displayedImage, transform: edit.transform)
+                }
+                guard var placed = shown else { unsupported = true; return nil }
+                if let mask = session.displayedLayer(for: layer).mask?.enabledImage,
+                   let placedMask = placement.place(mask, transform: edit.transform, mask: true) {
                     placed = GPUBlend.masked(placed, by: placedMask)
                 }
                 return GPUBlend.faded(placed, opacity)

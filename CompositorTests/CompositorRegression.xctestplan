@@ -1,0 +1,30 @@
+{
+  "configurations": [
+    {
+      "id": "4E8A0C42-9F3B-4C8E-9A21-6B7D5F0E1C33",
+      "name": "Ordinary regression",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {
+    "targetForVariableExpansion": {
+      "containerPath": "container:Compositor.xcodeproj",
+      "identifier": "8F311F98304F03BB0017D14F",
+      "name": "Compositor"
+    }
+  },
+  "testTargets": [
+    {
+      "skippedTests": [
+        "MeshWarpPerformanceTests/warmMediansHeavyAt6000x4000()",
+        "RawDevelopmentIntegrationTests/realRawFixtureEndToEnd()"
+      ],
+      "target": {
+        "containerPath": "container:Compositor.xcodeproj",
+        "identifier": "8F311FA5304F03BC0017D14F",
+        "name": "CompositorTests"
+      }
+    }
+  ],
+  "version": 1
+}

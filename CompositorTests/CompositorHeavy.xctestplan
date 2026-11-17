@@ -1,0 +1,32 @@
+{
+  "configurations" : [
+    {
+      "id" : "A7C1D2E4-55B0-4F7A-B3C9-2D8E6F1A0B44",
+      "name" : "Heavy tests",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:Compositor.xcodeproj",
+      "identifier" : "8F311F98304F03BB0017D14F",
+      "name" : "Compositor"
+    }
+  },
+  "testTargets" : [
+    {
+      "selectedTests" : [
+        "MeshWarpPerformanceTests/warmMediansHeavyAt6000x4000()",
+        "RawDevelopmentIntegrationTests/realRawFixtureEndToEnd()"
+      ],
+      "target" : {
+        "containerPath" : "container:Compositor.xcodeproj",
+        "identifier" : "8F311FA5304F03BC0017D14F",
+        "name" : "CompositorTests"
+      }
+    }
+  ],
+  "version" : 1
+}

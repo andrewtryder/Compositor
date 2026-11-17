@@ -12,13 +12,26 @@ nonisolated enum CameraRawGroup: String, CaseIterable, Sendable {
     case optics = "Optics"
     case geometry = "Geometry"
     case calibration = "Calibration"
+
+    /// The panel's fixed top-to-bottom section order. Declared with the model, not buried in a view, so a test can
+    /// assert the order that the milestone keeps without driving the interface.
+    static let panelOrder: [CameraRawGroup] = [.light, .color, .grading, .effects, .curve, .mixer, .detail,
+                                               .optics, .geometry, .calibration]
 }
 
 nonisolated extension CameraRawSettings {
     /// These settings with `group` back to its defaults, choices and midpoints included; the other sections unchanged.
     func resetting(_ group: CameraRawGroup) -> Self {
         var result = self
-        Self.copy(group, from: CameraRawSettings(), to: &result)
+        if group == .geometry {
+            let focal = result.geometry.focalLengthMm
+            let sensor = result.geometry.sensorWidthMm
+            Self.copy(group, from: CameraRawSettings(), to: &result)
+            result.geometry.focalLengthMm = focal
+            result.geometry.sensorWidthMm = sensor
+        } else {
+            Self.copy(group, from: CameraRawSettings(), to: &result)
+        }
         return result
     }
 
@@ -30,9 +43,18 @@ nonisolated extension CameraRawSettings {
     }
 
     /// Whether `group` is as new settings have it, so there is nothing to reset.
-    func isDefault(_ group: CameraRawGroup) -> Bool { keeping(group) == CameraRawSettings() }
+    /// Geometry ignores EXIF focal / sensor, which Reset Geometry keeps for Volume Auto.
+    func isDefault(_ group: CameraRawGroup) -> Bool {
+        if group == .geometry {
+            var kept = keeping(.geometry)
+            kept.geometry.focalLengthMm = 0
+            kept.geometry.sensorWidthMm = 0
+            return kept == CameraRawSettings()
+        }
+        return keeping(group) == CameraRawSettings()
+    }
 
-    private static func copy(_ group: CameraRawGroup, from source: Self, to target: inout Self) {
+    static func copy(_ group: CameraRawGroup, from source: Self, to target: inout Self) {
         switch group {
         case .light:
             target.exposure = source.exposure
@@ -56,6 +78,8 @@ nonisolated extension CameraRawSettings {
             target.glowRange = source.glowRange
             target.glowSpread = source.glowSpread
             target.glowWarmth = source.glowWarmth
+            target.glowDirection = source.glowDirection
+            target.glowSoftness = source.glowSoftness
             target.vignetteAmount = source.vignetteAmount
             target.vignetteStyle = source.vignetteStyle
             target.vignetteMidpoint = source.vignetteMidpoint
@@ -70,7 +94,13 @@ nonisolated extension CameraRawSettings {
         case .grading: target.grading = source.grading
         case .detail: target.detail = source.detail
         case .optics: target.optics = source.optics
-        case .geometry: target.geometry = source.geometry
+        case .geometry:
+            target.geometry = source.geometry
+            target.horizon = source.horizon
+            target.perspectiveTools = source.perspectiveTools
+            target.miniature = source.miniature
+            target.crop = source.crop
+            target.automaticHorizonAngle = source.automaticHorizonAngle
         case .calibration: target.calibration = source.calibration
         }
     }
@@ -118,7 +148,75 @@ extension EditorSession {
         settings.cameraRaw = settings.cameraRaw.resetting(group)
         edit.setShows(group, true)
         if group == .mixer { edit.cameraRawPointIndex = 0 }
-        if group == .geometry { edit.cameraRawGuideDraft = nil }
+        if group == .geometry {
+            edit.cameraRawGuideDraft = nil
+            edit.drawingCameraRawGeometryGuide = false
+            edit.cameraRawUprightDetectionAttempted = false
+            edit.cameraRawManualGuides = nil
+            edit.drawingCameraRawHorizonReference = false
+            edit.cameraRawHorizonReferenceDraft = nil
+            edit.cameraRawHorizonDrawingMode = nil
+            edit.drawingCameraRawPerspectiveTool = false
+            edit.cameraRawPerspectiveDraft = nil
+            edit.cameraRawPerspectiveCornerDraft = nil
+            edit.cameraRawPerspectiveDragTarget = nil
+            edit.cameraRawPerspectiveDragOriginalPoint = nil
+            edit.movesCameraRawMiniatureFocus = false
+            edit.cameraRawMiniatureDragOriginalCenter = nil
+        }
         updateFilter(settings, preview: edit.preview)
+    }
+
+    // MARK: - Camera Raw presets
+
+    /// Saves the current Camera Raw settings as a named preset, affecting only the given groups.
+    @discardableResult
+    func saveCameraRawPreset(name: String, affects: Set<CameraRawGroup>) -> CameraRawPreset? {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return nil }
+        do {
+            return try cameraRawPresets.save(name: name, affects: affects, settings: edit.settings.cameraRaw)
+        } catch {
+            brushError = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Applies `preset` to the open Camera Raw settings, replacing only the groups it carries.
+    func applyCameraRawPreset(_ preset: CameraRawPreset) {
+        guard let edit = filterEdit, edit.kind == .cameraRaw, !edit.committing else { return }
+        var settings = edit.settings
+        cameraRawPresets.apply(preset, to: &settings.cameraRaw)
+        edit.settings = settings
+        updateFilter(settings, preview: edit.preview)
+    }
+
+    /// Renames an existing preset.
+    func renameCameraRawPreset(_ id: UUID, to name: String) {
+        do { try cameraRawPresets.rename(id, to: name) }
+        catch { brushError = error.localizedDescription }
+    }
+
+    /// Deletes a preset.
+    func deleteCameraRawPreset(_ id: UUID) {
+        do { try cameraRawPresets.delete(id) }
+        catch { brushError = error.localizedDescription }
+    }
+
+    /// Returns a copy of `preset` under a new name.
+    func duplicateCameraRawPreset(_ id: UUID, named name: String) -> CameraRawPreset? {
+        do { return try cameraRawPresets.duplicate(id, named: name) }
+        catch { brushError = error.localizedDescription; return nil }
+    }
+
+    /// Exports a preset to `url` as a `.compositorpreset` file.
+    func exportCameraRawPreset(_ preset: CameraRawPreset, to url: URL) {
+        do { try cameraRawPresets.export(preset, to: url) }
+        catch { brushError = error.localizedDescription }
+    }
+
+    /// Imports a preset from `url`. Returns the new preset or nil on failure.
+    func importCameraRawPreset(from url: URL) -> CameraRawPreset? {
+        do { return try cameraRawPresets.importPreset(from: url) }
+        catch { brushError = error.localizedDescription; return nil }
     }
 }

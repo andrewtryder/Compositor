@@ -6,11 +6,24 @@ import XCTest
 final class ScreenshotTests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = true }
 
+    /// A document window that fits the display the screenshots are taken on, in the format AppKit's own window
+    /// frame default uses: x y width height screenX screenY screenWidth screenHeight.
+    private static let windowFrame = {
+        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let width = min(1180, screen.width - 40), height = min(780, screen.height - 40)
+        let x = screen.midX - width / 2, y = screen.midY - height / 2
+        return "\(Int(x)) \(Int(y)) \(Int(width)) \(Int(height)) \(Int(screen.minX)) \(Int(screen.minY)) \(Int(screen.width)) \(Int(screen.height))"
+    }()
+
     @MainActor
     func testMainScreens() throws {
         let app = XCUIApplication()
         // A fresh window at its default size, and no update check.
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-SUEnableAutomaticChecks", "NO"]
+        // The editor restores its saved window frame, which can legitimately be a very wide window from another
+        // display and is then wider than the display this runs on: XCUITest cannot screenshot a window that large
+        // ("Image creation failed"). The argument overrides the frame for this launch only and saves nothing.
+        app.launchArguments += ["-NSWindow Frame editor", "\(Self.windowFrame)"]
         app.launch()
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "the editor window")
@@ -34,17 +47,282 @@ final class ScreenshotTests: XCTestCase {
 
         app.menuBars.menuBarItems["Filter"].click()
         app.menuItems["Camera Raw Filter…"].click()
-        shoot("06 Camera Raw", settle: 2)
+        shoot("06 Camera Raw")
+
+        // Milestone 10 evidence. The panel is its own dialog beside the document window, so each of these captures
+        // it as an element; a screen grab would be mostly desktop. Light starts expanded, so it already shows the
+        // added Auto row above the six original sliders, and Optics is opened here, with Lens Blur after its own
+        // controls. Every preexisting section keeps its order and place.
+        let panel = app.dialogs["filterPanel"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Camera Raw panel")
+        shoot("07 Camera Raw Light", panel)
+
+        // Optics plus Lens Blur and Lens Profile is taller than the panel, so scroll the panel to its end. The scroll
+        // is done unconditionally: reading a SwiftUI element's frame mid-scroll returns stale values, so a
+        // frame-driven loop stops early. Lens Profile is Optics' last group, so the end of the scroll is where it sits,
+        // with Lens Blur just above it: one capture shows both.
+        openCameraRawSection("Optics", in: app)
+        scrollPanelToEnd(app)
+        let lensBlur = app.staticTexts["Lens Blur"].firstMatch
+        XCTAssertTrue(lensBlur.exists, "Optics shows the added Lens Blur group")
+        XCTAssertTrue(app.buttons["Move Focus Region"].firstMatch.exists, "Lens Blur's Move Focus Region button")
+        shoot("08 Camera Raw Optics", panel)
+
+        // Milestone 10.3: Lens Profile follows Lens Blur at the end of Optics, so the same scroll already shows it.
+        let lensProfile = app.staticTexts["Lens Profile"].firstMatch
+        XCTAssertTrue(lensProfile.exists, "Optics shows the added Lens Profile group")
+        XCTAssertTrue(app.staticTexts["Provider"].firstMatch.exists, "the provider row is present")
+        shoot("09 Camera Raw Lens Profile", panel)
+
+        // Choosing Lensfun reveals the install status, the import control and the "no database yet" copy: the whole
+        // of what M10.3 adds, captured with nothing installed so the evidence shows the state a new user meets.
+        // A SwiftUI menu-style Picker does not surface as a pop-up button, so it is found by its identifier.
+        let provider = app.descendants(matching: .any).matching(identifier: "lensProfileProvider").firstMatch
+        XCTAssertTrue(provider.waitForExistence(timeout: 3), "the Lens Profile provider picker is reachable")
+        provider.click()
+        let lensfun = app.menuItems["Lensfun"].firstMatch
+        if lensfun.waitForExistence(timeout: 3) { lensfun.click() }
+        XCTAssertTrue(app.staticTexts["Lens Profile"].firstMatch.exists, "Lens Profile survives choosing a provider")
+        shoot("10 Camera Raw Lens Profile, Lensfun chosen", panel)
+
+        // Milestone 10.4: Geometry is below Optics. Its own controls are unchanged, and the added Horizon subsection
+        // sits at the end of Advanced Geometry. Scrolling to the panel's end puts both in one capture.
+        openCameraRawSection("Geometry", in: app)
+        let advanced = app.descendants(matching: .any).matching(identifier: "geometryAdvanced").firstMatch
+        if advanced.waitForExistence(timeout: 3), advanced.exists { advanced.click() }
+        scrollPanelToEnd(app)
+        let horizon = app.staticTexts["Horizon"].firstMatch
+        XCTAssertTrue(horizon.exists, "Geometry shows the added Horizon subsection")
+        XCTAssertTrue(app.staticTexts["Perspective Amount"].firstMatch.exists,
+                      "Perspective Amount is still above it, unmoved")
+        shoot("11 Camera Raw Geometry Horizon", panel)
+
+        // Milestone 10.5: Advanced Perspective Tools, appended after Horizon. The collapsed subsection is what an
+        // existing user sees, so it is captured first, then opened to show the tool selector and its instructions.
+        let advancedPerspective = app.descendants(matching: .any).matching(identifier: "advancedPerspectiveDisclosure").firstMatch
+        XCTAssertTrue(advancedPerspective.waitForExistence(timeout: 5), "Advanced Perspective Tools is present")
+        scrollIntoView(advancedPerspective, in: app, panel: panel)
+        shoot("12 Advanced Perspective collapsed", panel)
+        advancedPerspective.click()
+        scrollIntoView(advancedPerspective, in: app, panel: panel)
+        shoot("13 Advanced Perspective tools", panel)
+
+        // The tool menu, opened, lists all seven kinds. Closed by choosing Automatic from it rather than by pressing
+        // Escape: Escape dismisses the whole Camera Raw filter, and the rest of this run needs it open.
+        let toolPicker = app.descendants(matching: .any).matching(identifier: "advancedPerspectiveToolPicker").firstMatch
+        if toolPicker.waitForExistence(timeout: 3) {
+            toolPicker.click()
+            shoot("14 Advanced Perspective tool menu")
+            let automatic = app.descendants(matching: .any).matching(identifier: "advancedPerspectiveTool_automatic").firstMatch
+            if automatic.waitForExistence(timeout: 3) { automatic.click() }
+        }
+
+        // Vertical Guides: the tool chosen, drawing armed. This captures the panel state a person sees after
+        // selecting the tool and pressing Draw on Image.
+        //
+        // The guides themselves are NOT in this capture, and the report says so: XCUITest's drag synthesis does not
+        // reach the canvas here — the panel's own "N of 8 lines" counter stays at zero after a drag — so there is no
+        // honest way to photograph a drawn guide from this harness. The correction each tool produces is proven by
+        // `CameraRawPerspectiveEvidenceTests`, which renders real photographs through the same pipeline.
+        selectPerspectiveTool("verticalGuides", app)
+        let draw = app.descendants(matching: .any).matching(identifier: "advancedPerspectiveDraw").firstMatch
+        if draw.waitForExistence(timeout: 3), draw.exists { draw.click() }
+        XCTAssertTrue(draw.waitForExistence(timeout: 3), "selected Vertical Guides offers Draw on Image")
+        scrollIntoView(advancedPerspective, in: app, panel: panel)
+        shoot("15 Advanced Perspective vertical guides", panel)
+
+        // Combined Guides, Rectangle and Eight Point: each shows its own instructions and its own wording for the
+        // count, which is what tells them apart in use. The drawn geometry is evidenced by the rendered pictures.
+        selectPerspectiveTool("combinedGuides", app)
+        scrollIntoView(advancedPerspective, in: app, panel: panel)
+        shoot("16 Advanced Perspective combined guides", panel)
+
+        selectPerspectiveTool("rectangle", app)
+        scrollIntoView(advancedPerspective, in: app, panel: panel)
+        shoot("17 Advanced Perspective rectangle", panel)
+
+        selectPerspectiveTool("eightPoint", app)
+        scrollIntoView(advancedPerspective, in: app, panel: panel)
+        shoot("18 Advanced Perspective eight point", panel)
+
+        selectPerspectiveTool("manualKeystone", app)
+        scrollIntoView(advancedPerspective, in: app, panel: panel)
+        shoot("19 Advanced Perspective manual keystone", panel)
+
+        // Milestone 10.8: Miniature / Tilt-Shift, appended after the advanced tools at the bottom
+        // of Advanced Geometry. The collapsed subsection first — what an existing user sees — then
+        // opened for the Linear controls, then switched to Circular. The Move Focus canvas drag is
+        // NOT in these captures: XCUITest cannot deliver a drag to the layer-backed canvas (§5.3 of
+        // the M10.5 report stands), so there is no honest photograph of one from this harness. The
+        // interaction is proven at model level by CameraRawMiniatureTests, and the rendered effect
+        // by CameraRawMiniatureEvidenceTests.
+        let miniature = app.descendants(matching: .any).matching(identifier: "miniatureDisclosure").firstMatch
+        // Reach the subsection the way CameraRawSectionOrderTests does: the list walked to its end in
+        // small steps. Rows a subsection inserts only publish for a list that has been walked through;
+        // jumping straight to the disclosure leaves the inserted rows invisible to queries.
+        if miniature.waitForExistence(timeout: 5) {
+            scrollIntoView(miniature, in: app, panel: panel)
+        }
+        scrollListInSmallSteps(app)
+        scrollIntoView(miniature, in: app, panel: panel)
+        shoot("20 Miniature collapsed", panel)
+        miniature.click()
+        Thread.sleep(forTimeInterval: 0.8)
+        let shapePicker = app.descendants(matching: .any).matching(identifier: "miniatureShapePicker").firstMatch
+        var published = shapePicker.waitForExistence(timeout: 3)
+        if !published {
+            // A scroll that carried the disclosure out of view recycles the row and resets its
+            // expansion. Open it again and give the rows a moment to publish.
+            if miniature.exists { miniature.click() }
+            Thread.sleep(forTimeInterval: 0.8)
+            published = shapePicker.waitForExistence(timeout: 3)
+        }
+        if published {
+            scrollIntoView(shapePicker, in: app, panel: panel)
+            shoot("21 Miniature linear", panel)
+            // The picker is segmented: Linear | Circular. A segment may or may not surface as a
+            // button, so try the button first and fall back to tapping the right segment in place.
+            let circular = shapePicker.descendants(matching: .any).matching(identifier: "Circular").firstMatch.exists
+                ? shapePicker.descendants(matching: .any).matching(identifier: "Circular").firstMatch
+                : app.buttons["Circular"].firstMatch
+            if circular.exists {
+                circular.click()
+            } else {
+                shapePicker.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5)).tap()
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+            scrollIntoView(shapePicker, in: app, panel: panel)
+            shoot("22 Miniature circular", panel)
+        } else {
+            // Never silent: a missing capture must be visible in the result bundle, not a gap.
+            // Diagnose too: which probes see what, so the next run fixes the query, not the guess.
+            var diagnosis = "probes after opening and walking the list:\n"
+            diagnosis += "miniatureDisclosure: \(miniature.exists), value: \(miniature.value ?? "nil")\n"
+            diagnosis += "shapePicker via descendants: \(shapePicker.exists)\n"
+            diagnosis += "pickers: \(app.pickers.count), segmentedControls: \(app.segmentedControls.count)\n"
+            for line in app.debugDescription.components(separatedBy: "\n") where line.lowercased().contains("miniature") || line.lowercased().contains("shape") {
+                diagnosis += line + "\n"
+            }
+            XCTContext.runActivity(named: "22 Miniature circular: the shape picker was unreachable") { activity in
+                let report = XCTAttachment(string: diagnosis)
+                report.name = "miniature tree diagnosis"
+                report.lifetime = .keepAlways
+                activity.add(report)
+            }
+            scrollIntoView(miniature, in: app, panel: panel)
+            shoot("22 Miniature circular MISSING", panel)
+        }
+
         dismiss(app)
 
+        // Milestone 10.7: the ReShape tool header with the appended selection, transform-mode,
+        // Subdivide/Merge and Local Corrections controls, in the same bar the original controls
+        // have always lived in. XCUITest cannot drive a mesh vertex drag (the canvas is a
+        // layer-backed view; see §5.3 of the M10.5 report), so these captures show the reachable
+        // controls; the interaction itself is evidenced by `MeshWarpEvidenceTests`.
+        let reshape = app.descendants(matching: .any).matching(identifier: "reshapeGridPreset").firstMatch
+        // Select the ReShape tool through its tool-rail button, found by its accessibility label.
+        let railButton = app.buttons["ReShape"].firstMatch
+        if railButton.exists {
+            railButton.click()
+        }
+        if reshape.waitForExistence(timeout: 5) {
+            shoot("23 ReShape header", window)
+            // The Local Corrections menu, open: what one-shot corrections and drawn drafts offer.
+            let localCorrections = app.descendants(matching: .any).matching(identifier: "reshapeLocalCorrections").firstMatch
+            if localCorrections.exists {
+                localCorrections.click()
+                shoot("24 ReShape Local Corrections menu")
+                app.typeKey(.escape, modifierFlags: [])
+            }
+            // Leave the session cleanly: Escape twice cancels any gesture and then the tool.
+            app.typeKey(.escape, modifierFlags: [])
+            app.typeKey(.escape, modifierFlags: [])
+        } else {
+            shoot("23 ReShape header MISSING", window)
+        }
+
         app.typeKey("n", modifierFlags: .command)
-        shoot("07 Second tab", window)
+        shoot("25 Second tab", window)
     }
 
+    /// Chooses one Advanced Perspective tool from the open subsection's menu, by its stable identifier suffix.
+    private func selectPerspectiveTool(_ identifier: String, _ app: XCUIApplication) {
+        let picker = app.descendants(matching: .any).matching(identifier: "advancedPerspectiveToolPicker").firstMatch
+        guard picker.waitForExistence(timeout: 3), picker.exists else { return }
+        picker.click()
+        let item = app.descendants(matching: .any).matching(identifier: "advancedPerspectiveTool_\(identifier)").firstMatch
+        if item.waitForExistence(timeout: 3) { item.click() } else { app.typeKey(.escape, modifierFlags: []) }
+    }
+
+    /// Opens a closed Camera Raw section by its header. A section that is already open is left as it is.
+    /// The panel scrolls, so its end is reached first: once the list has been scrolled through, every header is
+    /// published, including the ones that were below the fold.
+    private func openCameraRawSection(_ section: String, in app: XCUIApplication) {
+        scrollPanelToEnd(app)
+        let header = app.buttons[section].firstMatch
+        guard header.waitForExistence(timeout: 3) else { return }
+        // Its own first control: present already means the section is open, and clicking would close it.
+        let opener: [String: String] = ["Optics": "Distortion", "Light": "Exposure", "Geometry": "Upright"]
+        if let marker = opener[section], app.staticTexts[marker].firstMatch.exists { return }
+        header.click()
+        scrollPanelToEnd(app)
+    }
+
+    /// Scrolls the panel until `element` is fully inside it, or gives up after a bounded number of nudges.
+    /// Each nudge settles before the frame is read again: a SwiftUI element's frame read mid-scroll is stale, which
+    /// is what made an earlier frame-driven loop stop early.
+    ///
+    /// Reads are kept to one snapshot per iteration. Every `.frame`, `.exists` and `.isHittable` is a round trip to
+    /// the app (about 0.28 s each), so the panel's own frame is read once up front rather than once per nudge — that
+    /// alone removed the bulk of this suite's runtime.
+    private func scrollIntoView(_ element: XCUIElement, in app: XCUIApplication, panel: XCUIElement) {
+        let scrollView = app.scrollViews.firstMatch
+        guard scrollView.exists else { return }
+        let bounds = panel.frame
+        for _ in 0..<12 {
+            let frame = element.frame
+            guard frame.height > 0 else { return }
+            if frame.minY >= bounds.minY + 4, frame.maxY <= bounds.maxY - 4 { return }
+            scrollView.scroll(byDeltaX: 0, deltaY: frame.maxY > bounds.maxY ? -200 : 200)
+            Thread.sleep(forTimeInterval: 0.15)
+        }
+    }
+
+    /// Scrolls the panel to its end in a handful of large steps. Used instead of ninety small ones: a scroll is a
+    /// synthesized event plus a snapshot, so the count of steps, not their size, is what the time goes on.
+    private func scrollPanelToEnd(_ app: XCUIApplication) {
+        let scrollView = app.scrollViews.firstMatch
+        guard scrollView.exists else { return }
+        for _ in 0..<12 { scrollView.scroll(byDeltaX: 0, deltaY: -600) }
+        Thread.sleep(forTimeInterval: 0.4)
+    }
+
+    /// Walks the panel to its end in small steps, the only walk that publishes lazily inserted rows:
+    /// a large scroll teleports past them and they never enter the accessibility tree. Mirrors the
+    /// ninety small scrolls `CameraRawSectionOrderTests` uses for the same reason.
+    private func scrollListInSmallSteps(_ app: XCUIApplication) {
+        let scrollView = app.scrollViews.firstMatch
+        guard scrollView.exists else { return }
+        for _ in 0..<90 { scrollView.scroll(byDeltaX: 0, deltaY: -60) }
+        Thread.sleep(forTimeInterval: 1)
+    }
+
+
     /// Waits for animations to finish, then keeps a screenshot of the element, or of the whole screen (for menus and
-    /// panels outside the window).
-    private func shoot(_ name: String, _ element: XCUIElement? = nil, settle seconds: TimeInterval = 1) {
-        Thread.sleep(forTimeInterval: seconds)
+    /// panels outside the window). A capture whose element has gone (a panel that a stray click dismissed) is
+    /// recorded and skipped rather than aborting the rest of the run.
+    ///
+    /// The wait is short on purpose: XCUITest already waits for the app to idle after every interaction, so a second
+    /// on top of that is spent sleeping rather than letting anything finish.
+    private func shoot(_ name: String, _ element: XCUIElement? = nil, settle seconds: TimeInterval = 0.3) {
+        if seconds > 0 { Thread.sleep(forTimeInterval: seconds) }
+        if let element, !element.exists {
+            XCTContext.runActivity(named: name) { activity in
+                activity.add(XCTAttachment(string: "\(name): the element was gone when this capture was due."))
+            }
+            return
+        }
         let attachment = XCTAttachment(screenshot: element?.screenshot() ?? XCUIScreen.main.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -55,7 +333,6 @@ final class ScreenshotTests: XCTestCase {
     private func dismiss(_ app: XCUIApplication) {
         let cancel = app.buttons["Cancel"].firstMatch
         if cancel.exists { cancel.click() } else { app.typeKey(.escape, modifierFlags: []) }
-        Thread.sleep(forTimeInterval: 0.5)
     }
 
     /// Opens a file in the app under test as the Finder would.
