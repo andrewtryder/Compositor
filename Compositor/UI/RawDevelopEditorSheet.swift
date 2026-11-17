@@ -15,6 +15,10 @@ struct RawDevelopEditorSheet: View {
     @State private var sourceInfo: String = ""
     @State private var solvingBalance = false
     @State private var profileIssue: String?
+    /// Why the chosen decoder cannot be used here, or nil. Shown rather than quietly developing with another.
+    @State private var decoderIssue: String?
+    /// The decoders this project's own RAW bytes genuinely offer.
+    @State private var availableDecoders: [RawDecoderChoice] = [.systemDefault]
 
 
     init(session: EditorSession, layerID: UUID, persistentState: RawDevelopmentPersistentState) {
@@ -60,6 +64,7 @@ struct RawDevelopEditorSheet: View {
             Group {
                 slider("Exposure", value: $settings.exposure, range: -3...3, unit: " EV", precision: 2,
                        onChange: { session.updateRawDevelopmentSettings(layerID: layerID, exposure: $0) })
+                decoderRow
                 whiteBalanceControls
                 slider("Temperature", value: $settings.temperature, range: 2000...50000, unit: " K", precision: 0,
                        onChange: { value in
@@ -125,6 +130,7 @@ struct RawDevelopEditorSheet: View {
         .padding(24).fixedSize()
         .interactiveDismissDisabled(true)
         .task(id: revision) { await refreshPreview() }
+        .task { await loadAvailableDecoders() }
         .onChange(of: settings) { _, _ in
             // Bump revision to trigger a new preview render; the draft itself lives in the session.
             revision += 1
@@ -159,9 +165,31 @@ struct RawDevelopEditorSheet: View {
         } catch { return }
         defer { try? FileManager.default.removeItem(at: tmpURL) }
 
-        let image = await RawImporter.Queue.shared.develop(tmpURL, settings: current, limit: 800)
+        let image: CGImage?
+        do {
+            image = try await RawImporter.Queue.shared.develop(tmpURL, settings: current, limit: 800)
+        } catch {
+            decoderIssue = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return
+        }
         guard !Task.isCancelled else { return }
+        decoderIssue = nil
         if let image { preview = image }
+    }
+
+    /// Asks the project's own RAW bytes which decoders they offer, off the main actor: building a filter decodes the
+    /// file's header. Runs once when the sheet opens.
+    private func loadAvailableDecoders() async {
+        let layer = session.document?.layers.first(where: { $0.id == layerID })
+        guard let draft = session.rawDrafts[layerID] ?? layer?.rawDevelopment,
+              let source = draft.source as RawSourceAsset? else { return }
+        let choices: [RawDecoderChoice] = await Task.detached(priority: .userInitiated) {
+            guard let url = try? RawImporter.temporaryFile(for: source) else { return [.systemDefault] }
+            defer { try? FileManager.default.removeItem(at: url) }
+            let available = RawImporter.availableDecoders(at: url)
+            return available.isEmpty ? [.systemDefault] : available
+        }.value
+        availableDecoders = choices
     }
 
     /// The decoder's own two noise reductions, at the sensor stage rather than a rendered picture's Detail sliders.
@@ -179,7 +207,7 @@ struct RawDevelopEditorSheet: View {
             .disabled(!settings.supportsColorNoiseReduction)
             .help(settings.supportsColorNoiseReduction
                   ? "Removes color mottle at the sensor stage, where it is separate from luminance detail."
-                  : "Not available for this camera")
+                  : RawDecoderCopy.unavailable("Color Noise Reduction"))
         }
     }
 
@@ -270,41 +298,55 @@ struct RawDevelopEditorSheet: View {
     /// Raw Details: the decoder's own reconstruction, moved from what this file's decoder does on its own rather than
     /// from zero. Zero on a control is the camera's existing rendering, which is what makes switching it on, or
     /// returning every control to its middle, a no-op.
+    ///
+    /// Gated one control at a time. Under RAW 9 the detail reconstruction and the moiré reduction are gone while
+    /// sharpness and contrast remain, so disabling the group would take two working sliders with two unavailable
+    /// ones. A value the selected decoder cannot use is kept in the draft — so switching back restores it — and said
+    /// so rather than silently ignored (M12.5).
     private var rawDetailControls: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 Text("Raw Details").frame(width: 110, alignment: .leading)
+                // Reads the draft, not the view's copy of it: the draft is what the renderer will use, and the
+                // sliders below are gated on this so a stale copy would leave them unreachable.
                 Toggle("Use decoder detail reconstruction", isOn: Binding(
-                    get: { settings.rawDetail.enabled },
+                    get: { persistedDetail.enabled },
                     set: { enabled in
                         var detail = persistedDetail
                         detail.enabled = enabled
                         session.updateRawDevelopmentSettings(layerID: layerID, rawDetail: detail)
+                        if let draft = session.rawDrafts[layerID] { settings = draft.settings }
                     }))
                 .disabled(!settings.supportsRawDetail)
                 .help(settings.supportsRawDetail
                       ? "Asks the RAW decoder for its own detail reconstruction, on the sensor data before it becomes pixels."
                       : "This file's decoder does not offer detail reconstruction.")
                 .accessibilityIdentifier("rawDetailEnabled")
-                if settings.rawDetail.enabled, settings.supportsRawDetail {
+                if persistedDetail.enabled, settings.supportsRawDetail {
                     Text(String(format: "Camera's own: detail %.2f · sharpness %.2f", persistedDefaults.detail,
                                 persistedDefaults.sharpness))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
             }
-            if settings.rawDetail.enabled, settings.supportsRawDetail {
+            if persistedDetail.enabled, settings.supportsRawDetail {
                 Group {
                     detailSlider("Detail", \.detail, range: RawDetailSettings.detailRange, precision: 2,
-                                 base: persistedDefaults.detail)
+                                 base: persistedDefaults.detail, available: settings.offersDetail)
                     detailSlider("Sharpness", \.sharpness, range: RawDetailSettings.sharpnessRange, precision: 2,
-                                 base: persistedDefaults.sharpness)
+                                 base: persistedDefaults.sharpness, available: settings.offersSharpness)
                     detailSlider("Contrast", \.contrast, range: RawDetailSettings.contrastRange, precision: 2,
-                                 base: persistedDefaults.contrast)
+                                 base: persistedDefaults.contrast, available: settings.offersContrast)
                     detailSlider("Moire", \.moire, range: RawDetailSettings.moireRange, precision: 2,
-                                 base: persistedDefaults.moire)
+                                 base: persistedDefaults.moire, available: settings.offersMoire)
                 }
                 .padding(.leading, 120)
+                if let retained = retainedDetailNote {
+                    Text(retained).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 120)
+                        .accessibilityIdentifier("rawDetailRetained")
+                }
                 Text("Amounts are relative to the camera's own decode, so 0.00 leaves it exactly as it was. Applied by "
                      + "the decoder before the image becomes pixels, so it recovers detail a rendered picture no "
                      + "longer has.")
@@ -314,10 +356,27 @@ struct RawDevelopEditorSheet: View {
         }
     }
 
+    /// Which Raw Details amounts the selected decoder cannot apply but the draft is holding, with their values, so
+    /// nobody has to wonder whether switching decoder discarded them.
+    private var retainedDetailNote: String? {
+        let unavailable = settings.unavailableRawDetailControls
+        guard !unavailable.isEmpty else { return nil }
+        let detail = persistedDetail
+        let held = unavailable.filter { detail[$0] != 0 }
+        let list = unavailable.map(\.rawValue).joined(separator: ", ")
+        guard !held.isEmpty else {
+            return "\(settings.selectedDecoder.label) does not offer \(list) here."
+        }
+        let values = held.map { String(format: "%@ %.2f", $0.rawValue, detail[$0]) }.joined(separator: ", ")
+        return "\(settings.selectedDecoder.label) does not offer \(list) here. Kept: \(values); "
+            + "\(RawDecoderChoice.systemDefault.label) applies them again."
+    }
+
     /// One offset, with the amount the decoder will actually be asked for beside it, so the controls never leave the
     /// reader guessing what zero means for this camera.
     private func detailSlider(_ title: String, _ key: WritableKeyPath<RawDetailSettings, Float>,
-                              range: ClosedRange<Float>, precision: Int, base: Float) -> some View {
+                              range: ClosedRange<Float>, precision: Int, base: Float,
+                              available: Bool) -> some View {
         let value = persistedDetail[keyPath: key]
         let total = base + value
         return HStack(spacing: 10) {
@@ -329,10 +388,71 @@ struct RawDevelopEditorSheet: View {
                                          session.updateRawDevelopmentSettings(layerID: layerID, rawDetail: detail)
                                      }), in: range)
                 .frame(width: 210)
+                .disabled(!available)
+                .help(available ? "" : RawDecoderCopy.unavailable(title))
+                .accessibilityIdentifier("rawDetailSlider\(title)")
             Text(String(format: "%+.\(precision)f → %.\(precision)f", value, total))
-                .monospacedDigit().foregroundStyle(.secondary)
+                .monospacedDigit().foregroundStyle(available ? .secondary : .tertiary)
                 .frame(width: 110, alignment: .trailing)
         }
+    }
+
+    /// Which decoder develops this layer. The project's own RAW bytes are used to decide what is offered, and the
+    /// effective version is shown, so a layer can never display RAW 9 while developing with another decoder (M12.5).
+    private var decoderRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Text("Decoder").frame(width: 110, alignment: .leading)
+                Picker("Decoder", selection: Binding(
+                    get: { settings.selectedDecoder },
+                    set: setDecoder)) {
+                    ForEach(availableDecoders, id: \.self) { Text($0.label).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 150)
+                .help("System Default is the decoder this layer was developed with before. Apple RAW 9 is offered "
+                      + "only where the original RAW bytes genuinely develop with it.")
+                .accessibilityIdentifier("rawDecoder")
+                if settings.selectedDecoder == .appleRAW9, let effective = settings.effectiveDecoderVersion,
+                   !effective.isEmpty {
+                    Text("version \(effective)").font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("rawDecoderEffective")
+                }
+                Spacer(minLength: 0)
+            }
+            if !availableDecoders.contains(.appleRAW9) {
+                Text("Apple RAW 9 is not offered for this file: its decoder has no RAW 9 version to develop with.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.leading, 120)
+            } else if settings.selectedDecoder == .appleRAW9, let lost = decoderLimitations {
+                Text(lost).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.leading, 120)
+            }
+            if let decoderIssue {
+                Text(decoderIssue).font(.caption).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true).padding(.leading, 120)
+                    .accessibilityIdentifier("rawDecoderIssue")
+            }
+        }
+    }
+
+    private var decoderLimitations: String? {
+        var lost: [String] = []
+        if !settings.supportsColorNoiseReduction { lost.append("Color Noise Reduction") }
+        if !settings.offersDetail { lost.append(RawDetailControl.detail.rawValue) }
+        if !settings.offersMoire { lost.append(RawDetailControl.moire.rawValue) }
+        guard !lost.isEmpty else { return nil }
+        return "RAW 9 does not offer \(lost.joined(separator: ", ")) on this file. Amounts already set are kept and "
+            + "return when you switch back to System Default."
+    }
+
+    /// Switches decoder through the session, which re-reads this version's capabilities from the original bytes.
+    /// A refusal is shown rather than accepted, so the picker never disagrees with what was rendered.
+    private func setDecoder(_ choice: RawDecoderChoice) {
+        guard choice != settings.selectedDecoder else { return }
+        decoderIssue = session.switchRawDevelopmentDecoder(layerID: layerID, to: choice)
+        if let draft = session.rawDrafts[layerID] { settings = draft.settings }
+        revision += 1
     }
 
     /// The draft's own RAW details, not the view's copy: a slider writes the draft, and the view reads it back.

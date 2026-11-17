@@ -757,7 +757,7 @@ struct RawDevelopmentIntegrationTests {
 
         // Use RawImporter directly to get a bounded preview (800px max)
         let asShot = RawImporter.asShot(fixtureURL) ?? RawDevelopSettings()
-        guard let preview = await RawImporter.Queue.shared.develop(fixtureURL, settings: asShot, limit: 800, sixteenBit: false) else {
+        guard let preview = try? await RawImporter.Queue.shared.develop(fixtureURL, settings: asShot, limit: 800, sixteenBit: false) else {
             Issue.record("Failed to decode RAW preview")
             return
         }

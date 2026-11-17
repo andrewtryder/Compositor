@@ -52,13 +52,27 @@ nonisolated struct RawDevelopSettings: Equatable, Sendable, Codable {
     var rawDetailDefaults = RawDetailBaseline()
     /// Whether this camera's decoder exposes its detail reconstruction and contrast controls.
     var supportsRawDetail = false
+    /// Which Raw Details controls survive at the selected decoder. Under RAW 9 the detail reconstruction and the
+    /// moiré reduction are gone while sharpness and contrast remain, so the group is described one control at a
+    /// time rather than with a single flag that would take the two working sliders with it (M12.5).
+    var supportsDetail = false
+    var supportsSharpness = false
+    var supportsContrast = false
+    var supportsMoire = false
+    /// The decoder asked for, as the person chose it. Per file and per layer: there is no app-wide preference,
+    /// and a project that never chose anything keeps the system's own decoder (M12.5).
+    var decoder: RawDecoderChoice = .systemDefault
+    /// The version the decoder actually reported after the request, which is not the same thing: an unsupported
+    /// request leaves another version in place without an error. Stored so a project can tell that it asked for
+    /// RAW 9 and this host developed with something else.
+    var effectiveDecoderVersion: String = ""
 
     var isAsShot: Bool {
         exposure == 0 && boost == 1 && temperature == asShotTemperature && tint == asShotTint
             && noiseReduction == asShotNoiseReduction && lensCorrection == asShotLensCorrection
             && colorNoiseReduction == asShotColorNoiseReduction
             && highlightRecovery == asShotHighlightRecovery && whiteBalanceMode == .asShot
-            && !colorProfile.adjusts && rawDetail.isIdentity
+            && !colorProfile.adjusts && rawDetail.isIdentity(settingAside: unavailableRawDetailControls)
     }
     mutating func reset() {
         exposure = 0
@@ -80,7 +94,58 @@ nonisolated struct RawDevelopSettings: Equatable, Sendable, Codable {
     var developmentBalance: (temperature: Float, tint: Float) { (temperature, tint) }
 
     /// Whether the decoder can still be asked for its detail reconstruction on this file.
-    var canUseRawDetail: Bool { supportsRawDetail && !rawDetail.isIdentity }
+    var canUseRawDetail: Bool { supportsRawDetail && isRawDetailEffective }
+
+    /// Raw Details restricted to what this decoder version actually offers. A saved Detail or Moiré amount under
+    /// RAW 9 is kept in the settings — so switching back restores it — but must not be sent to a filter that cannot
+    /// take it, nor count as an adjustment the renderer is applying (M12.5).
+    var effectiveRawDetail: RawDetailSettings {
+        var detail = rawDetail
+        if !supportsDetail { detail.detail = 0 }
+        if !supportsSharpness { detail.sharpness = 0 }
+        if !supportsContrast { detail.contrast = 0 }
+        if !supportsMoire { detail.moire = 0 }
+        return detail
+    }
+
+    /// Whether anything Raw Details offers is actually in effect at this decoder version.
+    var isRawDetailEffective: Bool { !effectiveRawDetail.isIdentity }
+
+    /// Raw Details controls this decoder version does not offer, so the sheet can say which are unavailable rather
+    /// than disabling the whole group for two of its four sliders.
+    var unavailableRawDetailControls: [RawDetailControl] {
+        RawDetailControl.allCases.filter { !supports($0) }
+    }
+
+    private func supports(_ control: RawDetailControl) -> Bool {
+        switch control {
+        case .detail: return supportsDetail
+        case .sharpness: return supportsSharpness
+        case .contrast: return supportsContrast
+        case .moire: return supportsMoire
+        }
+    }
+}
+
+/// One of Raw Details' four offsets, so a version that drops two of them can name which.
+nonisolated enum RawDetailControl: String, CaseIterable, Sendable {
+    case detail = "Detail"
+    case sharpness = "Sharpness"
+    case contrast = "Contrast"
+    case moire = "Moiré"
+
+    /// The setting this control holds, so a version switch can report the value being kept rather than lost.
+    func offset(in detail: RawDetailSettings) -> Float {
+        switch self {
+        case .detail: return detail.detail
+        case .sharpness: return detail.sharpness
+        case .contrast: return detail.contrast
+        case .moire: return detail.moire
+        }
+    }
+
+    /// The value itself, by control, so the sheet can name the amount a decoder version is holding on to.
+    func value(in detail: RawDetailSettings) -> Float { offset(in: detail) }
 }
 
 /// What the decoder already does to this file before any of Raw Details' offsets apply: its own detail, sharpness,
@@ -136,6 +201,56 @@ nonisolated struct RawDetailSettings: Equatable, Sendable, Codable {
     /// Whether this leaves the decoder untouched: switched off, or every offset at its neutral zero.
     var isIdentity: Bool { !enabled || (detail == 0 && sharpness == 0 && contrast == 0 && moire == 0) }
 
+    /// The value a named control holds, for reporting what a decoder version is keeping.
+    subscript(control: RawDetailControl) -> Float {
+        get { control.value(in: self) }
+        set {
+            switch control {
+            case .detail: detail = newValue
+            case .sharpness: sharpness = newValue
+            case .contrast: contrast = newValue
+            case .moire: moire = newValue
+            }
+        }
+    }
+
+    /// Whether this leaves the decoder untouched *once the controls this decoder version does not offer are set
+    /// aside*. A Detail amount saved under the system decoder and left in place after switching to RAW 9 is inert,
+    /// not an adjustment being applied, so a version that cannot use it must not report itself as adjusting
+    /// anything — otherwise Raw Details would look active with every usable slider at zero (M12.5).
+    func isIdentity(settingAside unavailable: [RawDetailControl]) -> Bool {
+        var effective = self
+        if unavailable.contains(.detail) { effective.detail = 0 }
+        if unavailable.contains(.sharpness) { effective.sharpness = 0 }
+        if unavailable.contains(.contrast) { effective.contrast = 0 }
+        if unavailable.contains(.moire) { effective.moire = 0 }
+        return effective.isIdentity
+    }
+
+    private enum CodingKeys: String, CodingKey { case enabled, detail, sharpness, contrast, moire }
+
+    /// Decoded one field at a time. This type is nested inside the versioned persistent state, where the outer
+    /// type's tolerant decoding cannot help: synthesized decoding of a nested type rejects a missing key, so a
+    /// project written before `moire` existed would fail to load rather than take its neutral zero (M12.5).
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        detail = try values.decodeIfPresent(Float.self, forKey: .detail) ?? 0
+        sharpness = try values.decodeIfPresent(Float.self, forKey: .sharpness) ?? 0
+        contrast = try values.decodeIfPresent(Float.self, forKey: .contrast) ?? 0
+        moire = try values.decodeIfPresent(Float.self, forKey: .moire) ?? 0
+    }
+
+    init() {}
+
+    init(enabled: Bool = false, detail: Float = 0, sharpness: Float = 0, contrast: Float = 0, moire: Float = 0) {
+        self.enabled = enabled
+        self.detail = detail
+        self.sharpness = sharpness
+        self.contrast = contrast
+        self.moire = moire
+    }
+
     var normalized: Self {
         var result = self
         result.detail = Self.clamp(detail, Self.detailRange)
@@ -169,25 +284,37 @@ nonisolated enum RawImporter {
     /// or white balance on one that already exists costs nothing measurable.
     actor Queue {
         static let shared = Queue()
-        private var cached: (url: URL, limit: CGFloat, filter: CIRAWFilter)?
+
+        /// The kept-and-reused preview filter. Its identity includes the decoder: a filter holds the version it was
+        /// built with, so reusing one across a decoder switch would show the previous decoder's pixels with the new
+        /// decoder's name on them (M12.5).
+        private var cached: (url: URL, limit: CGFloat, decoder: RawDecoderChoice, filter: CIRAWFilter)?
 
         /// `sixteenBit`: the full frame at 16 bits a channel, for a 16-bit layer (`DeepLayer`); otherwise dithered to 8.
-        func develop(_ url: URL, settings: RawDevelopSettings, limit: CGFloat?, sixteenBit: Bool = false) -> CGImage? {
-            guard let limit else { return try? RawImporter.develop(url, settings: settings, limit: nil, sixteenBit: sixteenBit) }
+        func develop(_ url: URL, settings: RawDevelopSettings, limit: CGFloat?, sixteenBit: Bool = false) throws -> CGImage? {
+            guard let limit else { return try RawImporter.develop(url, settings: settings, limit: nil, sixteenBit: sixteenBit) }
             let filter: CIRAWFilter
-            if let cached, cached.url == url, cached.limit == limit {
+            if let cached, cached.url == url, cached.limit == limit, cached.decoder == settings.decoder {
                 filter = cached.filter
             } else {
-                guard let made = CIRAWFilter(imageURL: url) else { return nil }
+                // Built through `decoderFilter`, so an unsupported request throws instead of developing with a
+                // decoder the settings do not name.
+                let made = try RawImporter.decoderFilter(for: url, settings: settings)
                 let longest = max(made.nativeSize.width, made.nativeSize.height)
                 if longest > limit {
                     made.scaleFactor = Float(limit / longest)
                     made.isDraftModeEnabled = true
                 }
-                cached = (url, limit, made)
+                cached = (url, limit, settings.decoder, made)
                 filter = made
             }
             return RawImporter.render(filter, settings: settings)
+        }
+
+        /// Whether the kept filter is for this file at this decoder, which the sheet uses to tell a live preview from
+        /// one that will have to rebuild the decoder.
+        func isCached(_ url: URL, limit: CGFloat, decoder: RawDecoderChoice) -> Bool {
+            cached.map { $0.url == url && $0.limit == limit && $0.decoder == decoder } ?? false
         }
 
         /// Lets go of the decoded frame when the sheet closes.
@@ -203,8 +330,45 @@ nonisolated enum RawImporter {
 
     /// The camera's own white balance and the engine's own starting points for this camera, which is where the
     /// controls start.
-    static func asShot(_ url: URL) -> RawDevelopSettings? {
+    ///
+    /// `decoder` selects which decoder the readings describe. They must be read from a filter that already holds
+    /// that version: RAW 9 drops this DNG's color noise reduction, detail and moiré, and support flags captured
+    /// from the default decoder would describe a decoder that is no longer in use (M12.5).
+    static func asShot(_ url: URL, decoder: RawDecoderChoice = .systemDefault) -> RawDevelopSettings? {
         guard let filter = CIRAWFilter(imageURL: url) else { return nil }
+        let verdict = apply(decoder, to: filter)
+        // A requested decoder that the file does not honour is not the decoder this state describes, so nothing is
+        // invented from it: the caller is told instead.
+        if !decoder.requestedVersions.isEmpty, !verdict.isApplied { return nil }
+        return settings(filter, decoder: decoder, verdict: verdict)
+    }
+
+    /// What the file offers, and whether `decoder` is genuinely among it. Builds one filter and discards it, and
+    /// asks once: the verdict is the answer, and asking twice on one filter would apply the request twice.
+    static func availability(of decoder: RawDecoderChoice, at url: URL) -> RawDecoderAvailability {
+        guard let filter = CIRAWFilter(imageURL: url) else { return .unreadable }
+        switch decoder {
+        case .systemDefault:
+            return .available
+        case .appleRAW9:
+            let verdict = apply(decoder, to: filter)
+            return verdict.isApplied
+                ? .available
+                : .notOffered(verdict.explanation ?? "\(decoder.label) is not available for this file.")
+        }
+    }
+
+    /// Every decoder this file genuinely supports, so the sheet can offer RAW 9 only where it works. Each choice is
+    /// checked by assigning it and reading the version back rather than by trusting the file's list: a version that
+    /// is listed but silently not honoured (the CR2 case) is not support, and must not be offered.
+    static func availableDecoders(at url: URL) -> [RawDecoderChoice] {
+        guard CIRAWFilter(imageURL: url) != nil else { return [] }
+        return RawDecoderChoice.allCases.filter { availability(of: $0, at: url).isAvailable }
+    }
+
+    /// What a freshly built filter reports, with the decoder's own support flags for the version in effect.
+    private static func settings(_ filter: CIRAWFilter, decoder: RawDecoderChoice,
+                                 verdict: RawDecoderVerdict) -> RawDevelopSettings {
         var settings = RawDevelopSettings(temperature: filter.neutralTemperature, tint: filter.neutralTint)
         settings.noiseReduction = filter.isLuminanceNoiseReductionSupported ? filter.luminanceNoiseReductionAmount : 0
         settings.colorNoiseReduction = filter.isColorNoiseReductionSupported ? filter.colorNoiseReductionAmount : 0
@@ -216,20 +380,74 @@ nonisolated enum RawImporter {
         settings.asShotColorNoiseReduction = settings.colorNoiseReduction
         settings.asShotLensCorrection = settings.lensCorrection
         settings.asShotHighlightRecovery = settings.highlightRecovery
-        settings.supportsNoiseReduction = filter.isLuminanceNoiseReductionSupported
-        settings.supportsColorNoiseReduction = filter.isColorNoiseReductionSupported
-        settings.supportsLensCorrection = filter.isLensCorrectionSupported
-        settings.supportsHighlightRecovery = filter.isHighlightRecoverySupported
         // M11.1: the camera's own absolute reading, reported by the decoder's sensor model rather than guessed.
         settings.asShotTemperatureAbsolute = filter.neutralTemperature
         settings.asShotTintAbsolute = filter.neutralTint
         settings.whiteBalanceMode = .asShot
-        // M11.2: whether this file's decoder exposes Raw Details at all, and what it does on its own, read here
-        // from a filter nothing has been developed through yet.
-        settings.supportsRawDetail = filter.isDetailSupported || filter.isSharpnessSupported
-            || filter.isContrastSupported || filter.isMoireReductionSupported
-        settings.rawDetailDefaults = RawDetailBaseline(filter)
+        // M11.2/M12.5: whether this file's decoder exposes Raw Details at all, per control, and what it does on its
+        // own — read here from a filter nothing has been developed through yet, at the version in effect.
+        applyCapabilities(RawDecoderCapabilities(filter), to: &settings)
+        settings.decoder = decoder
+        settings.effectiveDecoderVersion = verdict.effectiveVersion ?? filter.decoderVersion.rawValue
         return settings
+    }
+
+    /// The decoder's capabilities for a file at a version, or nil when the version could not be applied. Builds one
+    /// filter and discards it: the support flags describe the version in effect, which is the whole point of reading
+    /// them here instead of reusing what a different version reported (M12.5).
+    static func capabilities(at url: URL, decoder: RawDecoderChoice) -> RawDecoderCapabilities? {
+        guard let filter = CIRAWFilter(imageURL: url) else { return nil }
+        if !decoder.requestedVersions.isEmpty, !apply(decoder, to: filter).isApplied { return nil }
+        return RawDecoderCapabilities(filter)
+    }
+
+    /// Adds or removes capabilities to the settings from an already-mapped decoder state.
+    static func applyCapabilities(_ capabilities: RawDecoderCapabilities, to settings: inout RawDevelopSettings) {
+        settings.supportsNoiseReduction = capabilities.supportsLuminanceNoiseReduction
+        settings.supportsColorNoiseReduction = capabilities.supportsColorNoiseReduction
+        settings.supportsLensCorrection = capabilities.supportsLensCorrection
+        settings.supportsHighlightRecovery = capabilities.supportsHighlightRecovery
+        settings.supportsRawDetail = capabilities.offersAnyRawDetail
+        settings.supportsDetail = capabilities.supportsDetail
+        settings.supportsSharpness = capabilities.supportsSharpness
+        settings.supportsContrast = capabilities.supportsContrast
+        settings.supportsMoire = capabilities.supportsMoireReduction
+        settings.rawDetailDefaults = capabilities.baseline
+        settings.effectiveDecoderVersion = capabilities.effectiveVersion
+    }
+
+    /// Applies a decoder choice to a filter and reports whether it was genuinely honoured. The system default leaves
+    /// the filter exactly as building it left it, which is what every earlier version did.
+    @discardableResult
+    static func apply(_ choice: RawDecoderChoice, to filter: CIRAWFilter) -> RawDecoderVerdict {
+        let supported = filter.supportedDecoderVersions.map(\.rawValue)
+        let defaultVersion = filter.decoderVersion.rawValue
+        guard !choice.requestedVersions.isEmpty else {
+            return .applied(effective: defaultVersion)
+        }
+        let requested = choice.requestedVersions[0].rawValue
+        guard RawDecoderSelection.offersRaw9(supported: supported) else {
+            return .notListed(requested: requested, supported: supported)
+        }
+        // Ask for the first spelling the file actually lists, so `9` is not requested from a DNG that only names
+        // `9.dng`. Both are RAW 9; which spelling applies is the file's business, not the person's.
+        guard let candidate = choice.requestedVersions.first(where: { supported.contains($0.rawValue) }) else {
+            return .notListed(requested: requested, supported: supported)
+        }
+        filter.decoderVersion = candidate
+        return RawDecoderSelection.verdict(requested: candidate.rawValue, supported: supported,
+                                           effective: filter.decoderVersion.rawValue)
+    }
+
+    /// Builds a filter for `url` with `settings`' decoder in effect, or throws rather than developing with a
+    /// decoder that is not the one asked for.
+    static func decoderFilter(for url: URL, settings: RawDevelopSettings) throws -> CIRAWFilter {
+        guard let filter = CIRAWFilter(imageURL: url) else { throw ImageImportError.unreadable }
+        let verdict = apply(settings.decoder, to: filter)
+        if !settings.decoder.requestedVersions.isEmpty, !verdict.isApplied {
+            throw RawDecoderError.notOffered(verdict.explanation ?? "This file's decoder does not offer the requested version.")
+        }
+        return filter
     }
 
     /// The retained RAW bytes written to a temporary file, for `CIRAWFilter(imageURL:)`. The caller removes it.
@@ -252,8 +470,11 @@ nonisolated enum RawImporter {
     /// `limit` keeps the search to a small preview: each measurement decodes one frame, so this is a handful of
     /// small decodes rather than any number of full ones. Nil when the file cannot be developed.
     static func solveWhiteBalance(_ url: URL, startingAt start: (temperature: Float, tint: Float),
-                                  limit: CGFloat = 512) -> RawWhiteBalanceSolution? {
+                                  limit: CGFloat = 512,
+                                  decoder: RawDecoderChoice = .systemDefault) -> RawWhiteBalanceSolution? {
         guard let filter = CIRAWFilter(imageURL: url) else { return nil }
+        // The solved balance has to be the one the selected decoder renders at, or Apply would shift the frame.
+        if !decoder.requestedVersions.isEmpty, !apply(decoder, to: filter).isApplied { return nil }
         let longest = max(filter.nativeSize.width, filter.nativeSize.height)
         if longest > limit {
             filter.scaleFactor = Float(limit / longest)
@@ -274,7 +495,7 @@ nonisolated enum RawImporter {
     /// The developed image. `limit` caps the long edge for the preview the sheet shows while the
     /// sliders move; the import itself passes nil and gets the full frame.
     static func develop(_ url: URL, settings: RawDevelopSettings, limit: CGFloat? = nil, sixteenBit: Bool = false) throws -> CGImage {
-        guard let filter = CIRAWFilter(imageURL: url) else { throw ImageImportError.unreadable }
+        let filter = try decoderFilter(for: url, settings: settings)
         if let limit {
             let size = filter.nativeSize
             let longest = max(size.width, size.height)
@@ -303,10 +524,16 @@ nonisolated enum RawImporter {
         // Raw Details: the decoder's own reconstruction, on the sensor data itself. Offsets from the values this
         // filter already holds, so switching it on without moving a control changes nothing, and zero never removes
         // the sharpening the camera's own rendering does.
-        let detail = settings.rawDetail.normalized
+        //
+        // Restricted to the controls this decoder version offers: under RAW 9 detail and moiré are gone while
+        // sharpness and contrast remain, so the four are gated one at a time rather than by a single flag that would
+        // take the two working sliders with it (M12.5).
+        let detail = settings.effectiveRawDetail.normalized
         if settings.supportsRawDetail, detail.enabled {
-            // Always from the file's own baseline, never from the filter's current values: a filter that has been
-            // developed holds the last offsets, so reading them back would compound on every slider move.
+            // Always from the file's own baseline for this decoder, never from the filter's current values: a filter
+            // that has been developed holds the last offsets, so reading them back would compound on every slider
+            // move — and a baseline captured from another version's decoder would be an offset against a decoder
+            // that is no longer in use.
             let base = settings.rawDetailDefaults
             if filter.isDetailSupported { filter.detailAmount = min(3, max(0, base.detail + detail.detail)) }
             if filter.isSharpnessSupported { filter.sharpnessAmount = min(1, max(0, base.sharpness + detail.sharpness)) }

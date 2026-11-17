@@ -865,7 +865,8 @@ var rawDevelopEditorLayerID: UUID?
                                       lensCorrection: Bool? = nil, highlightRecovery: Bool? = nil,
                                       whiteBalanceMode: RawWhiteBalanceMode? = nil,
                                       colorProfile: RawColorProfile? = nil,
-                                      rawDetail: RawDetailSettings? = nil) -> Bool {
+                                      rawDetail: RawDetailSettings? = nil,
+                                      decoder: RawDecoderChoice? = nil) -> Bool {
         guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
               var draft = rawDrafts[layerID] ?? document?.layers[index].rawDevelopment else { return false }
         if let exposure { draft.settings.exposure = exposure }
@@ -896,10 +897,55 @@ var rawDevelopEditorLayerID: UUID?
                 enabled: normalized.enabled, detail: normalized.detail, sharpness: normalized.sharpness,
                 contrast: normalized.contrast, moire: normalized.moire)
         }
+        if let decoder { draft.settings.decoder = decoder.rawValue }
         // Validate the completed draft, not only the previous state.
         guard draft.settings.isValid() else { return false }
         rawDrafts[layerID] = draft
         return true
+    }
+
+    /// Switches the draft's decoder, re-reading that version's capabilities from the original RAW bytes rather than
+    /// carrying the previous decoder's flags across. Refuses a version the file did not honour, and returns the reason
+    /// so the sheet can show it instead of displaying RAW 9 over another decoder's pixels (M12.5).
+    ///
+    /// The adjustments themselves are untouched: a Color Noise amount set under the system decoder stays in the draft
+    /// while RAW 9 cannot apply it, and is applied again when the system decoder is chosen back.
+    func switchRawDevelopmentDecoder(layerID: UUID, to choice: RawDecoderChoice) -> String? {
+        guard let index = document?.layers.firstIndex(where: { $0.id == layerID }),
+              var draft = rawDrafts[layerID] ?? document?.layers[index].rawDevelopment else {
+            return "This layer has no RAW development to change."
+        }
+        let source = draft.source
+        let reason: String? = {
+            guard let url = try? RawImporter.temporaryFile(for: source) else {
+                return "The original RAW bytes could not be read back."
+            }
+            defer { try? FileManager.default.removeItem(at: url) }
+            guard let capabilities = RawImporter.capabilities(at: url, decoder: choice) else {
+                if case let .notOffered(message) = RawImporter.availability(of: choice, at: url) { return message }
+                return "\(choice.label) could not be applied to this file."
+            }
+            draft.settings.decoder = choice.rawValue
+            draft.settings.supportsColorNoiseReduction = capabilities.supportsColorNoiseReduction
+            draft.settings.supportsNoiseReduction = capabilities.supportsLuminanceNoiseReduction
+            draft.settings.supportsLensCorrection = capabilities.supportsLensCorrection
+            draft.settings.supportsHighlightRecovery = capabilities.supportsHighlightRecovery
+            draft.settings.supportsRawDetail = capabilities.offersAnyRawDetail
+            draft.settings.supportsDetail = capabilities.supportsDetail
+            draft.settings.supportsSharpness = capabilities.supportsSharpness
+            draft.settings.supportsContrast = capabilities.supportsContrast
+            draft.settings.supportsMoire = capabilities.supportsMoireReduction
+            // The baseline is this decoder's own, not the other version's: offsets are measured from what the
+            // decoder already does, so carrying one version's numbers across would shift the other version's render.
+            draft.settings.rawDetailDefaults = RawDevelopmentSettingsPersistentState.RawDetailDefaults(
+                detail: capabilities.detailAmount, sharpness: capabilities.sharpnessAmount,
+                contrast: capabilities.contrastAmount, moire: capabilities.moireAmount)
+            draft.settings.effectiveDecoderVersion = capabilities.effectiveVersion
+            return nil
+        }()
+        guard reason == nil, draft.settings.isValid() else { return reason ?? "That decoder could not be applied." }
+        rawDrafts[layerID] = draft
+        return nil
     }
 
     /// Solves the white balance the developed frame itself calls for: a small preview is decoded at each candidate
@@ -1454,7 +1500,7 @@ var rawDevelopEditorLayerID: UUID?
                     defer { if rawImporting { endRawDevelop() } }
                     // Seconds of work: off the main actor, or pressing Import freezes the window.
                     // A 16-bit layer: a RAW's latitude stays for later Levels, Curves and Camera Raw (`DeepLayer`).
-                    guard let developed = await RawImporter.Queue.shared.develop(url, settings: settings, limit: nil, sixteenBit: true)
+                    guard let developed = try? await RawImporter.Queue.shared.develop(url, settings: settings, limit: nil, sixteenBit: true)
                     else { throw ImageImportError.unreadable }
                     // Read RAW source bytes once while the security-scoped URL is still valid.
                     // The enclosing import loop already holds a grant, so this re-grant is

@@ -14,6 +14,10 @@ struct RawDevelopSheet: View {
     @State private var revision = 0
     @State private var solvingBalance = false
     @State private var profileIssue: String?
+    /// Why the chosen decoder cannot be used here, or nil. Shown rather than silently developing with another one.
+    @State private var decoderIssue: String?
+    /// The decoders this file genuinely offers; RAW 9 appears only when the read-back proved it.
+    @State private var availableDecoders: [RawDecoderChoice] = [.systemDefault]
 
     init(session: EditorSession, url: URL, settings: RawDevelopSettings) {
         self.session = session
@@ -44,6 +48,7 @@ struct RawDevelopSheet: View {
 
             Group {
                 slider("Exposure", value: $settings.exposure, range: -3...3, unit: " EV", precision: 2)
+                decoderRow
                 whiteBalanceModeRow
                 slider("Temperature", value: $settings.temperature, range: 2000...50000, unit: " K", precision: 0)
                 slider("Tint", value: $settings.tint, range: -150...150, unit: "", precision: 0)
@@ -54,6 +59,7 @@ struct RawDevelopSheet: View {
                     .disabled(!settings.supportsNoiseReduction)
                     .help(settings.supportsNoiseReduction ? "Smooths grain, at the cost of fine detail"
                                                           : "Not available for this camera")
+                colorNoiseRow
                 HStack(spacing: 20) {
                     Toggle("Lens Correction", isOn: $settings.lensCorrection)
                         .disabled(!settings.supportsLensCorrection)
@@ -82,21 +88,28 @@ struct RawDevelopSheet: View {
         .interactiveDismissDisabled(session.rawImporting)
         .task(id: revision) { await refreshPreview() }
         .onChange(of: settings) { _, _ in revision += 1 }
+        .task { availableDecoders = RawImporter.availableDecoders(at: url) }
     }
 
     /// Develops a screen-sized copy. `task(id:)` cancels the previous one, so dragging a slider
-    /// doesn't queue up a frame per pixel moved.
+    /// doesn't queue up a frame per pixel moved. A decoder that the file does not offer is reported rather than
+    /// silently developed with a different one (M12.5).
     private func refreshPreview() async {
-        // Just enough to coalesce a burst of slider changes; the render itself is nearly free once
-        // the file's filter is warm (see RawImporter.Queue).
         if revision > 0 { try? await Task.sleep(for: .milliseconds(60)) }
         guard !Task.isCancelled else { return }
         working = true
         defer { working = false }
         let current = settings
         let file = url
-        let image = await RawImporter.Queue.shared.develop(file, settings: current, limit: 800)
+        let image: CGImage?
+        do {
+            image = try await RawImporter.Queue.shared.develop(file, settings: current, limit: 800)
+        } catch {
+            decoderIssue = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return
+        }
         guard !Task.isCancelled else { return }
+        decoderIssue = nil
         if let image { preview = image }
     }
 
@@ -104,17 +117,29 @@ struct RawDevelopSheet: View {
     /// than offsets here, because the import sheet's job is to bring the frame in; the amounts are set when the frame
     /// is refined, in the RAW Develop editor on the layer.
     private var rawDetailsRow: some View {
-        HStack(spacing: 10) {
-            Text("Raw Details").frame(width: 110, alignment: .leading)
-            Toggle("Decoder detail reconstruction", isOn: Binding(get: { settings.rawDetail.enabled },
-                                                                 set: { settings.rawDetail.enabled = $0 }))
-                .disabled(!settings.supportsRawDetail)
-                .help(settings.supportsRawDetail
-                      ? "Asks the RAW decoder for its own detail reconstruction, on the sensor data before it becomes "
-                        + "pixels. Off leaves the camera's own decode exactly as it was."
-                      : "This file's decoder does not offer detail reconstruction.")
-                .accessibilityIdentifier("rawImportRawDetails")
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Text("Raw Details").frame(width: 110, alignment: .leading)
+                Toggle("Decoder detail reconstruction", isOn: Binding(get: { settings.rawDetail.enabled },
+                                                                     set: { settings.rawDetail.enabled = $0 }))
+                    .disabled(!settings.supportsRawDetail)
+                    .help(settings.supportsRawDetail
+                          ? "Asks the RAW decoder for its own detail reconstruction, on the sensor data before it becomes "
+                            + "pixels. Off leaves the camera's own decode exactly as it was."
+                          : "This file's decoder does not offer detail reconstruction.")
+                    .accessibilityIdentifier("rawImportRawDetails")
+                Spacer(minLength: 0)
+            }
+            // Under RAW 9 two of the four amounts are gone while sharpness and contrast remain, so the group stays
+            // usable and says which of its controls the selected decoder cannot apply (M12.5).
+            if settings.supportsRawDetail, !settings.unavailableRawDetailControls.isEmpty {
+                Text("\(settings.decoder.label) does not offer "
+                     + settings.unavailableRawDetailControls.map(\.rawValue).joined(separator: ", ")
+                     + " here. Those amounts are kept and return with System Default.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 120)
+            }
         }
     }
 
@@ -217,6 +242,86 @@ struct RawDevelopSheet: View {
         } catch {
             profileIssue = error.localizedDescription
         }
+    }
+
+    /// Which decoder develops this file. A per-file choice, not a preference: it is stored in the project with the
+    /// development settings, so a frame reopens with the decoder it was developed with. RAW 9 is offered only where
+    /// this file genuinely decoded with it, established by asking the filter which version it ended up on rather
+    /// than by what the API's camera list reports (M12.5).
+    private var decoderRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Text("Decoder").frame(width: 110, alignment: .leading)
+                Picker("Decoder", selection: Binding(get: { settings.decoder }, set: setDecoder)) {
+                    ForEach(availableDecoders, id: \.self) { Text($0.label).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 150)
+                .help("System Default is the decoder every earlier version used. Apple RAW 9 is offered only where "
+                      + "this file develops with it, and demosaics the sensor data differently.")
+                .accessibilityIdentifier("rawImportDecoder")
+                if settings.decoder == .appleRAW9, !settings.effectiveDecoderVersion.isEmpty {
+                    Text("version \(settings.effectiveDecoderVersion)")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("rawImportDecoderEffective")
+                }
+                Spacer(minLength: 0)
+            }
+            if !availableDecoders.contains(.appleRAW9) {
+                Text("Apple RAW 9 is not offered for this file: this file's decoder has no RAW 9 version to develop with.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 120)
+            } else if settings.decoder == .appleRAW9, let note = decoderLimitations {
+                Text(note).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 120)
+            }
+            if let decoderIssue {
+                Text(decoderIssue).font(.caption).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 120)
+                    .accessibilityIdentifier("rawImportDecoderIssue")
+            }
+        }
+    }
+
+    /// What RAW 9 does not offer on this file, named rather than only disabled, so the missing sliders have a reason.
+    private var decoderLimitations: String? {
+        var lost: [String] = []
+        if !settings.supportsColorNoiseReduction { lost.append("Color Noise Reduction") }
+        lost.append(contentsOf: settings.unavailableRawDetailControls.map(\.rawValue))
+        guard !lost.isEmpty else { return nil }
+        return "RAW 9 does not offer \(lost.joined(separator: ", ")) on this file. Amounts already set are kept and "
+            + "return when you switch back to System Default."
+    }
+
+    /// Switches decoder, re-reading this version's capabilities rather than carrying the previous decoder's flags
+    /// across. A version the file did not honour is refused with the reason, so the picker never shows RAW 9 over
+    /// another decoder's pixels.
+    private func setDecoder(_ choice: RawDecoderChoice) {
+        guard choice != settings.decoder else { return }
+        guard let capabilities = RawImporter.capabilities(at: url, decoder: choice) else {
+            if case let .notOffered(message) = RawImporter.availability(of: choice, at: url) { decoderIssue = message }
+            else { decoderIssue = "\(choice.label) could not be applied to this file." }
+            return
+        }
+        decoderIssue = nil
+        var next = settings
+        next.decoder = choice
+        RawImporter.applyCapabilities(capabilities, to: &next)
+        settings = next
+    }
+
+    /// The decoder's chroma reduction, at the sensor stage. Under RAW 9 this file's decoder does not offer it, and
+    /// saying so is more useful than a slider that would silently do nothing (M12.5).
+    private var colorNoiseRow: some View {
+        slider("Color Noise", value: $settings.colorNoiseReduction, range: 0...1, unit: "", precision: 2)
+            .disabled(!settings.supportsColorNoiseReduction)
+            .help(settings.supportsColorNoiseReduction
+                  ? "Removes color mottle at the sensor stage, where it is separate from luminance detail."
+                  : RawDecoderCopy.unavailable("Color Noise Reduction"))
+            .accessibilityIdentifier("rawImportColorNoise")
     }
 
     private func slider(_ title: String, value: Binding<Float>, range: ClosedRange<Float>,

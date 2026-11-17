@@ -233,6 +233,18 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
     var rawDetail: RawDetail = RawDetail()
     var rawDetailDefaults: RawDetailDefaults = RawDetailDefaults()
     var supportsRawDetail: Bool = false
+    /// Per-control Raw Details availability (M12.5). Absent in older projects; when absent, every control this
+    /// decoder exposes is assumed available, which is the behaviour those projects were rendered with.
+    var supportsDetail: Bool? = nil
+    var supportsSharpness: Bool? = nil
+    var supportsContrast: Bool? = nil
+    var supportsMoire: Bool? = nil
+    /// Which decoder this file was developed with (M12.5). Absent in older projects, which used the system's
+    /// decoder for the file — the behaviour they were saved with.
+    var decoder: String? = nil
+    /// The version the decoder actually reported. Absent in older projects, where the system's choice was not
+    /// recorded; the effective version is re-read from a filter when the project opens.
+    var effectiveDecoderVersion: String? = nil
 
     nonisolated struct ColorProfile: Codable, Equatable, Sendable {
         var kind: String = RawColorProfileKind.cameraDefault.rawValue
@@ -248,6 +260,30 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
         var sharpness: Float = 0
         var contrast: Float = 0
         var moire: Float = 0
+
+        private enum Keys: String, CodingKey { case enabled, detail, sharpness, contrast, moire }
+
+        init() {}
+
+        init(enabled: Bool, detail: Float, sharpness: Float, contrast: Float, moire: Float) {
+            self.enabled = enabled
+            self.detail = detail
+            self.sharpness = sharpness
+            self.contrast = contrast
+            self.moire = moire
+        }
+
+        /// Decoded field by field. Synthesized decoding of a nested type rejects a missing key even when the property
+        /// has a default, so a project written before `moire` existed would fail to load rather than take its neutral
+        /// zero. The outer type's tolerant decoding cannot help a nested one (M12.5).
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: Keys.self)
+            enabled = try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+            detail = try values.decodeIfPresent(Float.self, forKey: .detail) ?? 0
+            sharpness = try values.decodeIfPresent(Float.self, forKey: .sharpness) ?? 0
+            contrast = try values.decodeIfPresent(Float.self, forKey: .contrast) ?? 0
+            moire = try values.decodeIfPresent(Float.self, forKey: .moire) ?? 0
+        }
     }
 
     nonisolated struct RawDetailDefaults: Codable, Equatable, Sendable {
@@ -255,6 +291,26 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
         var sharpness: Float = 0
         var contrast: Float = 0
         var moire: Float = 0
+
+        private enum Keys: String, CodingKey { case detail, sharpness, contrast, moire }
+
+        init() {}
+
+        init(detail: Float, sharpness: Float, contrast: Float, moire: Float) {
+            self.detail = detail
+            self.sharpness = sharpness
+            self.contrast = contrast
+            self.moire = moire
+        }
+
+        /// See `RawDetail`. A baseline written before `moire` existed is the decoder's own amounts without it.
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: Keys.self)
+            detail = try values.decodeIfPresent(Float.self, forKey: .detail) ?? 0
+            sharpness = try values.decodeIfPresent(Float.self, forKey: .sharpness) ?? 0
+            contrast = try values.decodeIfPresent(Float.self, forKey: .contrast) ?? 0
+            moire = try values.decodeIfPresent(Float.self, forKey: .moire) ?? 0
+        }
     }
 
     private enum Keys: String, CodingKey {
@@ -263,10 +319,36 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
              supportsNoiseReduction, supportsLensCorrection, supportsHighlightRecovery,
              whiteBalanceMode, asShotTemperatureAbsolute, asShotTintAbsolute, colorProfile, rawDetail,
              rawDetailDefaults, supportsRawDetail,
-             colorNoiseReduction, asShotColorNoiseReduction, supportsColorNoiseReduction
+             colorNoiseReduction, asShotColorNoiseReduction, supportsColorNoiseReduction,
+             supportsDetail, supportsSharpness, supportsContrast, supportsMoire,
+             decoder, effectiveDecoderVersion
     }
 
     init() {}
+
+    /// The decoder this state was saved with. Absent means the system's own, which is what every project before M12.5
+    /// was developed with.
+    var selectedDecoder: RawDecoderChoice {
+        decoder.flatMap(RawDecoderChoice.init(rawValue:)) ?? .systemDefault
+    }
+
+    /// Whether the saved decoder offers each Raw Details control. An absent flag means available: projects written
+    /// before the per-control flags existed offered every control their decoder had, so reading absence as
+    /// unavailable would disable sliders that used to work.
+    var offersDetail: Bool { supportsDetail ?? supportsRawDetail }
+    var offersSharpness: Bool { supportsSharpness ?? supportsRawDetail }
+    var offersContrast: Bool { supportsContrast ?? supportsRawDetail }
+    var offersMoire: Bool { supportsMoire ?? supportsRawDetail }
+
+    /// The Raw Details amounts this decoder cannot apply, so the sheet can say which are being held rather than lost.
+    var unavailableRawDetailControls: [RawDetailControl] {
+        var unavailable: [RawDetailControl] = []
+        if !offersDetail { unavailable.append(.detail) }
+        if !offersSharpness { unavailable.append(.sharpness) }
+        if !offersContrast { unavailable.append(.contrast) }
+        if !offersMoire { unavailable.append(.moire) }
+        return unavailable
+    }
 
     /// Every field defaults to the rendering an older project was saved with, so a state written before a field
     /// existed decodes unchanged rather than failing.
@@ -306,6 +388,14 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
             ?? asShotNoiseReduction
         supportsColorNoiseReduction = try values.decodeIfPresent(Bool.self, forKey: .supportsColorNoiseReduction)
             ?? base.supportsColorNoiseReduction
+        // M12.5: absent means this project never chose a decoder, so it keeps the system's own — the rendering it was
+        // saved with — and every Raw Details control that decoder exposes stays available, as it was.
+        self.decoder = try values.decodeIfPresent(String.self, forKey: .decoder)
+        effectiveDecoderVersion = try values.decodeIfPresent(String.self, forKey: .effectiveDecoderVersion)
+        supportsDetail = try values.decodeIfPresent(Bool.self, forKey: .supportsDetail)
+        supportsSharpness = try values.decodeIfPresent(Bool.self, forKey: .supportsSharpness)
+        supportsContrast = try values.decodeIfPresent(Bool.self, forKey: .supportsContrast)
+        supportsMoire = try values.decodeIfPresent(Bool.self, forKey: .supportsMoire)
     }
 
     init(_ settings: RawDevelopSettings) {
@@ -340,6 +430,12 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
         colorNoiseReduction = settings.colorNoiseReduction
         asShotColorNoiseReduction = settings.asShotColorNoiseReduction
         supportsColorNoiseReduction = settings.supportsColorNoiseReduction
+        supportsDetail = settings.supportsDetail
+        supportsSharpness = settings.supportsSharpness
+        supportsContrast = settings.supportsContrast
+        supportsMoire = settings.supportsMoire
+        decoder = settings.decoder.rawValue
+        effectiveDecoderVersion = settings.effectiveDecoderVersion
     }
 
     /// Converts back to the live `RawDevelopSettings` used by `RawImporter`.
@@ -377,6 +473,16 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
         settings.colorNoiseReduction = colorNoiseReduction
         settings.asShotColorNoiseReduction = asShotColorNoiseReduction
         settings.supportsColorNoiseReduction = supportsColorNoiseReduction
+        // M12.5: a project written before the per-control flags existed offered every control its decoder had, so an
+        // absent flag means available rather than unavailable. Reading it the other way would disable sliders on
+        // projects that used to work.
+        settings.supportsDetail = supportsDetail ?? supportsRawDetail
+        settings.supportsSharpness = supportsSharpness ?? supportsRawDetail
+        settings.supportsContrast = supportsContrast ?? supportsRawDetail
+        settings.supportsMoire = supportsMoire ?? supportsRawDetail
+        // Absent means the system's own decoder: the one every project before M12.5 was developed with.
+        settings.decoder = decoder.flatMap(RawDecoderChoice.init(rawValue:)) ?? .systemDefault
+        settings.effectiveDecoderVersion = effectiveDecoderVersion ?? ""
         return settings
     }
 
@@ -392,6 +498,9 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
             && RawColorProfileKind(rawValue: colorProfile.kind) != nil
             && colorProfile.strength.isFinite
             && RawWhiteBalanceMode(rawValue: whiteBalanceMode) != nil
+            // M12.5: an unknown decoder name is a corrupt or future project, not a reason to quietly develop with a
+            // different decoder than the one it names.
+            && (decoder == nil || RawDecoderChoice(rawValue: decoder!) != nil)
     }
 
     var isAsShot: Bool {
@@ -416,6 +525,9 @@ nonisolated struct RawDevelopmentSettingsPersistentState: Codable, Equatable, Se
         whiteBalanceMode = RawWhiteBalanceMode.asShot.rawValue
         colorProfile = ColorProfile()
         rawDetail = RawDetail()
+        // The decoder choice is not an adjustment, so Reset to As Shot leaves it alone: a person who chose RAW 9 and
+        // then reset their sliders keeps RAW 9. Only the interpretation's settings go back, never which decoder the
+        // film was developed with.
     }
 }
 
